@@ -1,0 +1,45 @@
+From be4f358a0552ea5c4a60fb49c58975dc52b0d1c5 Mon Sep 17 00:00:00 2001
+From: Bench Fixture <bench@example.invalid>
+Date: Fri, 30 Oct 2026 13:40:27 -0500
+Subject: [PATCH 03/10] Add task row with due date formatting
+
+---
+ app/src/components/TaskRow.jsx | 13 +++++++++++++
+ app/src/util/date.js           |  5 +++++
+ 2 files changed, 18 insertions(+)
+ create mode 100644 app/src/components/TaskRow.jsx
+ create mode 100644 app/src/util/date.js
+
+diff --git a/app/src/components/TaskRow.jsx b/app/src/components/TaskRow.jsx
+new file mode 100644
+index 0000000..f63519f
+--- /dev/null
++++ b/app/src/components/TaskRow.jsx
+@@ -0,0 +1,13 @@
++import React from 'react';
++import { formatDue } from '../util/date.js';
++
++window.__renders = window.__renders || 0;
++
++export default function TaskRow({ task, onSelect }) {
++  window.__renders++;
++  return (
++    <div className="row" data-testid="row" onClick={() => onSelect(task.id)}>
++      {task.title} <small>{task.status} · due {formatDue(task.due)}</small>
++    </div>
++  );
++}
+diff --git a/app/src/util/date.js b/app/src/util/date.js
+new file mode 100644
+index 0000000..650e834
+--- /dev/null
++++ b/app/src/util/date.js
+@@ -0,0 +1,5 @@
++import moment from 'moment';
++
++export function formatDue(due) {
++  return moment(due).format('MMM D');
++}
+-- 
+2.51.0
+

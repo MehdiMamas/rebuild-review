@@ -1,0 +1,10 @@
+body { font-family: system-ui, sans-serif; margin: 0; background: #f6f7f9; color: #1c1e21; }
+.app { max-width: 960px; margin: 0 auto; padding: 16px; }
+.app.compact .row { padding: 2px 8px; }
+.layout { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; }
+.toolbar { display: flex; gap: 8px; margin-bottom: 8px; }
+.count { margin: 0 0 8px; padding: 12px; background: #e8eefc; }
+.row { padding: 8px; border-bottom: 1px solid #ddd; cursor: pointer; background: #fff; }
+.detail, .settings { background: #fff; padding: 12px; margin-top: 16px; }
+.banner { background: #fdecea; padding: 8px; margin-bottom: 8px; }
+.error { color: #b00020; }

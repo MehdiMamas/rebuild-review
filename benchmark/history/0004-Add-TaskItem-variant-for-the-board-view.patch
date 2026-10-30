@@ -1,0 +1,32 @@
+From ce6d73d6271f81e545a8e4fd4f83ca90ed5565ef Mon Sep 17 00:00:00 2001
+From: Bench Fixture <bench@example.invalid>
+Date: Fri, 30 Oct 2026 13:40:27 -0500
+Subject: [PATCH 04/10] Add TaskItem variant for the board view
+
+---
+ app/src/components/TaskItem.jsx | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+ create mode 100644 app/src/components/TaskItem.jsx
+
+diff --git a/app/src/components/TaskItem.jsx b/app/src/components/TaskItem.jsx
+new file mode 100644
+index 0000000..75e4b4b
+--- /dev/null
++++ b/app/src/components/TaskItem.jsx
+@@ -0,0 +1,13 @@
++import React from 'react';
++import { formatDue } from '../util/date.js';
++
++window.__renders = window.__renders || 0;
++
++export default function TaskItem({ task, onSelect }) {
++  window.__renders++;
++  return (
++    <div className="row" data-testid="row" onClick={() => onSelect(task.id)}>
++      {task.title} <small>{task.status} · due {formatDue(task.due)}</small>
++    </div>
++  );
++}
+-- 
+2.51.0
+

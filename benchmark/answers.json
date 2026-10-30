@@ -1,0 +1,17 @@
+[
+  {"id":"D1","kind":"defect","what":"Whole list re-renders on every search keystroke (query state lives in App, rows are not memoized)","observe":"Type one character in the search box; window.__renders rises by at least the number of rows shown"},
+  {"id":"D2","kind":"defect","what":"Focus lost on every keystroke in a settings field (Field component defined inside SettingsPanel render)","observe":"Focus the name field in Settings and type; document.activeElement becomes body after one character"},
+  {"id":"D3","kind":"defect","what":"Layout shift when results load (result count banner appears above the list only after load)","observe":"With ?slow=1 the list top moves down when the load finishes"},
+  {"id":"D4","kind":"defect","what":"Stale-response race in search (no cancel, shorter queries answer slower)","observe":"Type 'ab' quickly; the count banner ends up reading results for 'a' while the box says 'ab'"},
+  {"id":"D5","kind":"defect","what":"Effect loop sends repeat requests (DetailPanel effect depends on a new object every render)","observe":"Select a task; GET /api/tasks/<id> repeats many times within a second"},
+  {"id":"D6","kind":"defect","what":"Missing loading state (nothing is shown while the list loads)","observe":"With ?slow=1 the first second shows no rows, spinner or loading text"},
+  {"id":"D7","kind":"defect","what":"Missing error state on failed save (settings show Saved although the API returned 500)","observe":"With ?fail=save click Save in Settings; 'Saved' shows and no alert or error text appears"},
+  {"id":"H1","kind":"hidden-feature","what":"Keyboard shortcut 'c' focuses the new-task input; mentioned nowhere in the UI","observe":"Press c with nothing focused; document.activeElement is #new-task"},
+  {"id":"H2","kind":"hidden-feature","what":"Task titles are trimmed so trailing spaces never reach the API; documented only in a git commit message","observe":"Add a task titled '  padded  '; the stored title is 'padded'. git log has the commit 'Trim task titles: keep trailing spaces out of task titles'"},
+  {"id":"H3","kind":"hidden-feature","what":"Retry banner reachable only after a failed list load","observe":"Open /?fail=list; a banner with a Retry button appears"},
+  {"id":"H4","kind":"hidden-feature","what":"Density setting read from the URL (?density=compact)","observe":"Open /?density=compact; the root element gets class 'compact'"},
+  {"id":"B1","kind":"bloat","what":"Unused state library zustand","observe":"grep: zustand is in app/package.json and imported nowhere in app/src","grep":{"present":["zustand","app/package.json"],"absentIn":["zustand","app/src"]}},
+  {"id":"B2","kind":"bloat","what":"Duplicated components TaskRow and TaskItem (identical, TaskItem unused)","observe":"grep: TaskItem.jsx exists, imported nowhere","grep":{"present":["function TaskItem","app/src/components/TaskItem.jsx"],"absentIn":["components/TaskItem","app/src/App.jsx"]}},
+  {"id":"B3","kind":"bloat","what":"Dead route /legacy (LegacyBoard is not linked from anywhere)","observe":"grep: '/legacy' appears only in the App.jsx pathname check","grep":{"present":["/legacy","app/src/App.jsx"],"absentIn":["href=\"/legacy\"","app/src"]}},
+  {"id":"B4","kind":"bloat","what":"Unneeded date library moment, used only to format one short date","observe":"grep: moment imported in app/src/util/date.js","grep":{"present":["from 'moment'","app/src/util/date.js"],"absentIn":["from 'moment'","app/src/components"]}}
+]

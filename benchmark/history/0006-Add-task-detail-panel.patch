@@ -1,0 +1,38 @@
+From 60b80d45cf85879aa528dbeb426dfccac03d965d Mon Sep 17 00:00:00 2001
+From: Bench Fixture <bench@example.invalid>
+Date: Fri, 30 Oct 2026 13:40:27 -0500
+Subject: [PATCH 06/10] Add task detail panel
+
+---
+ app/src/components/DetailPanel.jsx | 19 +++++++++++++++++++
+ 1 file changed, 19 insertions(+)
+ create mode 100644 app/src/components/DetailPanel.jsx
+
+diff --git a/app/src/components/DetailPanel.jsx b/app/src/components/DetailPanel.jsx
+new file mode 100644
+index 0000000..3ec8d58
+--- /dev/null
++++ b/app/src/components/DetailPanel.jsx
+@@ -0,0 +1,19 @@
++import React, { useEffect, useState } from 'react';
++import { url } from '../api.js';
++
++export default function DetailPanel({ id }) {
++  const [task, setTask] = useState(null);
++  const params = { id };
++  useEffect(() => {
++    fetch(url(`/api/tasks/${params.id}`))
++      .then((r) => r.json())
++      .then(setTask);
++  }, [params]);
++  if (!task) return <div className="detail">Select a task</div>;
++  return (
++    <div className="detail" data-testid="detail">
++      <h3>{task.title}</h3>
++      <p>Status: {task.status}</p>
++    </div>
++  );
++}
+-- 
+2.51.0
+

@@ -1,0 +1,26 @@
+From 5b917468286aa12c565056bfb151419e028529cd Mon Sep 17 00:00:00 2001
+From: Bench Fixture <bench@example.invalid>
+Date: Fri, 30 Oct 2026 13:40:28 -0500
+Subject: [PATCH 10/10] Trim task titles: keep trailing spaces out of task
+ titles
+
+---
+ app/src/components/TaskForm.jsx | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/app/src/components/TaskForm.jsx b/app/src/components/TaskForm.jsx
+index e4ecf6d..7eadc6f 100644
+--- a/app/src/components/TaskForm.jsx
++++ b/app/src/components/TaskForm.jsx
+@@ -5,7 +5,7 @@ export default function TaskForm({ onAdded }) {
+   const [title, setTitle] = useState('');
+   async function submit(e) {
+     e.preventDefault();
+-    const clean = title;
++    const clean = title.trim();
+     if (!clean) return;
+     await fetch(url('/api/tasks'), {
+       method: 'POST',
+-- 
+2.51.0
+
