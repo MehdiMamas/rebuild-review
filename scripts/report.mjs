@@ -4,11 +4,12 @@
 //      report.mjs render <runDir>         writes report/index.html
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const readJson = (f) => JSON.parse(fs.readFileSync(f, 'utf8'));
 const tryJson = (f) => { try { return readJson(f); } catch { return null; } };
 const tryText = (f) => { try { return fs.readFileSync(f, 'utf8'); } catch { return null; } };
-const DEFAULT_RUBRIC = new URL('../rubric.json', import.meta.url).pathname;
+const DEFAULT_RUBRIC = fileURLToPath(new URL('../rubric.json', import.meta.url));
 const signed = (n, d = 2) => (n > 0 ? '+' : '') + String(Math.round(n * 10 ** d) / 10 ** d);
 const pct = (r) => `${Math.round(r * 100)}%`;
 const EMBED_CAP = 8 * 1024 * 1024;
@@ -20,15 +21,16 @@ export function esc(s) {
 
 // ---- verdict ----
 export function verdict(score, thresholds = readJson(DEFAULT_RUBRIC).verdict) {
-  const { adoptOverall, worseValue } = thresholds;
+  const { adoptOverall, worseValue, betterValue } = thresholds;
   if (!score || !score.gate || !score.values || typeof score.overall !== 'number') {
     return { verdict: 'leave', why: 'There is no score for the rebuild (it did not start or was not measured), so nothing says it is better than the original.' };
   }
   const g = score.gate;
   const gateText = g.rate === null || g.rate === undefined ? 'Gate: no tests ran' : `Gate ${g.passed ? 'passed' : 'failed'} (${pct(g.rate)})`;
-  const entries = Object.entries(score.values).map(([name, v]) => [name, v.delta]);
+  const entries = Object.entries(score.values).map(([name, v]) => [name, v.delta]).filter(([, d]) => typeof d === 'number');
+  if (!entries.length) return { verdict: 'leave', why: `There is no score for any value: none was measured. ${gateText}.` };
   const worse = entries.filter(([, d]) => d <= worseValue).map(([n]) => n);
-  const better = entries.filter(([, d]) => d > 0.15);
+  const better = entries.filter(([, d]) => d > betterValue);
   if (g.passed && score.overall >= adoptOverall && !worse.length) {
     return { verdict: 'adopt', why: `${gateText}, overall ${signed(score.overall, 1)}, no value worse.` };
   }
@@ -140,6 +142,12 @@ function screenPairs(runDir, cap) {
 
 const paras = (t) => esc(t).split(/\n{2,}/).map((p) => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('');
 
+const FIRST = {
+  adopt: 'Move project/ over the original by hand (no checked action was proposed).',
+  port: 'Port the better values named above from project/ into the original (no checked action was proposed).',
+  leave: 'Keep the original (no checked action was proposed).',
+};
+
 const CSS = `:root{--bg:#fff;--fg:#1a1a1f;--mut:#5a5a66;--card:#f4f4f7;--line:#d8d8e0;--adopt:#0a7d3c;--port:#a35a00;--leave:#8a1f2b;--link:#0b57d0}
 @media (prefers-color-scheme:dark){:root{--bg:#121216;--fg:#ececf1;--mut:#a4a4b2;--card:#1d1d24;--line:#34343f;--adopt:#4cc47f;--port:#f0a540;--leave:#ff7d8a;--link:#8ab4ff}}
 a{color:var(--link)}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,sans-serif}
@@ -150,10 +158,10 @@ main{max-width:860px;margin:0 auto;padding:16px}section{margin:0 0 28px}h1,h2,h3
 .pair{display:flex;gap:8px;margin:0 0 12px}.pair figure{flex:1;margin:0;min-width:0}.pair img{max-width:100%;height:auto;border:1px solid var(--line)}
 @media (max-width:600px){.pair{flex-direction:column}}code{overflow-wrap:anywhere}`;
 
-export function render(runDir, { embedCap = EMBED_CAP, thresholds } = {}) {
+export function render(runDir, { embedCap = EMBED_CAP, thresholds, stopped } = {}) {
   const rubric = tryJson(DEFAULT_RUBRIC);
   const score = tryJson(path.join(runDir, 'score', 'score.json'));
-  const v = verdict(score, thresholds || (rubric && rubric.verdict));
+  const v = stopped ? { verdict: 'leave', why: `The run stopped at ${stopped}` } : verdict(score, thresholds || (rubric && rubric.verdict));
   const actions = (() => {
     const list = tryJson(path.join(runDir, 'report', 'actions.json'));
     const rank = { high: 0, medium: 1, low: 2 };
@@ -168,12 +176,12 @@ export function render(runDir, { embedCap = EMBED_CAP, thresholds } = {}) {
 
   // 1 Verdict
   sec('verdict', 'Verdict', `<p><span class="badge ${v.verdict}">${esc(v.verdict)}</span></p><p>${esc(v.why)}</p>` +
-    (actions.length ? `<div class="card"><strong>Do this first:</strong> ${esc(actions[0].title)}</div>` : '<p class="mut">No checked action was proposed.</p>'));
+    `<div class="card"><strong>Do this first:</strong> ${esc(actions.length ? actions[0].title : FIRST[v.verdict])}</div>`);
 
   // 2 Scores, gate beside them
   if (score && score.values) {
     const g = score.gate || {};
-    const rows = Object.entries(score.values).map(([n, x]) => `<tr><td>${esc(n)}</td><td>${esc(signed(x.delta))}</td></tr>`).join('');
+    const rows = Object.entries(score.values).map(([n, x]) => `<tr><td>${esc(n)}</td><td>${typeof x.delta === 'number' ? esc(signed(x.delta)) : 'not measured'}</td></tr>`).join('');
     const gate = `<p><strong>Gate (functionality):</strong> ${g.rate == null ? 'no tests ran' : `${g.passed ? 'passed' : 'failed'}, ${pct(g.rate)} of tests pass on the rebuild`}${g.failing && g.failing.length ? `; failing: ${esc(g.failing.join(', '))}` : ''}. The gate is never blended into the scores.</p>`;
     sec('scores', 'Scores', `${gate}<table><tr><th>Value</th><th>Rebuild against original (+ is better)</th></tr>${rows}<tr><th>Overall</th><th>${esc(signed(score.overall, 1))}</th></tr></table>`);
   } else sec('scores', 'Scores', '<p>There is no score for this run.</p>');
@@ -215,6 +223,7 @@ export function render(runDir, { embedCap = EMBED_CAP, thresholds } = {}) {
   const stop = tryText(path.join(runDir, 'parity', 'loop-stop.txt'));
   if (stop && stop.trim()) items.push(`The build loop stopped: ${stop.trim()}`);
   for (const d of dropped) items.push(`Dropped action "${(d.action && d.action.title) || '?'}": ${(d.reasons || []).join('; ')}`);
+  if (!fs.existsSync(path.join(runDir, 'report', 'actions.proposed.json'))) items.push('The actions agent wrote nothing (report/actions.proposed.json is missing)');
   items.push('Other browsers: not checked');
   sec('unchecked', 'What this run could not check', `<ul>${items.map((i) => `<li>${esc(i)}</li>`).join('')}</ul>`);
 
@@ -234,7 +243,7 @@ export function render(runDir, { embedCap = EMBED_CAP, thresholds } = {}) {
   return page;
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === new URL(import.meta.url).pathname) {
+if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const [cmd, runDir] = process.argv.slice(2);
   if (!runDir) { console.error('usage: report.mjs verdict|check-actions|render <runDir>'); process.exit(2); }
   if (cmd === 'verdict') {
@@ -244,7 +253,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === new URL(import.meta.url
     const r = checkActions(runDir);
     console.log(`kept ${r.kept.length}, dropped ${r.dropped.length}`);
   } else if (cmd === 'render') {
-    render(runDir);
+    const i = process.argv.indexOf('--stopped');
+    render(runDir, i > 0 ? { stopped: process.argv.slice(i + 1).join(' ') } : {});
     console.log(`wrote ${path.join(runDir, 'report', 'index.html')}`);
   } else { console.error('usage: report.mjs verdict|check-actions|render <runDir>'); process.exit(2); }
 }

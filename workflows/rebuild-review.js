@@ -177,15 +177,23 @@ Step 4 prints one line of JSON {folder, judges:[{A,B},...]}. Return ok true with
 }
 
 // ---- Report ----
+const REPORT = `node ${q(`${pluginRoot}/scripts/report.mjs`)}`
+const reportStep = (cmd, label) => agent(`Run exactly: ${cmd} . Return ok true with its output as detail if it exited 0, otherwise ok false with the error. Change nothing else.`, { ...CHEAP, label, phase: 'Report', schema: RUN_RESULT })
+
 async function runReport() {
-  const REPORT = `node ${q(`${pluginRoot}/scripts/report.mjs`)}`
-  const step = (cmd, label) => agent(`Run exactly: ${cmd} . Return ok true with its output as detail if it exited 0, otherwise ok false with the error. Change nothing else.`, { ...CHEAP, label, phase: 'Report', schema: RUN_RESULT })
-  await agent(`Read ${pluginRoot}/prompts/actions.md and follow it. The run folder is ${runDir}; write ${runDir}/report/actions.proposed.json (mkdir -p the folder). If score/score.json does not exist, write an empty list [].`, { model: 'sonnet', effort: 'medium', label: 'actions', phase: 'Report' })
-  const chk = await step(`${REPORT} check-actions ${q(runDir)}`, 'check-actions')
+  const v = await reportStep(`${REPORT} verdict ${q(runDir)}`, 'verdict')
+  if (!v || !v.ok) throw new Error(`Report: verdict failed: ${(v && v.detail) || 'agent died'}`)
+  await agent(`Read ${pluginRoot}/prompts/actions.md and follow it. The run folder is ${runDir}; write ${runDir}/report/actions.proposed.json (mkdir -p the folder). The verdict, decided by code, is: ${v.detail}. If score/score.json does not exist, write an empty list [].`, { model: 'sonnet', effort: 'medium', label: 'actions', phase: 'Report' })
+  const chk = await reportStep(`${REPORT} check-actions ${q(runDir)}`, 'check-actions')
   if (!chk || !chk.ok) throw new Error(`Report: check-actions failed: ${(chk && chk.detail) || 'agent died'}`)
-  const r = await step(`${REPORT} render ${q(runDir)}`, 'render')
+  const r = await reportStep(`${REPORT} render ${q(runDir)}`, 'render')
   if (!r || !r.ok) throw new Error(`Report: render failed: ${(r && r.detail) || 'agent died'}`)
   await agent(`If ${runDir}/report/index.html exists, write ${runDir}/Report.done containing the word done. Otherwise write nothing. Touch nothing else.`, { ...CHEAP, label: 'Report.done', phase: 'Report' })
+}
+
+// A stopped run still gets the leave page. No actions agent and no Report.done, so a rerun continues; a failure here never hides the stop reason.
+async function stoppedReport(phase, reason) {
+  try { await reportStep(`${REPORT} render ${q(runDir)} --stopped ${q(`${phase}: ${reason}`)}`, 'render-stopped') } catch (e) {}
 }
 
 const ran = []
@@ -208,7 +216,7 @@ for (const phase of PHASES) {
   if (phase === 'Inventory') { await runInventory(); ran.push(phase); continue }
   if (phase === 'Parity') {
     const p = await runParity()
-    if (p && p.stopped) return { ran, stopped: p.stopped, reason: p.reason }
+    if (p && p.stopped) { await stoppedReport(p.stopped, p.reason); return { ran, stopped: p.stopped, reason: p.reason } }
     ran.push(phase)
     continue
   }
@@ -219,14 +227,14 @@ for (const phase of PHASES) {
       `Run this command with the Bash tool and run_in_background true, then wait until it exits (do not poll in a loop; check once it has finished): node ${JSON.stringify(pluginRoot + '/scripts/room.mjs')} ${mode} --target ${JSON.stringify(target)} --run-dir ${JSON.stringify(runDir)}\nWhen it exits, its last lines are "RESULT <file>" and a JSON line. Read that result file and return ok and reason from it. Change nothing else, and never read anything under ${target} or ${runDir}/work.`,
       { model: 'sonnet', effort: 'low', label: phase, phase, schema: { type: 'object', required: ['ok'], properties: { ok: { type: 'boolean' }, reason: { type: 'string' } } } },
     )
-    if (!r || !r.ok) return { ran, stopped: phase, reason: (r && r.reason) || 'room agent died' }
+    if (!r || !r.ok) { const reason = (r && r.reason) || 'room agent died'; await stoppedReport(phase, reason); return { ran, stopped: phase, reason } }
     await agent(`Write the file ${runDir}/${phase}.done containing the word done. Touch nothing else.`, { ...CHEAP, label: `${phase}.done`, phase })
     ran.push(phase)
     continue
   }
   if (phase === 'Score') {
     const sc = await runScore()
-    if (sc && sc.stopped) return { ran, stopped: sc.stopped, reason: sc.reason }
+    if (sc && sc.stopped) { await stoppedReport(sc.stopped, sc.reason); return { ran, stopped: sc.stopped, reason: sc.reason } }
     ran.push(phase)
     continue
   }

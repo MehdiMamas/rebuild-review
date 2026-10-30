@@ -3,9 +3,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { verdict, checkActions, render, parseCompare, esc } from './report.mjs';
 
-const T = { adoptOverall: 15, worseValue: -0.15 };
+const CLI = fileURLToPath(new URL('./report.mjs', import.meta.url));
+const T = { adoptOverall: 15, worseValue: -0.15, betterValue: 0.15 };
 const sc = (over = {}) => ({ gate: { passed: true, rate: 0.97, failing: [] }, overall: 41, values: { speed: { delta: 0.4 }, ux: { delta: 0.2 } }, notChecked: ['other browsers'], dropped: [], refuted: [], ...over });
 const w = (f, t) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, typeof t === 'string' || Buffer.isBuffer(t) ? t : JSON.stringify(t)); };
 
@@ -140,4 +143,64 @@ test('empty run folder renders the leave page; work/ is untouched', () => {
   assert.ok(fs.existsSync(path.join(d, 'report/index.html')));
   assert.equal(fs.readFileSync(path.join(d, 'work/keep.txt'), 'utf8'), 'x');
   assert.deepEqual(fs.readdirSync(d).sort(), [...before.split(','), 'report'].sort());
+});
+
+test('a value with no measurement is not measured, never 0; all unmeasured is leave', () => {
+  assert.equal(verdict(sc({ values: { speed: { delta: 0.4 }, ux: { delta: null } } }), T).verdict, 'adopt');
+  const v = verdict(sc({ values: { speed: { delta: null }, ux: {} } }), T);
+  assert.equal(v.verdict, 'leave');
+  assert.match(v.why, /none was measured/);
+  const d = makeRun();
+  w(path.join(d, 'score/score.json'), sc({ values: { speed: { delta: 0.4, measured: [], notMeasured: [] }, ux: { delta: null, measured: [], notMeasured: [] } } }));
+  const html = render(d, { thresholds: T });
+  assert.match(html, /<td>ux<\/td><td>not measured<\/td>/);
+});
+
+test('betterValue comes from the thresholds, not a literal', () => {
+  const s = sc({ overall: 5, values: { speed: { delta: 0.3 } } });
+  assert.equal(verdict(s, { ...T, betterValue: 0.5 }).verdict, 'leave');
+  assert.equal(verdict(s, { ...T, betterValue: 0.2 }).verdict, 'port');
+});
+
+test('Do this first has a line for each verdict when there are no actions', () => {
+  const cases = { adopt: sc(), port: sc({ overall: 5 }), leave: sc({ overall: 5, values: { speed: { delta: 0.1 } } }) };
+  const want = { adopt: /Move project\//, port: /Port the better values/, leave: /Keep the original/ };
+  for (const [k, score] of Object.entries(cases)) {
+    const d = makeRun({ actions: [] });
+    w(path.join(d, 'score/score.json'), score);
+    const html = render(d, { thresholds: T });
+    assert.match(html, /badge (adopt|port|leave)/);
+    assert.match(html, new RegExp(`badge ${k}`));
+    assert.match(html, /Do this first:<\/strong> /);
+    assert.match(html.slice(html.indexOf('Do this first')), want[k]);
+  }
+});
+
+test('a missing actions.proposed.json is listed as not checked', () => {
+  const html = render(makeRun(), { thresholds: T });
+  assert.match(html, /actions agent wrote nothing/);
+});
+
+test('--stopped renders the leave page with no score/ and leaves Report.done alone', () => {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'report-stop-'));
+  const out = execFileSync('node', [CLI, 'render', d, '--stopped', 'Rebuild: room agent died'], { encoding: 'utf8' });
+  assert.match(out, /wrote/);
+  const html = fs.readFileSync(path.join(d, 'report/index.html'), 'utf8');
+  assert.match(html, /badge leave/);
+  assert.match(html, /The run stopped at Rebuild: room agent died/);
+  assert.match(html, /Keep the original/);
+  assert.ok(!fs.existsSync(path.join(d, 'Report.done')));
+});
+
+test('the CLI works from a folder with a space in its path', () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'report space-'));
+  fs.mkdirSync(path.join(base, 'scripts'));
+  fs.copyFileSync(CLI, path.join(base, 'scripts/report.mjs'));
+  fs.copyFileSync(new URL('../rubric.json', import.meta.url), path.join(base, 'rubric.json'));
+  const run = path.join(base, 'run');
+  fs.mkdirSync(run);
+  const out = execFileSync('node', [path.join(base, 'scripts/report.mjs'), 'render', run], { encoding: 'utf8' });
+  assert.match(out, /wrote/);
+  assert.ok(fs.existsSync(path.join(run, 'report/index.html')));
+  assert.match(execFileSync('node', [path.join(base, 'scripts/report.mjs'), 'verdict', run], { encoding: 'utf8' }), /leave/);
 });

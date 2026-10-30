@@ -60,7 +60,7 @@ what it renders, then scores the rebuild against the original. See README.md.
 
 ## Report phase
 
-- Files: `scripts/report.mjs` (`verdict`, `check-actions`, `render`), `prompts/{compare,actions}.md`, `rubric.json` key `verdict` (`adoptOverall` 15, `worseValue` -0.15, from phase 1's same-against-same noise limits; never tune them to a fixture). Writes `report/index.html` and `Report.done`.
+- Files: `scripts/report.mjs` (`verdict`, `check-actions`, `render`), `prompts/{compare,actions}.md`, `rubric.json` key `verdict` (`adoptOverall` 15, `worseValue` -0.15, `betterValue` 0.15, from phase 1's same-against-same noise limits; never tune them to a fixture). Writes `report/index.html` and `Report.done`.
 - Code decides the verdict: `adopt` (gate passed, overall >= adoptOverall, no value delta <= worseValue), `port` (not adopt, some value delta > 0.15), else `leave`; no score is `leave`. A sonnet agent only proposes `report/actions.proposed.json` (`evidence: [{kind: metric|file|shot|feature, ref}]`); `check-actions` drops any action with a false citation (listed in `actions.dropped.json`).
 - The page is one file: no script, strict CSP, images embedded (at most 6 pairs and 8 MB, the rest counted), every string escaped. `compare.md` must use `## <value>` with `### was`, `### now`, `### should`. `parity/rounds.json` and `parity/loop-stop.txt` are optional.
 - The report is private: the skill publishes it with the Artifact tool when present and the target is not sensitive; otherwise only a `file://` link.
