@@ -15,6 +15,8 @@ const run = JSON.parse(fs.readFileSync(appFile, 'utf8'));
 if (run.platform !== 'web') throw new Error(`web adapter cannot capture platform "${run.platform}"`);
 const origin = assertLocalhost(run.address).origin;
 const workDir = path.resolve(path.dirname(appFile), 'work', run.dir || '.');
+// Something already answering there would be captured in place of this app.
+if (await fetch(origin).then(() => true, () => false)) throw new Error(`refusing to start: something already answers on ${origin}`);
 const SIZES = [{ w: 390, h: 844 }, { w: 1440, h: 900 }];
 const THEMES = ['light', 'dark'];
 const MAX_SCREENS = 30;
@@ -25,7 +27,7 @@ const write = (f, data) => { fs.mkdirSync(path.dirname(f), { recursive: true });
 // Install, build and start the app in the work copy (never the target itself).
 for (const key of ['install', 'build']) if (run[key]) execSync(run[key], { cwd: workDir, stdio: 'inherit' });
 const port = new URL(origin).port;
-const server = spawn(run.start, { cwd: workDir, shell: true, stdio: 'ignore', env: { ...process.env, PORT: port } });
+const server = spawn(run.start, { cwd: workDir, shell: true, detached: true, stdio: 'ignore', env: { ...process.env, PORT: port } });
 const stop = () => { try { process.kill(-server.pid); } catch {} server.kill(); };
 process.on('exit', stop);
 for (let i = 0; ; i++) {
@@ -60,7 +62,9 @@ const queue = [start], seen = new Map();
     const hrefs = await page.$$eval('a[href]', (as) => as.map((a) => a.href));
     const found = new Set(hrefs.filter((h) => new URL(h).origin === origin).map((h) => { const u = new URL(h); u.hash = ''; return u.toString(); }));
     const buttons = page.locator('button, [role=button]');
-    for (let i = 0, n = Math.min(await buttons.count(), 10); i < n; i++) {
+    const total = await buttons.count();
+    if (total > 10) notCaptured.push(`${key}: only the first 10 of ${total} buttons were tried`);
+    for (let i = 0, n = Math.min(total, 10); i < n; i++) {
       try {
         await buttons.nth(i).click({ timeout: 1500 });
         await sleep(200);
