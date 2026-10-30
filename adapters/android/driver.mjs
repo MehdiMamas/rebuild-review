@@ -67,6 +67,14 @@ export async function startEmulator(proxyPort) {
     for (const s of ['window_animation_scale', 'transition_animation_scale', 'animator_duration_scale']) adb('shell', 'settings', 'put', 'global', s, '0');
     adb('shell', 'settings', 'put', 'secure', 'show_ime_with_hard_keyboard', '0');
     adb('shell', 'input', 'keyevent', '82');
+    // A freshly wiped emulator is slow for a while and the system shows "<launcher> is not responding" over every app.
+    // Hide such dialogs (crashes are read from logcat, not from a dialog) and close any that are already up.
+    adb('shell', 'settings', 'put', 'global', 'hide_error_dialogs', '1');
+    for (let i = 0; i < 30; i++) {
+      if (!/Not Responding|isn't responding/i.test(adb('shell', 'dumpsys', 'window', 'windows'))) break;
+      try { adb('shell', 'am', 'broadcast', '-a', 'android.intent.action.CLOSE_SYSTEM_DIALOGS'); adb('shell', 'input', 'keyevent', '3'); } catch {}
+      await sleep(2000);
+    }
     adb('logcat', '-G', '16M');
   } catch (e) { await stop(); throw e; }
   return stop;
@@ -136,13 +144,15 @@ export class Device {
   }
   resetConfig() { adb('shell', 'wm', 'size', 'reset'); adb('shell', 'wm', 'density', 'reset'); adb('shell', 'cmd', 'uimode', 'night', 'auto'); }
   // Dump until two dumps in a row show the same texts (the screen stopped changing), at most ~8 s.
-  async stable(minNodes = 3) {
+  async stable(minNodes = 3, agree = 2) {
     const key = (ns) => ns.map((n) => n.text + '|' + n.desc).join('\n');
-    let prev = null, nodes = [];
-    for (let i = 0; i < 16; i++) {
+    let prev = null, run = 1, nodes = [];
+    for (let i = 0; i < 20; i++) {
       nodes = await this.dump();
-      if (nodes.length >= minNodes && prev !== null && key(nodes) === prev) return nodes;
-      prev = nodes.length >= minNodes ? key(nodes) : null;
+      const k = nodes.length >= minNodes ? key(nodes) : null;
+      run = k !== null && k === prev ? run + 1 : 1;
+      if (run >= agree) return nodes;
+      prev = k;
       await sleep(500);
     }
     return nodes;
@@ -152,7 +162,7 @@ export class Device {
   async reopen(steps = []) {
     this.launch();
     let nodes = await this.settle();
-    for (const s of steps) { s.long ? this.longPress(s.at) : this.tap(s.at); await sleep(500); nodes = await this.stable(1); }
+    for (const s of steps) { s.long ? this.longPress(s.at) : this.tap(s.at); await sleep(500); nodes = await this.stable(1, 3); }
     return nodes;
   }
   // The control a person means by this name: accessible name or text, exact first.
