@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import { execFileSync, spawnSync } from 'node:child_process';
+import { startApp } from '../app.mjs';
 
 const here = path.dirname(new URL(import.meta.url).pathname);
 const repo = path.resolve(here, '../../..');
@@ -107,6 +108,18 @@ check('5b non-localhost address refused', rr.status !== 0 && /only localhost/.te
 // Test 6: the target stays untouched.
 const status = execFileSync('git', ['status', '--porcelain', '--ignored'], { cwd: target }).toString().trim();
 check('6 target git status is clean after the runs', status === '', status || 'clean');
+
+// Test 7: a rebuild-run.json takes "dir" relative to its own folder, and an absolute "dir" is refused.
+{
+  const rb = path.join(tmp, 'rb');
+  fs.cpSync(path.join(run1, 'work/app'), rb, { recursive: true });
+  const f = path.join(rb, 'rebuild-run.json');
+  fs.writeFileSync(f, JSON.stringify({ platform: 'web', dir: '.', start: 'node server.mjs', address: 'http://127.0.0.1:4235' }));
+  let started = false, refused = false;
+  try { const a = await startApp(JSON.parse(read(f)), f); started = (await fetch(a.origin)).ok; a.stop(); } catch (e) { started = e.message; }
+  try { await startApp({ platform: 'web', dir: rb, start: 'true', address: 'http://127.0.0.1:4236' }, f); } catch (e) { refused = /relative/.test(e.message); }
+  check('7 rebuild-run.json starts from its own folder with dir "."; absolute dir refused', started === true && refused, `started ${started}; absolute refused ${refused}`);
+}
 
 fs.rmSync(tmp, { recursive: true, force: true });
 const failed = results.filter((r) => !r).length;

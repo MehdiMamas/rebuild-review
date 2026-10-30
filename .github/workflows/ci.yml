@@ -18,3 +18,4 @@ jobs:
           (cd adapters/web && npm install --no-audit --no-fund)
           node --test scripts/visual-diff.test.mjs
           node --test scripts/check-features.test.mjs
+          node --test scripts/parity-results.test.mjs

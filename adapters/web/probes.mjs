@@ -105,13 +105,25 @@ export async function runProbes({ browser, origin, screens, timings = [] }) {
       await t.context.close();
     }
 
-    // Script time per keystroke: first text input, CPU 4x slower, 5 characters 100 ms apart. Budget one frame (16 ms).
+    // Script time per keystroke: every visible text input (up to 5), each on a fresh page, CPU 4x slower,
+    // 5 characters 100 ms apart. Budget one frame (16 ms).
     {
-      const t = await open(browser, origin, url);
-      await t.go();
-      await t.page.waitForLoadState('networkidle').catch(() => {});
-      const field = t.page.locator('input:not([type=hidden]):not([type=checkbox]):not([type=radio]):not([type=button]):not([type=submit]), textarea').first();
-      if ((await field.count()) && (await field.isVisible())) {
+      const SEL = 'input:not([type=hidden]):not([type=checkbox]):not([type=radio]):not([type=button]):not([type=submit]), textarea';
+      const visible = [];
+      {
+        const t = await open(browser, origin, url);
+        await t.go();
+        await t.page.waitForLoadState('networkidle').catch(() => {});
+        const all = t.page.locator(SEL);
+        for (let i = 0, n = await all.count(); i < n && visible.length < 5; i++) if (await all.nth(i).isVisible()) visible.push(i);
+        await t.context.close();
+      }
+      for (const i of visible) {
+        const t = await open(browser, origin, url);
+        await t.go();
+        await t.page.waitForLoadState('networkidle').catch(() => {});
+        const field = t.page.locator(SEL).nth(i);
+        const label = (await field.evaluate((e) => e.id || e.name || e.placeholder || e.tagName)) || 'field';
         const cdp = await t.context.newCDPSession(t.page);
         await cdp.send('Performance.enable');
         await cdp.send('Emulation.setCPUThrottlingRate', { rate: 4 });
@@ -121,9 +133,9 @@ export async function runProbes({ browser, origin, screens, timings = [] }) {
         for (const ch of 'abcde') { await t.page.keyboard.type(ch); await sleep(100); }
         const ms = ((await script()) - before) * 1000 / 5;
         worstMs = Math.max(worstMs ?? 0, ms);
-        add('script-cost-per-key', s.id, ms <= 16, `${ms.toFixed(1)} ms of script per keystroke at 4x CPU slowdown; budget 16 ms`);
+        add('script-cost-per-key', `${s.id}:${label}`, ms <= 16, `${ms.toFixed(1)} ms of script per keystroke at 4x CPU slowdown in ${label}; budget 16 ms`);
+        await t.context.close();
       }
-      await t.context.close();
     }
 
     // Layout shift on load, both sizes, with and without slow API answers. Two signals: the browser's

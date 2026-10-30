@@ -12,6 +12,7 @@ produce the same layout.
 { "platform": "...", "dir": "path inside work/", "install": "...", "build": "...", "start": "...", "address": "..." }
 ```
 
+- `dir` is relative, never absolute (the adapter throws otherwise): to `work/` next to `run.json`, except in a file named `rebuild-run.json`, where it is relative to that file's own folder.
 - The target is never run in place. The agent clones it to `<runDir>/work/` and the adapter runs that copy.
 - The adapter refuses an address that is not on this machine.
 
