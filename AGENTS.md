@@ -14,7 +14,9 @@ what it renders, then scores the rebuild against the original. See README.md.
 
 ## Conventions
 
-- In and out: the words and the rendered HTML and CSS are the input. The output is the full
+- Any kind of project, not only web. Nothing outside a platform adapter may assume HTML,
+  a browser or React; a platform-specific need means the adapter contract changes.
+- In and out: the words and what the app renders are the input. The output is the full
   project done the best way, backend included. The score and report come with it and never
   replace it. Never call the rendered app "output" in docs or issues.
 - The plugin must install on its own from this repo. claude-sync-data only lists it, and
