@@ -17,7 +17,7 @@ const KEYS = {
   H1: [['key', 'shortcut', 'press'], ['"c"', "'c'", ' c ', '`c`', 'letter c', 'c key', 'key c']],
   H2: [['trim', 'whitespace', 'padding', 'spaces'], ['title']],
   H3: [['retry'], ['banner', 'button']],
-  H4: [['density', 'compact'], ['url', 'query', '?density', 'parameter']],
+  H4: [['density', 'compact'], ['url', 'query', '?density', 'parameter', 'address', 'link']],
 };
 const md = fs.readFileSync(process.argv[2], 'utf8');
 const entries = md.split(/^(?=.*\bF-\d{3}\b.*$)/m).filter((e) => /\bF-\d{3}\b/.test(e));
