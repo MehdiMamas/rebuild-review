@@ -1,6 +1,6 @@
 export const meta = {
   name: 'rebuild-review-run',
-  description: 'Rebuild a project from its behaviour and rendered output, then score the rebuild. Stub phases for now.',
+  description: 'Rebuild the full project from its behaviour and what it renders, then score it. Stub phases for now.',
   whenToUse: 'Started by the rebuild-review skill. Requires args {target, runDir}.',
   phases: [
     { title: 'Capture' }, { title: 'Inventory' }, { title: 'Stack' }, { title: 'Rebuild' },
