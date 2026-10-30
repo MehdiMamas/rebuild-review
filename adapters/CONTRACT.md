@@ -10,6 +10,7 @@ produce the same layout.
 
 ```
 { "platform": "...", "dir": "path inside work/", "install": "...", "build": "...", "start": "...", "address": "..." }
+(android and flutter add "apk" and "package", see below)
 ```
 
 - `env` is optional: an object of environment variables the adapter adds when it starts the app (`{...process.env, ...env, PORT}`), so the original and the rebuild start with the same settings. `rebuild-run.json` gets the same `env`, copied from `run.json` after the build is delivered. Values are stand-ins only, never real secrets; they are never printed or put in the report. The Electron adapter applies `env` too (after its allowlist copy; the isolated home, profile folders and dead proxy still win).
@@ -31,7 +32,7 @@ Call: `capture --app <run.json> --out <runDir>/golden [--states states.json]`
 
 ```
 golden/manifest.json       platform, app version, screens, states, blocked requests, what could not be captured
-golden/screens/<id>/       render.* (the rendered structure and computed style), a11y.json, <size>-<theme>.png
+golden/screens/<id>/       render.* (the rendered structure and computed style), a11y.json, <size>-<theme>.png (size is the adapter's own name)
 golden/network.har         every request and response, secrets removed
 golden/timings.json        list of { name, value, unit }
 golden/probes.json         list of { probe, screen, passed, evidence }; passed=false means the probe flagged a problem
@@ -41,7 +42,7 @@ golden/a11y-violations.json  optional: list of { screen, violations: [{ id, impa
 golden/coverage.json       optional: screensReached, screensCut (distinct routes the screen cap stopped), sameRouteSkipped [{ route, count }] (same route, different data, left out by --max-per-route, default 2), buttonsSkipped, harEntriesSkipped; web also `auth` ({ given, signedIn, reason? }), `screensCapturedWithSession` (every screen captured with the session, public ones included; it does not say the screen needs a sign-in), `behindSignIn` and `refusedSignedIn` (path plus query), `sessionLost` (signed in, then sent to a sign-in page it did not ask for, found by the crawl, a shot or a probe: not shot, not probed), `signOutSkipped` [{ screen, label }]
 ```
 
-Screenshots are taken at a narrow and a wide size, in light and dark theme. Backend: none; `manifest.json` `notCaptured` says "no screens or screenshots: HTTP service". CLI: none; `manifest.json` `notCaptured` says "no screens or screenshots: command-line tool". Web: 390 and 1440 px wide; `--widths narrow,wide` (two positive whole numbers, narrow smaller, default `390,1440`) sets the width of the overflow check (narrow) and of the load and accessibility measures (wide), not the screenshots. Electron: window content sizes 1024x700 and 1440x900; a window that refuses a size is noted in `manifest.json` `notCaptured`, as is a size where light and dark gave identical pixels ("theme did not change").
+Screenshots are taken at a narrow and a wide size, in light and dark theme. Backend: none; `manifest.json` `notCaptured` says "no screens or screenshots: HTTP service". CLI: none; `manifest.json` `notCaptured` says "no screens or screenshots: command-line tool". Web: 390 and 1440 px wide; `--widths narrow,wide` (two positive whole numbers, narrow smaller, default `390,1440`) sets the width of the overflow check (narrow) and of the load and accessibility measures (wide), not the screenshots. Android and Flutter: `phone` (1080x2400) and `tablet` (1600x2560), named `<size>-<theme>.png`. Electron: window content sizes 1024x700 and 1440x900; a window that refuses a size is noted in `manifest.json` `notCaptured`, as is a size where light and dark gave identical pixels ("theme did not change").
 
 `coverage.json` lists `screensReached`, `screensCut` (anything over `--max-screens`), `buttonsSkipped` and `harEntriesSkipped`. `manifest.json` also has `nativeDialogs` (Electron: each dialog the app asked for, answered "canceled").
 
@@ -130,9 +131,14 @@ so capture runs twice.
 
 ## Probes
 
-Each probe is a general check for one kind of failure, not a check for a known app. Required kinds:
-focus lost while typing, input delay, layout shift, repeated identical requests, errors in the
-console, no visible feedback during a slow request, a failed request with no visible error (only requests the app's own code made count: framework route prefetches and client navigation payloads, such as headers `sec-purpose`/`purpose` prefetch, `next-router-prefetch`, `rsc` without `next-action`, and `/_next/data/` paths, are not data requests), script time per keystroke (`script-cost-per-key`: script time over 5 characters typed 100 ms apart into the first text input of each screen, CPU throttled 4x; the worst value goes to `timings.json` as `script-ms-per-key`, `passed` means 16 ms or less, one frame).
+Each probe is a general check for one kind of failure, not a check for a known app. Required kinds are those
+that apply to the platform. Common to all: repeated identical requests, no visible feedback during a slow
+request, a failed request with no visible error, errors the app prints (console or crash log). Web adds focus
+lost while typing, input delay, layout shift. Android adds crash or ANR, dropped frames, touch targets under
+48 dp, interactive elements with no label.
+
+
+Web also has a probe for script time per keystroke (`script-cost-per-key`: script time over 5 characters typed 100 ms apart into the first text input of each screen, CPU throttled 4x; the worst value goes to `timings.json` as `script-ms-per-key`, `passed` means 16 ms or less, one frame). For the web "failed request with no visible error" probe only requests the app's own code made count: framework route prefetches and client navigation payloads (headers `sec-purpose`/`purpose` prefetch, `next-router-prefetch`, `rsc` without `next-action`, and `/_next/data/` paths) are not data requests.
 
 Safe area (`safe-area`, web per-change check only, not capture): each route at 390x844 with touch, iPhone insets top 47 and bottom 34 set with CDP `Emulation.setSafeAreaInsetsOverride` (so `env(safe-area-inset-*)` reads them), once in browser mode and once in standalone mode (`matchMedia('(display-mode: standalone)')` and `navigator.standalone` shimmed in JS; CSS `@media (display-mode)` rules are not emulated). One row per mode, screen `<id>:browser` and `<id>:standalone`. It fails when a visible interactive element (links, buttons, form fields, `summary`, button-like roles, `tabindex` 0 or more) cannot leave the top or bottom inset: a control with `position: fixed` or `sticky` (itself or an ancestor), or inside an inner scrolling container, is judged where it sits at load; any other control moves with the document and is judged over every scroll position (it is clear when some scroll puts it between the insets, including controls below or above the first screen, and none can scroll when `html` or `body` has `overflow-y` hidden or clip; a control taller than the space between the insets is not flagged), the evidence then says "cannot be scrolled clear". It also fails when `elementFromPoint` at its centre is neither the element nor inside it. The band test runs only on pages whose viewport meta has `viewport-fit=cover`: with the default (`auto`) Safari keeps the page inside the insets, and the evidence says the bands were not checked.
 
@@ -161,3 +167,29 @@ It drives Chromium: crawl by following links and clicking buttons on the app's o
 `node adapters/web/check.mjs --base-url <url> --routes /a,/b [--out <dir>] [--budget-seconds 110] [--storage-state file] [--allow-origin https://x,...] [--wait-for <css selector>]`
 
 A standalone run of the probes on the routes a change touched, against an app that is already running; no run folder. Exit 0 pass, 1 fail, 2 incomplete (nothing failed but something was not checked), 3 error (bad arguments, app unreachable, browser missing). Never a pass for something not checked. `--out` is a directory with `result.json` (`version, status, baseUrl, routes, screenshots, elapsedMs, passed, failed, notChecked, blockedOrigins`) and `<slug>-390.png`, `<slug>-1440.png` per route, taken before any probe. Load probes run first on every route, one at a time; click probes after, 4 at a time; at the budget what has not run goes to `notChecked`. A route that ends on another path is `notChecked`. `--wait-for` waits (up to 10 s, and never past the budget) for the selector to be visible on every route before the screenshots; if it does not show, the shots are taken anyway and `notes` gets `{ route, note }` (also when no time is left to wait); a note never changes the status or exit code, and an invalid selector is an error (exit 3). Rows in `failed` for `input-delay` and `script-cost-per-key` carry `value` (a number) and `unit` (`ms`). Blocked cross-origin requests are listed, not counted as console errors. Clicks on labels that look destructive or outward-facing are skipped and listed; on a non-localhost base URL no click runs.
+
+## Android and Flutter
+
+One adapter, `adapters/android/`, serves both platforms; `run.json` differs only in `platform` (`android` or
+`flutter`) and the build command. Extra fields: `apk` (built apk, relative to `dir`), `package` (application id).
+`start` runs the app's own local API and `address` is that API (localhost); the emulator reaches it as
+`10.0.2.2` and the adapter never starts anything else on the network.
+
+It uses plain adb and uiautomator, no Maestro or Appium, on a dedicated headless AVD `rebuild-review` on
+port 5584 (every adb call carries `-s emulator-5584`). The AVD is wiped at start and the emulator is stopped
+at the end, also on failure. Sizes: `phone` (1080x2400) and `tablet` (1600x2560), light and dark. The render
+files are `render.xml` (the uiautomator dump) and `render.json` (flat node list), plus `a11y.json`.
+
+Network: the emulator starts with `-http-proxy` pointing at the adapter's recording proxy. The proxy passes
+only the app's own API, answers everything else with 403 and lists it in `blockedRequests`, simulates
+`failRequest` and `slowRequest`, and strips secrets from the HAR exactly like the web adapter. HTTPS is refused
+by host (no certificate is installed) and listed under `notCaptured`.
+Timings: `am start -W` (cold and per screen), `dumpsys gfxinfo` during a scripted scroll, apk size.
+In `states.json`, `open` relaunches the app (its value is ignored), and `click` and `type` match the visible text
+or content description.
+
+## Changes made to neutral parts for Android
+
+- Screenshot names are `<size>-<theme>.png` with the adapter's own size names, not pixel widths.
+- Required probe kinds now depend on the platform.
+- The workflow's Capture step picks the adapter folder from `platform`.

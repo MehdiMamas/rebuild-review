@@ -154,7 +154,7 @@ class SettingsScreen extends StatelessWidget {
     body: Column(children: [
       SwitchListTile(title: const Text('Notifications'), value: false, onChanged: (_) {}),
       // planted: throws
-      ElevatedButton(onPressed: () => throw StateError('feedback form not initialised'), child: const Text('Send feedback')),
+      ElevatedButton(onPressed: () async { throw StateError('feedback form not initialised'); }, child: const Text('Send feedback')),
     ]),
   );
 }
