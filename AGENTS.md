@@ -1,7 +1,7 @@
 # rebuild-review
 
-Claude Code plugin: a one-shot review that rebuilds a project from its behaviour and
-rendered output, then scores the rebuild against the original. See README.md.
+Claude Code plugin: a one-shot review that rebuilds a full project from its behaviour and
+what it renders, then scores the rebuild against the original. See README.md.
 
 ## Install and test
 
@@ -14,6 +14,9 @@ rendered output, then scores the rebuild against the original. See README.md.
 
 ## Conventions
 
+- In and out: the words and the rendered HTML and CSS are the input. The output is the full
+  project done the best way, backend included. The score and report come with it and never
+  replace it. Never call the rendered app "output" in docs or issues.
 - The plugin must install on its own from this repo. claude-sync-data only lists it, and
   nothing here may depend on claude-sync, session-manager or other mods.
 - Rules that must hold are enforced by the workflow script or file layout, not by asking
