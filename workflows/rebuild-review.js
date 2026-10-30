@@ -1,6 +1,6 @@
 export const meta = {
   name: 'rebuild-review-run',
-  description: 'Rebuild a project from its behaviour and rendered output, then score the rebuild. Stub phases for now.',
+  description: 'Rebuild a project from its behaviour and rendered output, then score the rebuild.',
   whenToUse: 'Started by the rebuild-review skill. Requires args {target, runDir, pluginRoot}.',
   phases: [
     { title: 'Capture' }, { title: 'Inventory' }, { title: 'Stack' }, { title: 'Rebuild' },
@@ -176,6 +176,18 @@ Step 4 prints one line of JSON {folder, judges:[{A,B},...]}. Return ok true with
   await agent(`Delete the folder ${folder} (rm -rf, only if its name contains rr-judges-). Then write ${runDir}/Score.done containing the word done. Touch nothing else.`, { ...CHEAP, label: 'Score.done', phase: 'Score' })
 }
 
+// ---- Report ----
+async function runReport() {
+  const REPORT = `node ${q(`${pluginRoot}/scripts/report.mjs`)}`
+  const step = (cmd, label) => agent(`Run exactly: ${cmd} . Return ok true with its output as detail if it exited 0, otherwise ok false with the error. Change nothing else.`, { ...CHEAP, label, phase: 'Report', schema: RUN_RESULT })
+  await agent(`Read ${pluginRoot}/prompts/actions.md and follow it. The run folder is ${runDir}; write ${runDir}/report/actions.proposed.json (mkdir -p the folder). If score/score.json does not exist, write an empty list [].`, { model: 'sonnet', effort: 'medium', label: 'actions', phase: 'Report' })
+  const chk = await step(`${REPORT} check-actions ${q(runDir)}`, 'check-actions')
+  if (!chk || !chk.ok) throw new Error(`Report: check-actions failed: ${(chk && chk.detail) || 'agent died'}`)
+  const r = await step(`${REPORT} render ${q(runDir)}`, 'render')
+  if (!r || !r.ok) throw new Error(`Report: render failed: ${(r && r.detail) || 'agent died'}`)
+  await agent(`If ${runDir}/report/index.html exists, write ${runDir}/Report.done containing the word done. Otherwise write nothing. Touch nothing else.`, { ...CHEAP, label: 'Report.done', phase: 'Report' })
+}
+
 const ran = []
 for (const phase of PHASES) {
   if (done.has(`${phase}.done`)) continue
@@ -218,6 +230,7 @@ for (const phase of PHASES) {
     ran.push(phase)
     continue
   }
+  if (phase === 'Report') { await runReport(); ran.push(phase); continue }
   await agent(
     `Stub for the ${phase} phase. Write a file at ${runDir}/${phase}.done containing the word done. Touch nothing else. The target ${target} must not be modified.`,
     { ...CHEAP, label: phase, phase },
