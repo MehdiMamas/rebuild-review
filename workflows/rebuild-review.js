@@ -8,6 +8,7 @@ export const meta = {
   ],
 }
 
+const q = JSON.stringify
 const ARGS = typeof args === 'string' ? (() => { try { return JSON.parse(args) } catch (e) { return args } })() : args
 if (!ARGS || !ARGS.target || !ARGS.runDir || !ARGS.pluginRoot) {
   throw new Error('rebuild-review workflow requires args: {target, runDir, pluginRoot}')
@@ -29,7 +30,7 @@ const done = new Set((listed && listed.done) || [])
 // ---- Inventory ----
 const INV = `${runDir}/inventory`
 const WORK = `${runDir}/work`
-const CHECK = `node ${pluginRoot}/scripts/check-features.mjs ${runDir}/features.md ${WORK}`
+const CHECK = `node ${q(pluginRoot + '/scripts/check-features.mjs')} ${q(runDir + '/features.md')} ${q(WORK)}`
 const DRIVER = 'If no driver for the platform is installed, install one in a scratch folder outside ' + WORK + ' and ' + target + ' (for a web app: npm install playwright and its browser in a temp folder) and use it; do not give up on using the app. Build output and installs belong to the run copy only; never edit tracked files.'
 const UX = 'For every screen and every action, judge it the way someone who cares about speed, UX, compatibility and accessibility would, and record every problem you see or find evidence of. Examples, not a complete list: missing loading, empty or error states; no feedback after an action; a success message after a failure; content moving after a load; focus lost while typing; input lost on navigation or reload; broken back navigation or deep links; actions that can be done twice by accident; destructive actions with no confirmation or undo; requests repeated or wasted; slow first load or slow redraws; responses applied out of order; layouts that break at small or large screens; controls unreachable by keyboard or screen reader; low contrast or tiny targets; truncated text and confusing messages. State each as a defect with the behaviour that should hold.'
 const FINDER = { model: 'sonnet', effort: 'medium' }
@@ -49,7 +50,7 @@ async function runInventory() {
     const found = await parallel(FINDERS.map(f => () => agent(f.prompt, { ...FINDER, label: f.name, phase: 'Inventory' })))
     if (found.some(r => r === null)) throw new Error('Inventory: a finder died, so features.md would be incomplete')
 
-    const techCheck = await agent(`Run: node ${pluginRoot}/scripts/check-features.mjs ${runDir}/technology.md ${WORK}. If it prints failures, edit ${runDir}/technology.md to remove them (rewrite file paths, import lines and long copied runs as plain names and versions) and run it again, at most 2 fix attempts. Report the final check output. Return checkPassed. Do not write anywhere else.`, { ...CHEAP, label: 'technology-check', phase: 'Inventory', schema: { type: 'object', required: ['checkPassed'], properties: { checkPassed: { type: 'boolean' } } } })
+    const techCheck = await agent(`Run: node ${q(pluginRoot + '/scripts/check-features.mjs')} ${q(runDir + '/technology.md')} ${q(WORK)}. If it prints failures, edit ${runDir}/technology.md to remove them (rewrite file paths, import lines and long copied runs as plain names and versions) and run it again, at most 2 fix attempts. Report the final check output. Return checkPassed. Do not write anywhere else.`, { ...CHEAP, label: 'technology-check', phase: 'Inventory', schema: { type: 'object', required: ['checkPassed'], properties: { checkPassed: { type: 'boolean' } } } })
     if (!techCheck || !techCheck.checkPassed) throw new Error('Inventory: technology.md failed the no-source check after 2 fix tries')
 
     const fixRule = `Then run: ${CHECK}. If it prints failures, edit features.md to remove them (rewrite fenced code, file paths, import or JSX lines and long copied runs in plain prose) and run it again, at most 2 fix attempts. Report the final check output.`
@@ -70,7 +71,7 @@ async function runInventory() {
     await agent(`Write the file ${runDir}/InventoryFound.done containing the word done. Touch nothing else.`, { ...CHEAP, label: 'InventoryFound.done', phase: 'Inventory' })
   }
   // Second capture: the states the finders discovered, so the builder also sees error and loading states.
-  const recap = await agent(`Run the capture adapter again with the states the finders found. Read "platform" in ${runDir}/run.json; the adapter is ${ADAPTER}/<platform>/capture.mjs (flutter uses the android folder). Run: node <adapter> --app ${runDir}/run.json --out ${runDir}/golden --states ${INV}/states.json. Return ok true if it exited 0, with the states count it printed, otherwise ok false with the error. Also read ${runDir}/golden/manifest.json and return total (the number of states in ${INV}/states.json) and missing (the entries of notCaptured that start with "state "), as a list of strings. Change nothing else.`, { model: 'sonnet', effort: 'low', label: 'second-capture', phase: 'Inventory', schema: { type: 'object', required: ['ok'], properties: { ok: { type: 'boolean' }, detail: { type: 'string' }, total: { type: 'number' }, missing: { type: 'array', items: { type: 'string' } } } } })
+  const recap = await agent(`Run the capture adapter again with the states the finders found. Read "platform" in ${runDir}/run.json; the adapter is ${ADAPTER}/<platform>/capture.mjs (flutter uses the android folder). Run: node <adapter> --app ${q(runDir + '/run.json')} --out ${q(runDir + '/golden')} --states ${q(INV + '/states.json')}. Return ok true if it exited 0, with the states count it printed, otherwise ok false with the error. Also read ${runDir}/golden/manifest.json and return total (the number of states in ${INV}/states.json) and missing (the entries of notCaptured that start with "state "), as a list of strings. Change nothing else.`, { model: 'sonnet', effort: 'low', label: 'second-capture', phase: 'Inventory', schema: { type: 'object', required: ['ok'], properties: { ok: { type: 'boolean' }, detail: { type: 'string' }, total: { type: 'number' }, missing: { type: 'array', items: { type: 'string' } } } } })
   if (!recap || !recap.ok) throw new Error(`Inventory: second capture failed: ${(recap && recap.detail) || 'agent died'}. The run can be resumed by running the rebuild-review skill again with ${runDir} as the run folder, which repeats only the capture.`)
   const gaps = recap.missing || []
   if (gaps.length * 2 > (recap.total || 0)) throw new Error(`Inventory: ${gaps.length} of ${recap.total} states were not captured: ${gaps.slice(0, 5).join('; ')}`)
@@ -88,7 +89,7 @@ async function runParity() {
   const has = await agent(`Read "platform" in ${runDir}/run.json. The adapter folder is ${ADAPTER}/<platform> (flutter uses the android folder). Return ok true if ${ADAPTER}/<that folder>/parity.mjs exists, otherwise ok false with detail "No parity adapter for platform <platform>". Change nothing.`, { ...CHEAP, label: 'parity-adapter', phase: 'Parity', schema: RUN_RESULT })
   if (!has || !has.ok) return { stopped: 'Parity', reason: (has && has.detail) || 'adapter check agent died' }
 
-  const runOn = (label, appJson, out) => agent(`Read "platform" in ${runDir}/run.json; the adapter folder is ${ADAPTER}/<platform> (flutter uses the android folder). Run: node <adapter folder>/parity.mjs --app ${appJson} --tests ${TESTS} --out ${out}. Return ok true if it exited 0 and ${out} exists, with its one-line summary as detail; otherwise ok false with the error. Change nothing else.`, { model: 'sonnet', effort: 'low', label, phase: 'Parity', schema: RUN_RESULT })
+  const runOn = (label, appJson, out) => agent(`Read "platform" in ${runDir}/run.json; the adapter folder is ${ADAPTER}/<platform> (flutter uses the android folder). Run: node <adapter folder>/parity.mjs --app ${q(appJson)} --tests ${q(TESTS)} --out ${q(out)}. Return ok true if it exited 0 and ${out} exists, with its one-line summary as detail; otherwise ok false with the error. Change nothing else.`, { model: 'sonnet', effort: 'low', label, phase: 'Parity', schema: RUN_RESULT })
   const mustRun = (r, what) => { if (!r || !r.ok) throw new Error(`Parity: ${what} failed: ${(r && r.detail) || 'agent died'}`) }
 
   await agent(`Create the folders ${TESTS} (mkdir -p). Change nothing else.`, { ...CHEAP, label: 'parity-setup', phase: 'Parity' })
@@ -99,7 +100,7 @@ A feature marked "keep" gets a test asserting the behaviour. A feature marked "d
 
   // Fix loop: a keep test failing on the original, or a defect test passing on it, means the test is wrong. Counted by code.
   const wrongCount = async (label) => {
-    const r = await agent(`Run exactly: node ${pluginRoot}/scripts/parity-results.mjs wrong ${runDir}/features.md ${PAR}/original.json . Return its output line as detail, and wrong as the number it printed first. Change nothing.`, { ...CHEAP, label, phase: 'Parity', schema: { type: 'object', required: ['wrong'], properties: { wrong: { type: 'number' }, detail: { type: 'string' } } } })
+    const r = await agent(`Run exactly: node ${q(pluginRoot + '/scripts/parity-results.mjs')} wrong ${q(runDir + '/features.md')} ${q(PAR + '/original.json')} . Return its output line as detail, and wrong as the number it printed first. Change nothing.`, { ...CHEAP, label, phase: 'Parity', schema: { type: 'object', required: ['wrong'], properties: { wrong: { type: 'number' }, detail: { type: 'string' } } } })
     if (!r) throw new Error('Parity: the wrong-count agent died')
     return r
   }
@@ -112,15 +113,15 @@ A feature marked "keep" gets a test asserting the behaviour. A feature marked "d
   }
   mustRun(await runOn('parity-original-a', `${runDir}/run.json`, `${PAR}/original.json`), 'the run on the original')
   mustRun(await runOn('parity-original-b', `${runDir}/run.json`, `${PAR}/original-2.json`), 'the second run on the original')
-  const settled = await agent(`Run exactly: node ${pluginRoot}/scripts/parity-results.mjs settle ${PAR} ${runDir}/features.md . Return ok true with its output as detail if it exited 0, otherwise ok false with the error. Change nothing else.`, { ...CHEAP, label: 'parity-settle', phase: 'Parity', schema: RUN_RESULT })
+  const settled = await agent(`Run exactly: node ${q(pluginRoot + '/scripts/parity-results.mjs')} settle ${q(PAR)} ${q(runDir + '/features.md')} . Return ok true with its output as detail if it exited 0, otherwise ok false with the error. Change nothing else.`, { ...CHEAP, label: 'parity-settle', phase: 'Parity', schema: RUN_RESULT })
   mustRun(settled, 'settle')
 
   // The rebuild, when there is one: same tests, same states, then the visual diff.
   const RB = `${runDir}/project/rebuild-run.json`
-  const rb = await agent(`If ${RB} does not exist, return ok true with detail "no rebuild" and do nothing else. Otherwise read "platform" in ${runDir}/run.json (the adapter folder is ${ADAPTER}/<platform>; flutter uses the android folder) and run, in order: (1) node <adapter folder>/parity.mjs --app ${RB} --tests ${TESTS} --out ${PAR}/rebuild.json; (2) node <adapter folder>/capture.mjs --app ${RB} --out ${runDir}/golden-rebuild --states ${INV}/states.json; (3) node ${pluginRoot}/scripts/visual-diff.mjs ${runDir}/golden ${runDir}/golden-rebuild ${PAR}/visual-diff.json. Return ok true with detail "rebuilt" if all three exited 0, otherwise ok false with the first error. Change nothing else.`, { model: 'sonnet', effort: 'low', label: 'parity-rebuild', phase: 'Parity', schema: RUN_RESULT })
+  const rb = await agent(`If ${RB} does not exist, return ok true with detail "no rebuild" and do nothing else. Otherwise read "platform" in ${runDir}/run.json (the adapter folder is ${ADAPTER}/<platform>; flutter uses the android folder) and run, in order: (1) node <adapter folder>/parity.mjs --app ${q(RB)} --tests ${q(TESTS)} --out ${q(PAR + '/rebuild.json')}; (2) node <adapter folder>/capture.mjs --app ${q(RB)} --out ${q(runDir + '/golden-rebuild')} --states ${q(INV + '/states.json')}; (3) node ${q(pluginRoot + '/scripts/visual-diff.mjs')} ${q(runDir + '/golden')} ${q(runDir + '/golden-rebuild')} ${q(PAR + '/visual-diff.json')}. Return ok true with detail "rebuilt" if all three exited 0, otherwise ok false with the first error. Change nothing else.`, { model: 'sonnet', effort: 'low', label: 'parity-rebuild', phase: 'Parity', schema: RUN_RESULT })
   mustRun(rb, 'the rebuild run')
 
-  const merged = await agent(`Run exactly: node ${pluginRoot}/scripts/parity-results.mjs merge ${PAR} ${runDir}/features.md . If it exited 0, write ${runDir}/Parity.done containing the word done and return ok true with its output as detail; otherwise return ok false with the error. Touch nothing else.`, { ...CHEAP, label: 'Parity.done', phase: 'Parity', schema: RUN_RESULT })
+  const merged = await agent(`Run exactly: node ${q(pluginRoot + '/scripts/parity-results.mjs')} merge ${q(PAR)} ${q(runDir + '/features.md')} . If it exited 0, write ${runDir}/Parity.done containing the word done and return ok true with its output as detail; otherwise return ok false with the error. Touch nothing else.`, { ...CHEAP, label: 'Parity.done', phase: 'Parity', schema: RUN_RESULT })
   mustRun(merged, 'merge')
 }
 
@@ -131,9 +132,9 @@ for (const phase of PHASES) {
     const captured = await agent(
       `Capture the running app of ${target}. Never run or write to ${target} itself.
 1. Clone it: git clone ${target} ${runDir}/work
-2. Work out from the files in ${runDir}/work how to install, build and start the app and which address it listens on. Run: node ${pluginRoot}/scripts/free-port.mjs and use the port it prints in "address"; if the app cannot listen on a chosen port, keep the port it uses and say so in the result. Then write ${runDir}/run.json: {"platform": "web", "dir": "<folder inside work, relative to work/, e.g. app; never an absolute path>", "install": "...", "build": "...", "start": "...", "address": "http://127.0.0.1:<port>"}. The start command must read the port from the PORT environment variable or use the port in the address. Only web apps on localhost are supported.
+2. Work out from the files in ${runDir}/work how to install, build and start the app and which address it listens on. Run: node ${q(pluginRoot + '/scripts/free-port.mjs')} and use the port it prints in "address"; if the app cannot listen on a chosen port, keep the port it uses and say so in the result. Then write ${runDir}/run.json: {"platform": "web", "dir": "<folder inside work, relative to work/, e.g. app; never an absolute path>", "install": "...", "build": "...", "start": "...", "address": "http://127.0.0.1:<port>"}. The start command must read the port from the PORT environment variable or use the port in the address. Only web apps on localhost are supported.
 3. If the project is not a web app (no adapter for its platform), do not guess: write nothing else and return captured false with the reason "No capture adapter for platform <platform>".
-4. Otherwise run: node ${ADAPTER}/web/capture.mjs --app ${runDir}/run.json --out ${runDir}/golden
+4. Otherwise run: node ${q(ADAPTER + '/web/capture.mjs')} --app ${q(runDir + '/run.json')} --out ${q(runDir + '/golden')}
 5. When ${runDir}/golden/manifest.json exists, write ${runDir}/Capture.done containing the word done and return captured true. If any step failed, return captured false with the error as the reason.`,
       { model: 'sonnet', effort: 'low', label: 'Capture', phase, schema: CAPTURE_RESULT },
     )
