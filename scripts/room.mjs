@@ -91,7 +91,7 @@ export function prepareRoom({ runDir, target, inputs }) {
   return room;
 }
 
-export function writeSettings(room, { denyPaths }) {
+export function writeSettings(room, { denyPaths, only }) {
   fs.mkdirSync(path.join(room, '.claude'), { recursive: true });
   const settings = {
     sandbox: {
@@ -103,6 +103,8 @@ export function writeSettings(room, { denyPaths }) {
     },
     permissions: { deny: denyPaths.flatMap((p) => [`Read(${p})`, `Read(${p}/**)`]) },
   };
+  if (only === 'deny') delete settings.sandbox;
+  if (only === 'sandbox') delete settings.permissions;
   fs.writeFileSync(path.join(room, '.claude', 'settings.json'), JSON.stringify(settings, null, 2));
 }
 
