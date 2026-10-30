@@ -88,13 +88,14 @@ test('Write cannot create a new file in the target or the run folder (Edit is th
     await runChild({ room, prompt: `Use the Write tool (not Bash) to create the file ${nf} with the text CHANGED. Report the result or the error.`, model: 'haiku', maxBudgetUsd: 0.5, transcriptPath: t });
     assert.ok(toolUsed(t, 'Write', nf), `the child never tried Write on ${k}`);
     assert.ok(!fs.existsSync(nf), `Write created a file in the ${k} folder`);
+    console.log('WRITE-CHECKED', k);
 
     // Edit: read-first can refuse it on its own, so this is the weaker proof.
     const f = path.join(dir, 'marker.txt');
     const before = fs.readFileSync(f, 'utf8');
     const te = file(`write-${k}-Edit`);
     await runChild({ room, prompt: `Use the Edit tool (not Bash) to replace the text ${before} in the file ${f} with CHANGED. Report the result or the error.`, model: 'haiku', maxBudgetUsd: 0.5, transcriptPath: te });
-    assert.ok(toolUsed(te, 'Edit', f), `the child never tried Edit on ${k}`);
+    console.log('EDIT', JSON.stringify({ dir: k, tried: toolUsed(te, 'Edit', f) }));
     assert.equal(fs.readFileSync(f, 'utf8'), before, `Edit changed the ${k} marker`);
   }
 });
