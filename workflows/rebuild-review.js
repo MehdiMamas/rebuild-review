@@ -31,7 +31,7 @@ const INV = `${runDir}/inventory`
 const WORK = `${runDir}/work`
 const CHECK = `node ${pluginRoot}/scripts/check-features.mjs ${runDir}/features.md ${WORK}`
 const DRIVER = 'If no driver for the platform is installed, install one in a scratch folder outside ' + WORK + ' and ' + target + ' (for a web app: npm install playwright and its browser in a temp folder) and use it; do not give up on using the app. Build output and installs belong to the run copy only; never edit tracked files.'
-const UX = 'For every screen and every action check these general classes of problem and record each one you see or find evidence of: missing loading, empty or error state; missing feedback after an action; content that appears, grows or disappears after a load and moves other content (layout shift, compare positions before and after); focus lost or moved while typing; the same request repeating; slow or wasteful redraws while typing; out-of-order or stale responses; a success message shown after a failure. State each as a defect with the behaviour that should hold.'
+const UX = 'For every screen and every action, judge it the way someone who cares about speed, UX, compatibility and accessibility would, and record every problem you see or find evidence of. Examples, not a complete list: missing loading, empty or error states; no feedback after an action; a success message after a failure; content moving after a load; focus lost while typing; input lost on navigation or reload; broken back navigation or deep links; actions that can be done twice by accident; destructive actions with no confirmation or undo; requests repeated or wasted; slow first load or slow redraws; responses applied out of order; layouts that break at small or large screens; controls unreachable by keyboard or screen reader; low contrast or tiny targets; truncated text and confusing messages. State each as a defect with the behaviour that should hold.'
 const FINDER = { model: 'sonnet', effort: 'medium' }
 const NOTE = 'Write in behaviour words only: what a user sees and does. Never quote source code, file paths, or copy text longer than a short phrase from files. Do not modify anything under ' + WORK + ' or ' + target + '. Do not look for answer or benchmark files.'
 
@@ -44,7 +44,8 @@ const FINDERS = [
 
 async function runInventory() {
   await agent(`Create the folder ${INV} (mkdir -p). Change nothing else.`, { ...CHEAP, label: 'inventory-setup', phase: 'Inventory' })
-  await Promise.all(FINDERS.map(f => agent(f.prompt, { ...FINDER, label: f.name, phase: 'Inventory' })))
+  const found = await parallel(FINDERS.map(f => () => agent(f.prompt, { ...FINDER, label: f.name, phase: 'Inventory' })))
+  if (found.some(r => r === null)) throw new Error('Inventory: a finder died, so features.md would be incomplete')
 
   const fixRule = `Then run: ${CHECK}. If it prints failures, edit features.md to remove them (rewrite fenced code, file paths, import or JSX lines and long copied runs in plain prose) and run it again, at most 2 fix attempts. Report the final check output.`
   const checkSchema = { type: 'object', required: ['checkPassed'], properties: { checkPassed: { type: 'boolean' } } }
@@ -61,6 +62,9 @@ async function runInventory() {
       await agent(`Append a final line to ${runDir}/features.md: "Critic loop stopped by the 3-round cap, not by a round with nothing new." Then run ${CHECK} and report nothing else.`, { ...CHEAP, label: 'cap-note', phase: 'Inventory' })
     }
   }
+  // Second capture: the states the finders discovered, so the builder also sees error and loading states.
+  const recap = await agent(`Run the capture adapter again with the states the finders found. Read "platform" in ${runDir}/run.json; the adapter is ${ADAPTER}/<platform>/capture.mjs (flutter uses the android folder). Run: node <adapter> --app ${runDir}/run.json --out ${runDir}/golden --states ${INV}/states.json. Return ok true if it exited 0, with the states count it printed, otherwise ok false with the error. Change nothing else.`, { model: 'sonnet', effort: 'low', label: 'second-capture', phase: 'Inventory', schema: { type: 'object', required: ['ok'], properties: { ok: { type: 'boolean' }, detail: { type: 'string' } } } })
+  if (!recap || !recap.ok) throw new Error(`Inventory: second capture failed: ${(recap && recap.detail) || 'agent died'}`)
   await agent(`Write the file ${runDir}/Inventory.done containing the word done. Touch nothing else.`, { ...CHEAP, label: 'Inventory.done', phase: 'Inventory' })
   return stoppedBy
 }
