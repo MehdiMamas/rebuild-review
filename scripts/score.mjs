@@ -2,6 +2,7 @@
 // CLI: score.mjs measure <sourceDir> <goldenDir> <out.json> [--run run.json] [--rubric rubric.json]
 //      score.mjs source <runDir> original|rebuild
 //      score.mjs blind <runDir> <n> [--seed s] [--labels file]
+//      score.mjs labels <runDir> <blindFolder> '<json of judges>'   (writes score/.labels.json after verifying it)
 //      score.mjs check <judgeOut.json> <judgeDir>
 //      score.mjs gaps <runDir> <rubric.json>
 //      score.mjs collate <runDir> <rubric.json>
@@ -186,6 +187,22 @@ export function blind(runDir, n, { seed = randomBytes(16).toString('hex'), root 
   return { folder, judges };
 }
 
+// Guard against a mis-copied label map: each judge side's source must equal the source of the side the map says it is.
+// Where the two sides are identical either mapping is true. Returns the problems found.
+export function verifyLabels(runDir, folder, judges) {
+  const files = (side) => listSource(sourceOf(runDir, side).source).filter((f) => !f.split(path.sep).some(HIDE));
+  const same = (side, dir) => {
+    const real = sourceOf(runDir, side).source, want = files(side);
+    const have = fs.existsSync(dir) ? fs.readdirSync(dir, { recursive: true }).filter((f) => fs.statSync(path.join(dir, f)).isFile()).sort() : [];
+    return JSON.stringify(want) === JSON.stringify(have) && want.every((f) => fs.readFileSync(path.join(real, f)).equals(fs.readFileSync(path.join(dir, f))));
+  };
+  const problems = [];
+  judges.forEach((map, i) => {
+    for (const label of ['A', 'B']) if (!same(map[label], path.join(folder, `judge-${i}`, label, 'source'))) problems.push(`judge-${i}/${label} is not the ${map[label]} source`);
+  });
+  return problems;
+}
+
 // ---- check ----
 // A score stands only if its citation is a metric name in that side's measured.json, or a file under that side's folder
 // (optionally file:line with a line that exists).
@@ -287,6 +304,12 @@ if (process.argv[1] && path.resolve(process.argv[1]) === new URL(import.meta.url
     const r = blind(path.resolve(a), Number(b), seed === undefined ? {} : { seed });
     if (labelsOut) writeJson(labelsOut, r);
     console.log(JSON.stringify(r));
+  } else if (cmd === 'labels') {
+    const judges = JSON.parse(c).judges || JSON.parse(c);
+    const bad = verifyLabels(path.resolve(a), b, judges);
+    if (bad.length) { console.error(`label map does not match the folders: ${bad.join('; ')}`); process.exit(1); }
+    writeJson(path.join(a, 'score', '.labels.json'), { judges });
+    console.log('labels written');
   } else if (cmd === 'check') {
     const { kept, dropped } = checkJudge(a, b);
     writeJson(a, kept);

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { delta, gate, totals, checkJudge, blind, labelsFor, seeded, measure, collate, gaps } from './score.mjs';
+import { verifyLabels, delta, gate, totals, checkJudge, blind, labelsFor, seeded, measure, collate, gaps } from './score.mjs';
 
 const rubricFile = new URL('../rubric.json', import.meta.url).pathname;
 const rubric = JSON.parse(fs.readFileSync(rubricFile, 'utf8'));
@@ -132,4 +132,16 @@ test('blind leaves out .git, README, run files and stack.md, and keeps both side
     for (const l of ['A', 'B']) assert.equal(fs.readFileSync(path.join(folder, `judge-${j}`, l, 'source/src/x.js'), 'utf8'), m[l] === 'original' ? 'orig\n' : 'reb\n');
   });
   assert.ok(!all.some((f) => f.includes('labels')));
+});
+
+test('verifyLabels catches a mis-copied label map', () => {
+  const run = tmp(), root = tmp();
+  put(path.join(run, 'run.json'), { dir: 'app' });
+  put(path.join(run, 'work/app/x.js'), 'orig\n');
+  put(path.join(run, 'project/rebuild-run.json'), { dir: '.' });
+  put(path.join(run, 'project/x.js'), 'reb\n');
+  const { folder, judges } = blind(run, 3, { seed: 'v', root });
+  assert.deepEqual(verifyLabels(run, folder, judges), []);
+  const flipped = judges.map((m) => ({ A: m.B, B: m.A }));
+  assert.equal(verifyLabels(run, folder, flipped).length, 6);
 });

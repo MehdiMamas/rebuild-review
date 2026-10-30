@@ -159,7 +159,7 @@ Step 4 prints one line of JSON {folder, judges:[{A,B},...]}. Return ok true with
   if (judged.every(r => !r || !r.ok)) throw new Error('Score: no judge produced a usable answer')
 
   // 3. Judging is over: write the label map, then the skeptics look at each large gap.
-  mustRun(await agent(`Write the file ${SC}/.labels.json with exactly this content and nothing else: ${JSON.stringify({ judges })}`, { ...CHEAP, label: 'write-labels', phase: 'Score', schema: RUN_RESULT }), 'writing the label map')
+  mustRun(await agent(`Run exactly this one command (the JSON is single-quoted, copy it character for character): ${SCORE} labels ${runDir} ${folder} '${JSON.stringify({ judges })}' . Return ok true with its output as detail if it exited 0, otherwise ok false with the error. Change nothing else.`, { ...CHEAP, label: 'write-labels', phase: 'Score', schema: RUN_RESULT }), 'writing the label map')
   const gapList = await agent(`Run exactly: ${SCORE} gaps ${runDir} ${RUBRIC} . It prints a JSON list. Return ok true and gaps as that list (each entry copied exactly, as a JSON string in "json"), or ok false with the error as detail. Change nothing else.`,
     { ...CHEAP, label: 'score-gaps', phase: 'Score', schema: { type: 'object', required: ['ok'], properties: { ok: { type: 'boolean' }, detail: { type: 'string' }, gaps: { type: 'array', items: { type: 'object', required: ['id', 'json'], properties: { id: { type: 'string' }, json: { type: 'string' } } } } } } })
   mustRun(gapList, 'gaps')
