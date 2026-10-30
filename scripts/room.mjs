@@ -86,8 +86,18 @@ export function prepareRoom({ runDir, target, inputs }) {
     }
   }
   const proj = path.join(runDir, 'project');
-  if (fs.existsSync(proj)) fs.cpSync(proj, path.join(room, 'project'), { recursive: true });
-  dropEnv(path.join(room, 'project', 'rebuild-run.json'));
+  if (fs.existsSync(proj)) {
+    try {
+      // committed state only: a plain clone, so uncommitted and ignored files never arrive (and an uncommitted file does not fail the round)
+      const c = spawnSync('git', ['clone', '--quiet', proj, path.join(room, 'project')], { encoding: 'utf8' });
+      if (c.status !== 0) throw new Error('git clone of the previous project failed: ' + c.stderr.slice(0, 200));
+      spawnSync('git', ['-C', path.join(room, 'project'), 'remote', 'remove', 'origin'], { encoding: 'utf8' });
+      dropEnv(path.join(room, 'project', 'rebuild-run.json'));
+    } catch (e) {
+      fs.rmSync(room, { recursive: true, force: true });
+      throw e;
+    }
+  }
   return room;
 }
 
@@ -262,7 +272,11 @@ export function cloneProject(from, to) {
 export function replaceProject(runDir, n, roomProject) {
   const proj = path.join(runDir, 'project'), shelf = path.join(runDir, 'rebuild', `project-from-build-${n - 1}`);
   const had = fs.existsSync(proj);
-  if (had) { fs.rmSync(shelf, { recursive: true, force: true }); fs.renameSync(proj, shelf); }
+  if (had) {
+    fs.rmSync(shelf, { recursive: true, force: true });
+    fs.renameSync(proj, shelf);
+    spawnSync('git', ['-C', shelf, 'clean', '-fdxq'], { encoding: 'utf8' });
+  }
   try {
     cloneProject(roomProject, proj);
   } catch (e) {

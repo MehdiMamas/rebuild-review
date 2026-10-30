@@ -117,3 +117,14 @@ test('loop: run-error.txt makes every tested feature fail with that text', () =>
   assert.deepEqual(out.failing, ['F-001', 'F-002', 'F-003']);
   assert.match(fs.readFileSync(path.join(f.par, 'failures.md'), 'utf8'), /## F-001 \(keep\)\napp did not start/);
 });
+
+test('cleanDetail drops quoted test source, assertion fields and test-at lines from real node --test output; file:// paths are hidden', () => {
+  const ok = [
+    'test at a.test.mjs:3:1', '\u2716 ok one (3.3ms)', '  AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:', '  ', '    assert.ok(rows.length > 0)', '  ',
+    '      at TestContext.<anonymous> (file:///work/a.test.mjs:3:48)', '    generatedMessage: true,', "    code: 'ERR_ASSERTION',", '    actual: false,', '    expected: true,', "    operator: '==',",
+  ].join('\n');
+  assert.equal(cleanDetail(ok), '\u2716 ok one (3.3ms)\n    actual: false,\n    expected: true,');
+  const eq = ['test at a.test.mjs:4:1', '\u2716 eq (0.1ms)', '  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:', '  ', '  3 !== 4', '  ', "    operator: 'strictEqual',"].join('\n');
+  assert.equal(cleanDetail(eq), '\u2716 eq (0.1ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  3 !== 4\n  ');
+  assert.equal(cleanDetail('failed in file:///Users/x/y/a.mjs:3 here'), 'failed in <path> here');
+});
