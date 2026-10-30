@@ -60,8 +60,9 @@ async function open(browser, origin, url, opts = {}) {
   return { context, rec, page, faults, api, go: () => page.goto(url, { waitUntil: 'load' }) };
 }
 
-export async function runProbes({ browser, origin, screens }) {
+export async function runProbes({ browser, origin, screens, timings = [] }) {
   const out = [];
+  let worstMs = null;
   const add = (probe, screen, passed, evidence) => out.push({ probe, screen, passed, evidence });
 
   for (const s of screens) {
@@ -101,6 +102,27 @@ export async function runProbes({ browser, origin, screens }) {
       }
       add('focus-lost', s.id, lost.length === 0, lost.length ? lost.join('; ') : `${count} field(s) kept focus while typing`);
       add('input-delay', s.id, worst < 50, `slowest input event ${Math.round(worst)} ms at 4x CPU slowdown${worstField ? ` in ${worstField}` : ''}; budget 50 ms`);
+      await t.context.close();
+    }
+
+    // Script time per keystroke: first text input, CPU 4x slower, 5 characters 100 ms apart. Budget one frame (16 ms).
+    {
+      const t = await open(browser, origin, url);
+      await t.go();
+      await t.page.waitForLoadState('networkidle').catch(() => {});
+      const field = t.page.locator('input:not([type=hidden]):not([type=checkbox]):not([type=radio]):not([type=button]):not([type=submit]), textarea').first();
+      if ((await field.count()) && (await field.isVisible())) {
+        const cdp = await t.context.newCDPSession(t.page);
+        await cdp.send('Performance.enable');
+        await cdp.send('Emulation.setCPUThrottlingRate', { rate: 4 });
+        const script = async () => (await cdp.send('Performance.getMetrics')).metrics.find((m) => m.name === 'ScriptDuration').value;
+        await field.click();
+        const before = await script();
+        for (const ch of 'abcde') { await t.page.keyboard.type(ch); await sleep(100); }
+        const ms = ((await script()) - before) * 1000 / 5;
+        worstMs = Math.max(worstMs ?? 0, ms);
+        add('script-cost-per-key', s.id, ms <= 16, `${ms.toFixed(1)} ms of script per keystroke at 4x CPU slowdown; budget 16 ms`);
+      }
       await t.context.close();
     }
 
@@ -187,5 +209,6 @@ export async function runProbes({ browser, origin, screens }) {
       }
     }
   }
+  if (worstMs !== null) timings.push({ name: 'script-ms-per-key', value: Math.round(worstMs * 10) / 10, unit: 'ms' });
   return out;
 }

@@ -80,6 +80,10 @@ for (const t of table) console.log(`${t.id} | ${t.probe} | ${t.flagged ? 'FLAGGE
 const must = ['D2', 'D3', 'D5', 'D6', 'D7'];
 check('3 probes flag D2 D3 D5 D6 D7 (D1 and D4 reported only)', must.every((id) => table.find((t) => t.id === id).flagged), `required missed: ${must.filter((id) => !table.find((t) => t.id === id).flagged).join(' ') || 'none'}; D1 ${table.find((t) => t.id === 'D1').flagged ? 'caught' : 'NOT caught'}; D4 ${table.find((t) => t.id === 'D4').flagged ? 'caught' : 'NOT caught'}`);
 
+// Test 3b: the script-cost probe wrote its number. Printed so #9 can compare it between original and rebuild.
+const sm = json(path.join(g1, 'timings.json')).find((t) => t.name === 'script-ms-per-key');
+check('3b script-ms-per-key is in timings.json', !!sm && typeof sm.value === 'number', sm ? `${sm.value} ${sm.unit} per key at 4x CPU slowdown (budget 16 ms); D1 ${sm.value > 16 ? 'flagged' : 'not flagged'}` : 'missing');
+
 // Test 4: a second run gives the same files and screen list.
 const run2 = setupRun('run2', 4234);
 runCapture(run2, ['--states', states]);
