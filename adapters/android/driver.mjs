@@ -135,18 +135,25 @@ export class Device {
     this.density = s.density;
   }
   resetConfig() { adb('shell', 'wm', 'size', 'reset'); adb('shell', 'wm', 'density', 'reset'); adb('shell', 'cmd', 'uimode', 'night', 'auto'); }
-  async settle() {
-    let nodes = [];
-    for (let i = 0; i < 20 && nodes.length < 3; i++) { await sleep(400); nodes = await this.dump(); }
-    await sleep(1200); // let the first request finish
-    return this.dump();
+  // Dump until two dumps in a row show the same texts (the screen stopped changing), at most ~8 s.
+  async stable(minNodes = 3) {
+    const key = (ns) => ns.map((n) => n.text + '|' + n.desc).join('\n');
+    let prev = null, nodes = [];
+    for (let i = 0; i < 16; i++) {
+      nodes = await this.dump();
+      if (nodes.length >= minNodes && prev !== null && key(nodes) === prev) return nodes;
+      prev = nodes.length >= minNodes ? key(nodes) : null;
+      await sleep(500);
+    }
+    return nodes;
   }
+  async settle() { await sleep(600); return this.stable(); }
   // Fresh start, then optionally replay a list of recorded taps.
   async reopen(steps = []) {
     this.launch();
     let nodes = await this.settle();
-    for (const s of steps) { s.long ? this.longPress(s.at) : this.tap(s.at); await sleep(900); }
-    return steps.length ? this.dump() : nodes;
+    for (const s of steps) { s.long ? this.longPress(s.at) : this.tap(s.at); await sleep(500); nodes = await this.stable(1); }
+    return nodes;
   }
   // The control a person means by this name: accessible name or text, exact first.
   find(nodes, name, { editable = false } = {}) {

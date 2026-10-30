@@ -3,7 +3,7 @@
 import { sleep, scrub } from '../web/context.mjs';
 import { adb, center, labelBelow, norm } from './driver.mjs';
 
-export const BUDGET = { touchDp: 48, jankyPct: 25, minFrames: 20, repeatCount: 4, repeatWindowMs: 2000, slowMs: 3000 };
+export const BUDGET = { touchDp: 48, jankyPct: 25, minFrames: 20, repeatCount: 4, repeatWindowMs: 3000, slowMs: 3000 };
 const ERROR_TEXT = /error|fail|could ?n.?t|could not|unable|try again|retry|went wrong|offline|invalid|not saved/i;
 const LOADING_TEXT = /load|wait|saving|sending|submitting|progress|spinner|busy|please/i;
 const dp = (px, density) => Math.round((px * 160) / density);
