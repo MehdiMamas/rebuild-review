@@ -13,3 +13,8 @@ jobs:
         run: node -e "for (const f of ['plugin','marketplace']) JSON.parse(require('fs').readFileSync('.claude-plugin/'+f+'.json','utf8'))"
       - name: Skill and workflow exist
         run: node -e "for (const f of ['skills/rebuild-review/SKILL.md','workflows/rebuild-review.js']) require('fs').accessSync(f)"
+      - name: Script tests
+        run: |
+          (cd adapters/web && npm install --no-audit --no-fund)
+          node --test scripts/visual-diff.test.mjs
+          node --test scripts/check-features.test.mjs
