@@ -42,3 +42,11 @@ jobs:
       - name: Adapter tests
         working-directory: adapters/web
         run: npm test
+      - name: Checker control (every planted item reads present on the original)
+        run: |
+          T=$(mktemp -d)
+          node benchmark/init-history.mjs "$T/target" > /dev/null
+          mkdir -p "$T/run"
+          git clone -q "$T/target" "$T/run/work"
+          echo '{"platform":"web","dir":"app","install":"npm install --no-audit --no-fund","build":"npm run build","start":"node server.mjs","address":"http://127.0.0.1:4471"}' > "$T/run/run.json"
+          node benchmark/score-rebuild.mjs "$T/run" --control
