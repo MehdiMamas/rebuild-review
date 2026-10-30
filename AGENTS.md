@@ -3,10 +3,14 @@
 Claude Code plugin: a one-shot review that rebuilds a project from its behaviour and
 rendered output, then scores the rebuild against the original. See README.md.
 
-## Status
+## Install and test
 
-Planning. Nothing is built yet, so there is no setup, build, test or deploy step.
-The design and the ordered work list are in issue #1. Update this file when that changes.
+- Install: `claude plugin marketplace add MehdiMamas/rebuild-review`, then `claude plugin install rebuild-review@rebuild-review`.
+- Run: `/rebuild-review:rebuild-review <target-path>`. It makes `<target>-rebuild-review/<run-id>/` next to the target and starts the workflow `rebuild-review:rebuild-review-run`. The seven phases are stubs that write `<Phase>.done`; finished phases are skipped on a rerun with the same run folder.
+- Validate: `claude plugin validate .`
+- Test without installing: `claude -p "/rebuild-review:rebuild-review <path>" --plugin-dir <this checkout> --permission-mode bypassPermissions`, against a throwaway git repo; its `git status` must stay clean.
+- Gotcha: the skill and the workflow must not share a name. With both called `rebuild-review:rebuild-review`, the call goes straight to the workflow and the skill text never runs.
+- Gotcha: a clean `CLAUDE_CONFIG_DIR` has no login, so `claude -p` cannot run there; use `--plugin-dir`.
 
 ## Conventions
 
