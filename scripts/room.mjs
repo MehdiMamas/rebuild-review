@@ -99,7 +99,7 @@ export function writeSettings(room, { denyPaths, only }) {
       failIfUnavailable: true,
       allowUnsandboxedCommands: false,
       filesystem: { denyRead: denyPaths },
-      network: { allowedDomains: REGISTRIES },
+      network: { allowedDomains: REGISTRIES, strictAllowlist: true },
     },
     permissions: { deny: denyPaths.flatMap((p) => [`Read(/${p})`, `Read(/${p}/**)`]) },
   };
@@ -108,13 +108,13 @@ export function writeSettings(room, { denyPaths, only }) {
   fs.writeFileSync(path.join(room, '.claude', 'settings.json'), JSON.stringify(settings, null, 2));
 }
 
-export function runChild({ room, prompt, model, maxBudgetUsd, transcriptPath, settings, mode = PERMISSION_MODE }) {
+export function runChild({ room, prompt, model, maxBudgetUsd, transcriptPath, mode = PERMISSION_MODE }) {
   const env = { PATH: process.env.PATH, HOME: process.env.HOME };
   for (const k of ['TMPDIR', 'USER', 'LANG', 'ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN']) if (process.env[k]) env[k] = process.env[k];
   const args = ['-p', '--model', model, '--max-budget-usd', String(maxBudgetUsd), '--permission-mode', mode,
     '--setting-sources', 'project', '--disallowedTools', 'WebFetch', 'WebSearch', '--disable-slash-commands',
     '--strict-mcp-config', '--no-session-persistence', '--output-format', 'stream-json', '--verbose'];
-  if (settings) args.push('--settings', settings);
+  args.push('--settings', path.join(room, '.claude', 'settings.json'));
   const out = fs.openSync(transcriptPath, 'w');
   return new Promise((resolve) => {
     const c = spawn('claude', args, { cwd: room, env, stdio: ['pipe', out, out] });
