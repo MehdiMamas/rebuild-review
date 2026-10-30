@@ -73,6 +73,16 @@ test('check drops a missing file and a line past the end, keeps a metric name an
   assert.deepEqual(dropped.map((x) => x.reason).sort(), ['file does not exist', 'file does not exist', 'file does not exist', 'line 4 past the end of the file'].sort());
 });
 
+test('labels alternate after the first judge, so both orders occur for any seed', () => {
+  for (const seed of ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', '1', '2', '3', '4']) {
+    const labels = labelsFor(3, seeded(seed));
+    assert.equal(labels.length, 3);
+    for (let i = 1; i < 3; i++) assert.notEqual(labels[i].A, labels[i - 1].A, `seed ${seed} judge ${i}`);
+    assert.ok(labels.some((m) => m.A === 'original') && labels.some((m) => m.A === 'rebuild'), `seed ${seed}`);
+  }
+  assert.equal(new Set(['a', 'b', 'c', 'd', 'e', 'f'].map((s) => labelsFor(3, seeded(s))[0].A)).size, 2);
+});
+
 test('a fixed shuffle maps A and B back correctly through collate', () => {
   const run = tmp();
   put(path.join(run, 'parity/rebuild.json'), [{ feature: 'F-001', passed: true }]);

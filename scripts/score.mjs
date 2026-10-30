@@ -156,8 +156,10 @@ export function sourceOf(runDir, side) {
 // ---- blind ----
 const HIDE = (n) => n === 'run.json' || n === 'rebuild-run.json' || n === 'stack.md' || /^README/i.test(n);
 
+// The first judge's labels are random; each next judge gets the opposite order, so both orders occur in every run.
 export function labelsFor(n, rng) {
-  return Array.from({ length: n }, () => (rng() < 0.5 ? { A: 'original', B: 'rebuild' } : { A: 'rebuild', B: 'original' }));
+  const first = rng() < 0.5;
+  return Array.from({ length: n }, (_, i) => ((first !== (i % 2 === 1)) ? { A: 'original', B: 'rebuild' } : { A: 'rebuild', B: 'original' }));
 }
 export function seeded(seed) { // mulberry32 from a hash of the seed
   let a = createHash('sha256').update(String(seed)).digest().readUInt32LE(0);
