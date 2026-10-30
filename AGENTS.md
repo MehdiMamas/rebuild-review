@@ -6,7 +6,7 @@ what it renders, then scores the rebuild against the original. See README.md.
 ## Install and test
 
 - Install: `claude plugin marketplace add MehdiMamas/rebuild-review`, then `claude plugin install rebuild-review@rebuild-review`.
-- Run: `/rebuild-review:rebuild-review <target-path>`. It makes `<target>-rebuild-review/<run-id>/` next to the target and starts the workflow `rebuild-review:rebuild-review-run`. The seven phases are stubs that write `<Phase>.done`; finished phases are skipped on a rerun with the same run folder.
+- Run: `/rebuild-review:rebuild-review <target-path>`. It makes `<target>-rebuild-review/<run-id>/` next to the target and starts the workflow `rebuild-review:rebuild-review-run`. Phases not described below are stubs that write `<Phase>.done`; finished phases are skipped on a rerun with the same run folder.
 - Validate: `claude plugin validate .`
 - Test without installing: `claude -p "/rebuild-review:rebuild-review <path>" --plugin-dir <this checkout> --permission-mode bypassPermissions`, against a throwaway git repo; its `git status` must stay clean.
 - Gotcha: the skill and the workflow must not share a name. With both called `rebuild-review:rebuild-review`, the call goes straight to the workflow and the skill text never runs.
@@ -57,6 +57,14 @@ what it renders, then scores the rebuild against the original. See README.md.
 - Change weights or floors in `rubric.json` only; no code reads them as constants. Never tune them to make a fixture pass.
 - Compatibility is narrow: accessibility violations and horizontal overflow at 390 px, Chromium only. The output says "other browsers: not checked".
 - Tests: `node --test scripts/score.test.mjs`; `cd adapters/web && npm test` (check 3c prints the new timings).
+
+## Report phase
+
+- Files: `scripts/report.mjs` (`verdict`, `check-actions`, `render`), `prompts/{compare,actions}.md`, `rubric.json` key `verdict` (`adoptOverall` 15, `worseValue` -0.15, `betterValue` 0.15, from phase 1's same-against-same noise limits; never tune them to a fixture). Writes `report/index.html` and `Report.done`.
+- Code decides the verdict: `adopt` (gate passed, overall >= adoptOverall, no value delta <= worseValue), `port` (not adopt, some value delta > 0.15), else `leave`; no score is `leave`. A sonnet agent only proposes `report/actions.proposed.json` (`evidence: [{kind: metric|file|shot|feature, ref}]`); `check-actions` drops any action with a false citation (listed in `actions.dropped.json`).
+- The page is one file: no script, strict CSP, images embedded (at most 6 pairs and 8 MB, the rest counted), every string escaped. `compare.md` must use `## <value>` with `### was`, `### now`, `### should`. `parity/rounds.json` and `parity/loop-stop.txt` are optional.
+- The report is private: the skill publishes it with the Artifact tool when present and the target is not sensitive; otherwise only a `file://` link.
+- Tests: `node --test scripts/report.test.mjs`.
 
 ## Conventions
 

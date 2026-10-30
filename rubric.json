@@ -1,5 +1,6 @@
 {
   "gate": { "minPassRate": 0.95 },
+  "verdict": { "adoptOverall": 15, "worseValue": -0.15, "betterValue": 0.15 },
   "values": {
     "speed": {
       "weight": 0.4,
