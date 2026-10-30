@@ -1,0 +1,6 @@
+{
+  "name": "rebuild-review",
+  "version": "0.1.0",
+  "description": "One-shot review that rebuilds a project from its behaviour and rendered output, then scores the rebuild against the original.",
+  "author": { "name": "MehdiMamas" }
+}

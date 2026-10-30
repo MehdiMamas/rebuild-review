@@ -1,0 +1,15 @@
+name: ci
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  validate:
+    runs-on: [self-hosted, light]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Manifests parse
+        run: node -e "for (const f of ['plugin','marketplace']) JSON.parse(require('fs').readFileSync('.claude-plugin/'+f+'.json','utf8'))"
+      - name: Skill and workflow exist
+        run: node -e "for (const f of ['skills/rebuild-review/SKILL.md','workflows/rebuild-review.js']) require('fs').accessSync(f)"
