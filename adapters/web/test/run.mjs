@@ -85,6 +85,19 @@ check('3 probes flag D2 D3 D5 D6 D7 (D1 and D4 reported only)', must.every((id) 
 const sm = json(path.join(g1, 'timings.json')).find((t) => t.name === 'script-ms-per-key');
 check('3b script-ms-per-key is in timings.json', !!sm && typeof sm.value === 'number', sm ? `${sm.value} ${sm.unit} per key at 4x CPU slowdown (budget 16 ms); D1 ${sm.value > 16 ? 'flagged' : 'not flagged'}` : 'missing');
 
+// Test 3c: the score inputs. Per screen lcp, cls, bytes, heap-mb, overflow-narrow; inp-ms and build-ms once; a11y-violations.json one row per screen.
+{
+  const tm = json(path.join(g1, 'timings.json'));
+  const has = (n) => tm.find((t) => t.name === n && typeof t.value === 'number');
+  const per = ['lcp', 'cls', 'bytes', 'heap-mb', 'overflow-narrow'];
+  const missing = [...m1.screens.flatMap((s) => per.map((k) => `${s.id}.${k}`)), 'inp-ms', 'build-ms'].filter((n) => !has(n));
+  const af = path.join(g1, 'a11y-violations.json');
+  const rows = fs.existsSync(af) ? json(af) : [];
+  const rowsOk = rows.length === m1.screens.length && rows.every((r) => typeof r.screen === 'string' && Array.isArray(r.violations) && !r.error);
+  const show = tm.filter((t) => /\.(lcp|cls|bytes|heap-mb|overflow-narrow)$|^(inp-ms|build-ms)$/.test(t.name)).map((t) => `${t.name}=${t.value}${t.unit}`).join(' ');
+  check('3c score timings and a11y-violations.json exist', missing.length === 0 && rowsOk, `missing: ${missing.join(' ') || 'none'}; ${show}; a11y ${rows.map((r) => `${r.screen}:${r.violations.map((v) => `${v.id}x${v.nodes}`).join(',') || 'none'}`).join(' ')}`);
+}
+
 // Test 4: a second run gives the same files and screen list.
 const run2 = setupRun('run2', 4234);
 runCapture(run2, ['--states', states]);

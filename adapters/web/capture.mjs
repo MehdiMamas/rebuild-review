@@ -6,6 +6,7 @@ import { chromium } from 'playwright';
 import { makeContext, runStep, sleep, scrub } from './context.mjs';
 import { startApp } from './app.mjs';
 import { runProbes } from './probes.mjs';
+import { measureScreens } from './metrics.mjs';
 
 const arg = (n) => { const i = process.argv.indexOf(`--${n}`); return i > 0 ? process.argv[i + 1] : undefined; };
 const appFile = path.resolve(arg('app') || '');
@@ -13,7 +14,7 @@ const out = path.resolve(arg('out') || '');
 const statesFile = arg('states');
 const run = JSON.parse(fs.readFileSync(appFile, 'utf8'));
 if (run.platform !== 'web') throw new Error(`web adapter cannot capture platform "${run.platform}"`);
-const { origin, workDir, stop } = await startApp(run, appFile);
+const { origin, workDir, stop, buildMs } = await startApp(run, appFile);
 const SIZES = [{ w: 390, h: 844 }, { w: 1440, h: 900 }];
 const THEMES = ['light', 'dark'];
 const MAX_SCREENS = 30;
@@ -113,6 +114,8 @@ if (statesFile) {
 
 // 4. Probes.
 const probes = await runProbes({ browser, origin, screens, timings });
+const a11y = await measureScreens({ browser, origin, screens, timings, probes });
+if (buildMs !== null) timings.push({ name: 'build-ms', value: buildMs, unit: 'ms' });
 await browser.close();
 stop();
 
@@ -128,6 +131,7 @@ write(path.join(out, 'manifest.json'), {
 write(path.join(out, 'network.har'), { log: { version: '1.2', creator: { name: 'rebuild-review web adapter', version: '1' }, entries: har } });
 write(path.join(out, 'timings.json'), timings);
 write(path.join(out, 'probes.json'), probes);
+write(path.join(out, 'a11y-violations.json'), a11y);
 write(path.join(out, 'console.log'), consoleLines.join('\n') + (consoleLines.length ? '\n' : ''));
 console.log(`captured ${screens.length} screens, ${stateIds.length} states, ${probes.filter((p) => !p.passed).length} probe flags -> ${out}`);
 process.exit(0);

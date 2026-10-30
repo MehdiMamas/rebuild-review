@@ -23,6 +23,7 @@ jobs:
           node --test scripts/check-features.test.mjs
           node --test scripts/parity-results.test.mjs
           node --test scripts/room.test.mjs
+          node --test scripts/score.test.mjs
 
   web-adapter:
     runs-on: ubuntu-latest
