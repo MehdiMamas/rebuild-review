@@ -12,3 +12,12 @@ test('fails on an import line', () => bad("import React from 'react'"));
 test('fails on a verbatim 40 char run', () => bad('Total: computeTheTotalOfAllTheItemsInTheCart(items) is shown', src));
 test('passes on plain prose', () => assert.deepEqual(checkText('F-001 Search filters tasks as you type.\nGiven the list, when the user types, then rows narrow.', src), []));
 test('passes on a button or route in given/when/then', () => assert.deepEqual(checkText('Given the board, when the user clicks the "Save" button on the /legacy route, then it shows Saved.', src), []));
+test('passes on product names ending in .js', () => {
+  assert.deepEqual(checkText('- Server: Node.js built-in http module', []), []);
+  assert.deepEqual(checkText('Built with Vue.js and Next.js', []), []);
+});
+test('still fails on real .js paths', () => {
+  for (const t of ['see src/Node.js', 'server.js', 'node.js']) {
+    assert.ok(checkText(t, []).some((p) => p.includes('source file path')), t);
+  }
+});
