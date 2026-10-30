@@ -27,9 +27,26 @@ golden/network.har         every request and response, secrets removed
 golden/timings.json        list of { name, value, unit }
 golden/probes.json         list of { probe, screen, passed, evidence }; passed=false means the probe flagged a problem
 golden/console.log         errors the app printed
+golden/a11y-violations.json  optional: list of { screen, violations: [{ id, impact, nodes }] }
 ```
 
 Screenshots are taken at a narrow and a wide size, in light and dark theme.
+
+## Score outputs (optional)
+
+The score phase reads these `timings.json` names. An adapter that lacks one shows up as "not measured" in the score, never as 0. Per-screen names are `<screen>.<name>`; the score uses the worst across screens.
+
+| name | meaning |
+|---|---|
+| `<screen>.lcp` (ms), `<screen>.cls` | largest contentful paint and cumulative layout shift, wide size, light theme |
+| `<screen>.bytes` | encoded bytes transferred on an uncached load |
+| `<screen>.heap-mb` | JS heap in use after load |
+| `<screen>.overflow-narrow` (px) | horizontal overflow at the narrow size, at least 0 |
+| `inp-ms` | stand-in for INP: the slowest input event in the typing probe. One typing run, not field INP |
+| `build-ms` | time of the `build` command (install is not timed) |
+| `script-ms-per-key` | see Probes |
+
+`a11y-violations.json` lists accessibility rule violations per screen. Compatibility is measured narrowly: Chromium only, so other browsers are reported as not checked.
 
 ## states.json
 
@@ -74,4 +91,4 @@ The web adapter lives in `adapters/web/`. Address is a localhost URL. It starts 
 `install`, `build` and `start` in `work/<dir>`, with the port in the `PORT` environment variable.
 It drives Chromium: crawl by following links and clicking buttons on the app's own origin, sizes
 390 and 1440 wide, `render.html` and `render.css.json` as the render files, the accessibility tree as
-`a11y.json`, a HAR as `network.har`. Probes are in `probes.mjs`. Parity is `parity.mjs`: each test is a `node --test` file that imports Playwright by absolute path from `adapters/web/node_modules`.
+`a11y.json`, a HAR as `network.har`. Probes are in `probes.mjs`; the score measurements (LCP, CLS, bytes, heap, narrow overflow, axe-core violations) are in `metrics.mjs`. Parity is `parity.mjs`: each test is a `node --test` file that imports Playwright by absolute path from `adapters/web/node_modules`.
