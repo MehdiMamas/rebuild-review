@@ -57,7 +57,6 @@ what it renders, then scores the rebuild against the original. See README.md.
 - Change weights or floors in `rubric.json` only; no code reads them as constants. Never tune them to make a fixture pass.
 - Compatibility is narrow: accessibility violations and horizontal overflow at 390 px, Chromium only. The output says "other browsers: not checked".
 - Tests: `node --test scripts/score.test.mjs`; `cd adapters/web && npm test` (check 3c prints the new timings).
-
 ## Report phase
 
 - Files: `scripts/report.mjs` (`verdict`, `check-actions`, `render`), `prompts/{compare,actions}.md`, `rubric.json` key `verdict` (`adoptOverall` 15, `worseValue` -0.15, `betterValue` 0.15, from phase 1's same-against-same noise limits; never tune them to a fixture). Writes `report/index.html` and `Report.done`.
@@ -65,6 +64,14 @@ what it renders, then scores the rebuild against the original. See README.md.
 - The page is one file: no script, strict CSP, images embedded (at most 6 pairs and 8 MB, the rest counted), every string escaped. `compare.md` must use `## <value>` with `### was`, `### now`, `### should`. `parity/rounds.json` and `parity/loop-stop.txt` are optional.
 - The report is private: the skill publishes it with the Artifact tool when present and the target is not sensitive; otherwise only a `file://` link.
 - Tests: `node --test scripts/report.test.mjs`.
+
+## Score phase (phase 2: the rebuild beats the original)
+
+- Checker: `node benchmark/score-rebuild.mjs <runDir> [--out file] [--control]`. It starts the original (`run.json`) and the rebuild (`project/rebuild-run.json`) one after the other with `startApp`, runs every planted-problem check on both and prints a table: item, original, rebuild, evidence. Exit 0 only if the original has every item and the rebuild has beaten every one. `--control` checks only the original (every D, H and B item must read `present`).
+- Written from `answers.json` but black-box: controls are found by role and label, slow and failed requests are made with `page.route`; bloat (B1 to B4) is read from the source files; D1 compares `script-ms-per-key` in `golden/timings.json` and `golden-rebuild/timings.json`.
+- Results are `present`, `gone` or `could not check`; the last never counts as beaten. Beaten means `gone` for D and B items, `present` for H items (features that must survive).
+- Never tune the checker, `rubric.json`, tests or prompts to get a pass; an item the rebuild does not beat is reported with its cause.
+- `score.mjs blind` flips the label order for each judge after the first, so both orders occur in every run. Test: `node --test scripts/score.test.mjs`.
 
 ## Conventions
 
