@@ -145,6 +145,18 @@ for (const phase of PHASES) {
     ran.push(phase)
     continue
   }
+  if (phase === 'Stack' || phase === 'Rebuild') {
+    const mode = phase === 'Stack' ? 'stack' : 'build'
+    // The room script does the work in a clean room (scripts/room.mjs); the agent only runs it and reports.
+    const r = await agent(
+      `Run this command with the Bash tool and run_in_background true, then wait until it exits (do not poll in a loop; check once it has finished): node ${pluginRoot}/scripts/room.mjs ${mode} --target ${target} --run-dir ${runDir}\nWhen it exits, its last lines are "RESULT <file>" and a JSON line. Read that result file and return ok and reason from it. Change nothing else, and never read anything under ${target} or ${runDir}/work.`,
+      { model: 'sonnet', effort: 'low', label: phase, phase, schema: { type: 'object', required: ['ok'], properties: { ok: { type: 'boolean' }, reason: { type: 'string' } } } },
+    )
+    if (!r || !r.ok) return { ran, stopped: phase, reason: (r && r.reason) || 'room agent died' }
+    await agent(`Write the file ${runDir}/${phase}.done containing the word done. Touch nothing else.`, { ...CHEAP, label: `${phase}.done`, phase })
+    ran.push(phase)
+    continue
+  }
   await agent(
     `Stub for the ${phase} phase. Write a file at ${runDir}/${phase}.done containing the word done. Touch nothing else. The target ${target} must not be modified.`,
     { ...CHEAP, label: phase, phase },
