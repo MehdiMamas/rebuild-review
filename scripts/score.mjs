@@ -9,6 +9,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { createHash, randomBytes } from 'node:crypto';
 
 const readJson = (f) => JSON.parse(fs.readFileSync(f, 'utf8'));
 const writeJson = (f, v) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, JSON.stringify(v, null, 2)); };
@@ -68,7 +69,7 @@ export function listSource(dir) {
     const walk = (d) => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? (SKIP_DIRS.has(e.name) ? [] : walk(path.join(d, e.name)).map((f) => path.join(e.name, f))) : [e.name]));
     rel = walk(dir);
   }
-  return rel.filter((f) => !f.split(path.sep).some((p) => SKIP_DIRS.has(p)) && !LOCKS.has(path.basename(f)) && fs.existsSync(path.join(dir, f)) && fs.statSync(path.join(dir, f)).isFile() && !isBinary(path.join(dir, f))).sort();
+  return rel.filter((f) => !f.split(path.sep).some((p) => SKIP_DIRS.has(p)) && !LOCKS.has(path.basename(f)) && !['run.json', 'rebuild-run.json'].includes(path.basename(f)) && fs.existsSync(path.join(dir, f)) && fs.statSync(path.join(dir, f)).isFile() && !isBinary(path.join(dir, f))).sort();
 }
 
 const lineCount = (f) => { const t = fs.readFileSync(f, 'utf8'); return t === '' ? 0 : t.split('\n').length - (t.endsWith('\n') ? 1 : 0); };
@@ -157,12 +158,12 @@ const HIDE = (n) => n === 'run.json' || n === 'rebuild-run.json' || n === 'stack
 export function labelsFor(n, rng) {
   return Array.from({ length: n }, () => (rng() < 0.5 ? { A: 'original', B: 'rebuild' } : { A: 'rebuild', B: 'original' }));
 }
-export function seeded(seed) { // mulberry32
-  let a = [...String(seed)].reduce((h, c) => (Math.imul(h ^ c.charCodeAt(0), 2654435761) >>> 0), 7);
+export function seeded(seed) { // mulberry32 from a hash of the seed
+  let a = createHash('sha256').update(String(seed)).digest().readUInt32LE(0);
   return () => { a = (a + 0x6d2b79f5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 }
 
-export function blind(runDir, n, { seed = Math.random(), root = os.tmpdir() } = {}) {
+export function blind(runDir, n, { seed = randomBytes(16).toString('hex'), root = os.tmpdir() } = {}) {
   const folder = fs.mkdtempSync(path.join(root, 'rr-judges-'));
   const judges = labelsFor(n, seeded(seed));
   const sides = { original: sourceOf(runDir, 'original'), rebuild: sourceOf(runDir, 'rebuild') };
