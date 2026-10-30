@@ -118,10 +118,40 @@ A feature marked "keep" gets a test asserting the behaviour. A feature marked "d
   const settled = await agent(`Run exactly: node ${q(pluginRoot + '/scripts/parity-results.mjs')} settle ${q(PAR)} ${q(runDir + '/features.md')} . Return ok true with its output as detail if it exited 0, otherwise ok false with the error. Change nothing else.`, { ...CHEAP, label: 'parity-settle', phase: 'Parity', schema: RUN_RESULT })
   mustRun(settled, 'settle')
 
-  // The rebuild, when there is one: same tests, same states, then the visual diff.
+  // The rebuild, when there is one: the suite runs on it, failures go back to the builder until it passes (code decides when to stop), then the visual diff.
   const RB = `${runDir}/project/rebuild-run.json`
-  const rb = await agent(`If ${RB} does not exist, return ok true with detail "no rebuild" and do nothing else. Otherwise read "platform" in ${runDir}/run.json (the adapter folder is ${ADAPTER}/<platform>; flutter uses the android folder). ${LONG} Run, in order: (1) node <adapter folder>/parity.mjs --app ${q(RB)} --tests ${q(TESTS)} --out ${q(PAR + '/rebuild.json')}; (2) node <adapter folder>/capture.mjs --app ${q(RB)} --out ${q(runDir + '/golden-rebuild')} --states ${q(INV + '/states.json')}; (3) only if step (2) exited 0, node ${q(pluginRoot + '/scripts/visual-diff.mjs')} ${q(runDir + '/golden')} ${q(runDir + '/golden-rebuild')} ${q(PAR + '/visual-diff.json')}. Return ok true with detail "rebuilt" if all three exited 0, otherwise ok false with the first error (if step (2) failed, do not run step (3)). Change nothing else.`, { model: 'sonnet', effort: 'low', label: 'parity-rebuild', phase: 'Parity', schema: RUN_RESULT })
-  mustRun(rb, 'the rebuild run')
+  const ADAPTER_PLAT = `Read "platform" in ${runDir}/run.json (the adapter folder is ${ADAPTER}/<platform>; flutter uses the android folder)`
+  const has_rb = await agent(`Return ok true if ${q(RB)} exists, otherwise ok false. Change nothing.`, { ...CHEAP, label: 'parity-rebuild-exists', phase: 'Parity', schema: RUN_RESULT })
+  if (has_rb && has_rb.ok) {
+    const suite = (label) => agent(`${ADAPTER_PLAT}. ${LONG} Delete ${q(PAR + '/rebuild.json')} and ${q(PAR + '/run-error.txt')} if they exist. Then run: node <adapter folder>/parity.mjs --app ${q(RB)} --tests ${q(TESTS)} --out ${q(PAR + '/rebuild.json')}. If it exits non-zero, write its error text to ${q(PAR + '/run-error.txt')}. Return ok true if it exited 0, otherwise ok false. Change nothing else.`, { model: 'sonnet', effort: 'low', label, phase: 'Parity', schema: RUN_RESULT })
+    const LOOP_SCHEMA = { type: 'object', required: ['action', 'reason', 'failing'], properties: { action: { type: 'string', enum: ['done', 'build', 'stop'] }, reason: { type: 'string' }, failing: { type: 'array', items: { type: 'string' } }, restored: { type: 'number' } } }
+    let restored = false
+    let started = true
+    for (let round = 1; ; round++) {
+      const ran = await suite(`parity-rebuild-run-${round}`)
+      started = !!(ran && ran.ok)
+      const d = await agent(`Run exactly: node ${q(pluginRoot + '/scripts/parity-results.mjs')} loop ${q(PAR)} ${q(runDir + '/features.md')} ${q(runDir)} . It prints one JSON line. Return its fields action, reason, failing and restored (leave restored out if it is not there). Change nothing else.`, { ...CHEAP, label: `parity-loop-${round}`, phase: 'Parity', schema: LOOP_SCHEMA })
+      if (!d) throw new Error('Parity: the loop agent died')
+      if (d.restored !== undefined) restored = true
+      if (d.action !== 'build') {
+        if (d.action === 'stop') await agent(`Write ${q(PAR + '/loop-stop.txt')} containing: ${d.reason}. Touch nothing else.`, { ...CHEAP, label: 'parity-loop-stop', phase: 'Parity' })
+        break
+      }
+      const b = await agent(`Run this command with the Bash tool with run_in_background true and timeout 7200000, then wait until it exits (do not poll in a loop; check once it has finished): node ${q(pluginRoot + '/scripts/room.mjs')} build --target ${q(target)} --run-dir ${q(runDir)} --failures ${q(PAR + '/failures.md')}\nWhen it exits, its last lines are "RESULT <file>" and a JSON line. Read that result file and return ok and reason from it. Change nothing else, and never read anything under ${target} or ${runDir}/work.`, { model: 'sonnet', effort: 'low', label: `parity-build-${round}`, phase: 'Parity', schema: { type: 'object', required: ['ok'], properties: { ok: { type: 'boolean' }, reason: { type: 'string' } } } })
+      if (!b || !b.ok) {
+        await agent(`Write ${q(PAR + '/loop-stop.txt')} containing: ${(b && b.reason) || 'build agent died'}. Touch nothing else.`, { ...CHEAP, label: 'parity-loop-stop', phase: 'Parity' })
+        break
+      }
+    }
+    if (restored) started = !!((await suite('parity-rebuild-run-final')) || {}).ok
+    if (started) {
+      const rb = await agent(`${ADAPTER_PLAT}. ${LONG} Run, in order: (1) node <adapter folder>/capture.mjs --app ${q(RB)} --out ${q(runDir + '/golden-rebuild')} --states ${q(INV + '/states.json')}; (2) only if step (1) exited 0, node ${q(pluginRoot + '/scripts/visual-diff.mjs')} ${q(runDir + '/golden')} ${q(runDir + '/golden-rebuild')} ${q(PAR + '/visual-diff.json')}. Return ok true with detail "rebuilt" if both exited 0, otherwise ok false with the first error (if step (1) failed, do not run step (2)). Change nothing else.`, { model: 'sonnet', effort: 'low', label: 'parity-rebuild', phase: 'Parity', schema: RUN_RESULT })
+      mustRun(rb, 'the rebuild capture')
+    } else {
+      await agent(`Append the line "the rebuild would not start, capture and visual diff skipped" to ${q(PAR + '/loop-stop.txt')}. Touch nothing else.`, { ...CHEAP, label: 'parity-loop-stop', phase: 'Parity' })
+    }
+  }
+
 
   const merged = await agent(`Run exactly: node ${q(pluginRoot + '/scripts/parity-results.mjs')} merge ${q(PAR)} ${q(runDir + '/features.md')} . If it exited 0, write ${runDir}/Parity.done containing the word done and return ok true with its output as detail; otherwise return ok false with the error. Touch nothing else.`, { ...CHEAP, label: 'Parity.done', phase: 'Parity', schema: RUN_RESULT })
   mustRun(merged, 'merge')
