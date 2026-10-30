@@ -8,6 +8,7 @@ import { execFileSync } from 'node:child_process';
 const RUN = 40;
 const EXT = 'jsx?|tsx?|mjs|cjs|vue|svelte|py|rb|go|rs|java|kt|swift|cs|cpp|c|h|php|scss|css|sh';
 const PATH_RE = new RegExp(`(?:^|[\\s\`'"(])[\\w@.-]*(?:/[\\w@.-]+)*[\\w-]\\.(?:${EXT})(?=$|[\\s\`'")\\]:,;.])`, 'i');
+const PRODUCT_NAMES = /(?<![\w/.-])(?:Node|Next|Nuxt|Vue|Three|D3|Express)\.js\b/g;
 const CODE_LINE_RES = [
   /^\s*import\s+[\w{*].*\sfrom\s+['"]/,
   /^\s*import\s+['"]/,
@@ -28,7 +29,7 @@ export function checkText(text, srcTexts = []) {
     const n = i + 1;
     if (/^\s*(```|~~~)/.test(line)) problems.push(`line ${n}: fenced code block`);
     else {
-      if (PATH_RE.test(line)) problems.push(`line ${n}: source file path`);
+      if (PATH_RE.test(line.replace(PRODUCT_NAMES, ''))) problems.push(`line ${n}: source file path`);
       if (CODE_LINE_RES.some((re) => re.test(line))) problems.push(`line ${n}: import or JSX-like line`);
     }
   });
