@@ -130,7 +130,6 @@ const JUDGES = 3
 const SCORE_AGENT = { model: 'sonnet', effort: 'medium' }
 
 async function runScore() {
-  const q = JSON.stringify
   const SC = `${runDir}/score`
   const SCORE = `node ${q(`${pluginRoot}/scripts/score.mjs`)}`
   const RUBRIC = `${pluginRoot}/rubric.json`
