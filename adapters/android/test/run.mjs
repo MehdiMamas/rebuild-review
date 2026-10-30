@@ -88,7 +88,7 @@ try {
     console.log('planted | probe | result | evidence');
     for (const t of table) console.log(`${t.id} | ${t.probe} | ${t.flagged ? 'FOUND' : t.explained ? 'MISSED (explained)' : 'MISSED'} | ${t.flagged ? t.evidence.slice(0, 120) : t.explained || ''}`);
     const missed = table.filter((t) => !t.flagged && !t.explained).map((t) => t.id);
-    check(`${fx} 2 every planted defect flagged and every hidden feature reached`, missed.length === 0, `missed: ${missed.join(' ') || 'none'}`);
+    check(`${fx} 2 every planted defect flagged and every hidden feature reached`, missed.length === 0, `${table.filter((t) => !t.flagged).length} of ${table.length} planted items missed (${table.filter((t) => !t.flagged).map((t) => t.id + (t.explained ? ' explained' : ' UNEXPLAINED')).join(', ') || 'none'}); unexplained: ${missed.join(' ') || 'none'}`);
 
     // Test 3: second run gives the same files and screen ids (timing values and background noise ignored).
     const run2 = setupRun(fx, 'run2');
