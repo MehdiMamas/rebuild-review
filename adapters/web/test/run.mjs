@@ -118,7 +118,9 @@ check('6 target git status is clean after the runs', status === '', status || 'c
   let started = false, refused = false;
   try { const a = await startApp(JSON.parse(read(f)), f); started = (await fetch(a.origin)).ok; a.stop(); } catch (e) { started = e.message; }
   try { await startApp({ platform: 'web', dir: rb, start: 'true', address: 'http://127.0.0.1:4236' }, f); } catch (e) { refused = /relative/.test(e.message); }
-  check('7 rebuild-run.json starts from its own folder with dir "."; absolute dir refused', started === true && refused, `started ${started}; absolute refused ${refused}`);
+  let escaped = false;
+  try { await startApp({ platform: 'web', dir: '../..', start: 'true', address: 'http://127.0.0.1:4236' }, f); } catch (e) { escaped = /stay inside/.test(e.message); }
+  check('7 rebuild-run.json starts from its own folder with dir "."; absolute dir and .. refused', started === true && refused && escaped, `started ${started}; absolute refused ${refused}; .. refused ${escaped}`);
 }
 
 fs.rmSync(tmp, { recursive: true, force: true });
