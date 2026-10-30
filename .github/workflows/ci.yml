@@ -6,9 +6,12 @@ on:
 
 jobs:
   validate:
-    runs-on: [self-hosted, light]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
       - name: Manifests parse
         run: node -e "for (const f of ['plugin','marketplace']) JSON.parse(require('fs').readFileSync('.claude-plugin/'+f+'.json','utf8'))"
       - name: Skill and workflow exist
@@ -20,3 +23,19 @@ jobs:
           node --test scripts/check-features.test.mjs
           node --test scripts/parity-results.test.mjs
           node --test scripts/room.test.mjs
+
+  web-adapter:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install
+        working-directory: adapters/web
+        run: |
+          npm install --no-audit --no-fund
+          npx playwright install --with-deps chromium
+      - name: Adapter tests
+        working-directory: adapters/web
+        run: npm test
