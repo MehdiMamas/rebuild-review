@@ -57,6 +57,7 @@ what it renders, then scores the rebuild against the original. See README.md.
 - Change weights or floors in `rubric.json` only; no code reads them as constants. Never tune them to make a fixture pass.
 - Compatibility is narrow: accessibility violations and horizontal overflow at 390 px, Chromium only. The output says "other browsers: not checked".
 - Tests: `node --test scripts/score.test.mjs`; `cd adapters/web && npm test` (check 3c prints the new timings).
+
 ## Report phase
 
 - Files: `scripts/report.mjs` (`verdict`, `check-actions`, `render`), `prompts/{compare,actions}.md`, `rubric.json` key `verdict` (`adoptOverall` 15, `worseValue` -0.15, `betterValue` 0.15, from phase 1's same-against-same noise limits; never tune them to a fixture). Writes `report/index.html` and `Report.done`.
