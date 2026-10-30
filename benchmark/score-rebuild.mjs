@@ -1,7 +1,7 @@
 // Phase 2 checker: does the rebuild beat the original on every planted problem?
 // node benchmark/score-rebuild.mjs <runDir> [--out file] [--control]
 // Written from answers.json, but both sides are black boxes: controls are found by role and label, slow and failed
-// requests are made here with page.route. Nothing is read from the app except its files (bloat) and timings.json (D1).
+// requests are made here with page.route. Nothing is read from the app except its files (bloat).
 // Results per item: present, gone, could not check. "could not check" never counts as beaten.
 // --control: only the original is checked; exit 0 only if every item reads present on it.
 import fs from 'node:fs';
@@ -233,6 +233,83 @@ const checks = {
     const said = /\bsaved\b/i.test(body), err = alert > 0 || /error|fail|couldn.?t|could not|unable|went wrong|try again/i.test(body);
     return [said && !err ? PRESENT : GONE, said ? (err ? 'Saved shows, and so does an error' : 'Saved shows after the save answered 500, with no alert or error text') : 'no "Saved" text after the save answered 500'];
   },
+  // D1: the list is multiplied to 2000 rows with page.route, then script time per keystroke in the search box is
+  // measured the way the script-cost-per-key probe does (4x CPU slowdown, 100 ms between keys).
+  async D1({ browser, origin }) {
+    const N = 2000;
+    let template = null, replaced = 0;
+    const listOf = (j) => {
+      const isRows = (a) => Array.isArray(a) && a.length > 0 && a.every((x) => x && typeof x === 'object' && !Array.isArray(x));
+      if (isRows(j)) return { rows: j, put: (rows) => rows };
+      if (j && typeof j === 'object') {
+        const k = Object.keys(j).find((key) => isRows(j[key]));
+        if (k) return { rows: j[k], put: (rows) => ({ ...j, [k]: rows }) };
+      }
+      return null;
+    };
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    await context.route('**/*', async (route) => {
+      const req = route.request();
+      if (new URL(req.url()).origin !== origin) return route.abort('blockedbyclient');
+      if (!['fetch', 'xhr'].includes(req.resourceType()) || req.method() !== 'GET') return route.fallback();
+      const res = await route.fetch();
+      let body = null;
+      try { body = await res.json(); } catch { return route.fulfill({ response: res }); }
+      const l = listOf(body);
+      if (!l) return route.fulfill({ response: res });
+      template = template || l.rows[0];
+      const rows = Array.from({ length: N }, (_, i) => {
+        const copy = { ...template };
+        for (const key of Object.keys(copy)) if (/^_?id$/i.test(key)) copy[key] = typeof copy[key] === 'number' ? 1000000 + i : `${copy[key]}-${i}`;
+        return copy;
+      });
+      replaced++;
+      return route.fulfill({ response: res, json: l.put(rows) });
+    });
+    const page = await context.newPage();
+    await page.goto(new URL('/', origin).toString(), { waitUntil: 'load' });
+    await page.waitForLoadState('networkidle').catch(() => {});
+    await sleep(500);
+    const done = async (r) => { await context.close(); return r; };
+    if (!template) return done([UNSURE, 'no JSON list response was found to multiply']);
+    const box = await searchBox(page);
+    if (!box) return done([UNSURE, 'no search box found by role, placeholder or label']);
+    const title = String(template.title ?? template.name ?? Object.values(template).find((v) => typeof v === 'string') ?? '');
+    const letter = title.trim()[0];
+    if (!letter) return done([UNSURE, 'the first list entry has no title text']);
+    const countRows = () => page.evaluate((t) => {
+      let n = 0;
+      for (const e of document.body.querySelectorAll('*')) if (e.textContent.includes(t) && ![...e.children].some((c) => c.textContent.includes(t))) n++;
+      return n;
+    }, title);
+    const rowsBefore = await countRows();
+    if (rowsBefore < N) return done([UNSURE, `only ${rowsBefore} row(s) rendered, fewer than ${N}`]);
+    const cdp = await context.newCDPSession(page);
+    await cdp.send('Performance.enable');
+    await cdp.send('Emulation.setCPUThrottlingRate', { rate: 4 });
+    const script = async () => (await cdp.send('Performance.getMetrics')).metrics.find((m) => m.name === 'ScriptDuration').value;
+    await box.click();
+    let typed = '', total = 0;
+    for (let k = 0; k < 5; k++) {
+      if (!title.toLowerCase().includes((typed + letter).toLowerCase())) {
+        await box.fill('');
+        typed = '';
+        await sleep(600);
+      }
+      const before = await script();
+      await page.keyboard.type(letter);
+      typed += letter;
+      await sleep(100);
+      total += (await script()) - before;
+    }
+    await sleep(800);
+    const rowsAfter = await countRows();
+    const ms = Math.round((total * 1000 / 5) * 10) / 10;
+    if (rowsAfter < N) return done([UNSURE, `only ${rowsAfter} row(s) rendered after typing "${typed}", fewer than ${N}`]);
+    const r = await done([ms > FLAG_MS ? PRESENT : GONE, `${ms} ms of script per keystroke at 4x CPU slowdown with ${rowsAfter} rows rendered (flag above ${FLAG_MS})`]);
+    r.ms = ms; r.rows = rowsAfter;
+    return r;
+  },
   async H1({ browser, origin }) {
     const t = await open(browser, origin);
     await t.go(); await t.settle();
@@ -288,17 +365,10 @@ const checks = {
   },
 };
 
-// D1 from the two timings files: the keystroke probe's number.
-export function d1(original, rebuild) {
-  const num = (f) => { const t = fs.existsSync(f) ? readJson(f).find((x) => x.name === 'script-ms-per-key') : null; return t ? t.value : null; };
-  const o = num(original), r = rebuild === undefined ? undefined : num(rebuild);
-  return { o, r };
-}
-
 export async function checkSide({ browser, origin, source }) {
   const res = {};
   for (const id of Object.keys(checks)) {
-    try { const [state, evidence] = await checks[id]({ browser, origin }); res[id] = { state, evidence }; }
+    try { const r = await checks[id]({ browser, origin }); res[id] = { state: r[0], evidence: r[1], ms: r.ms }; }
     catch (e) { res[id] = { state: UNSURE, evidence: String(e.message).split('\n')[0] }; }
   }
   for (const [id, [state, evidence]] of Object.entries(bloat(source))) res[id] = { state, evidence };
@@ -321,14 +391,17 @@ if (process.argv[1] && path.resolve(process.argv[1]) === new URL(import.meta.url
   const out = arg('out');
   const orig = await side(path.join(runDir, 'run.json'));
   const reb = control ? null : await side(path.join(runDir, 'project', 'rebuild-run.json'));
-  // D1: the original needs its number; see the note in the table.
-  const { o, r } = d1(path.join(runDir, 'golden', 'timings.json'), control ? undefined : path.join(runDir, 'golden-rebuild', 'timings.json'));
-  const d1o = o === null ? [UNSURE, 'script-ms-per-key missing in golden/timings.json'] : [o >= FLAG_MS ? PRESENT : GONE, `${o} ms per key (probe flags above ${FLAG_MS})`];
-  orig.D1 = { state: d1o[0], evidence: d1o[1] };
+  // D1 compares the two readings taken under the same 2000-row load. An original at or under the flag cannot show the
+  // problem, so D1 is "could not check" on both sides; nothing is changed to get a pass.
+  const o = orig.D1.ms;
+  if (orig.D1.state !== UNSURE && !(o > FLAG_MS)) orig.D1 = { state: UNSURE, evidence: `original reads ${orig.D1.ms} ms per key under the load, not above ${FLAG_MS}: the check cannot see the problem. ${orig.D1.evidence}` };
   if (reb) {
-    reb.D1 = r === null || o === null ? { state: UNSURE, evidence: 'script-ms-per-key missing in a timings file' }
-      : r < FLAG_MS || r <= o / 2 ? { state: GONE, evidence: `${r} ms per key against ${o} on the original (under ${FLAG_MS} or at least 50% lower)` }
-      : { state: PRESENT, evidence: `${r} ms per key against ${o} on the original` };
+    const r = reb.D1.ms;
+    if (orig.D1.state === UNSURE) reb.D1 = { state: UNSURE, evidence: `not judged: the original reading is unusable. rebuild: ${reb.D1.evidence}` };
+    else if (reb.D1.state !== UNSURE) {
+      const lower = r <= FLAG_MS || r <= o / 2;
+      reb.D1 = { state: lower ? GONE : PRESENT, evidence: `${r} ms per key against ${o} on the original under the same load, ${reb.D1.evidence.match(/with (\d+) rows/)[1]} rows on the rebuild (gone at or under ${FLAG_MS} ms or at least 50% lower)` };
+    }
   }
   const rows = IDS.map((id) => ({ id, what: WHAT[id], original: orig[id], rebuild: reb ? reb[id] : null }));
   const pad = (s, n) => String(s).padEnd(n);
