@@ -10,5 +10,5 @@ For each question, score A and B from 0 to 10 (10 is best) and cite one piece of
 
 Cite only files from the side you are scoring. A score without a valid citation is thrown away by code. Do not add scores up and do not give an overall verdict; code does the arithmetic.
 
-Write your answer to the output file named in your task as JSON only, a list with one entry per question:
+Write your answer to `answer.json` in your folder (the path is in your task) as JSON only, a list with one entry per question:
 `[{"value": "ux", "question": "<the question text>", "A": {"score": 6, "cite": "A/source/src/App.jsx:42"}, "B": {"score": 4, "cite": "B/screens/root/a11y.json"}}]`

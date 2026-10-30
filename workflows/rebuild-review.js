@@ -126,23 +126,24 @@ A feature marked "keep" gets a test asserting the behaviour. A feature marked "d
 }
 
 // ---- Score ----
-const SC = `${runDir}/score`
-const SCORE = `node ${pluginRoot}/scripts/score.mjs`
-const RUBRIC = `${pluginRoot}/rubric.json`
 const JUDGES = 3
 const SCORE_AGENT = { model: 'sonnet', effort: 'medium' }
 
 async function runScore() {
+  const q = JSON.stringify
+  const SC = `${runDir}/score`
+  const SCORE = `node ${q(`${pluginRoot}/scripts/score.mjs`)}`
+  const RUBRIC = `${pluginRoot}/rubric.json`
   const has = await agent(`Check that both ${runDir}/project/rebuild-run.json and ${runDir}/parity/parity.json exist. Return ok true if both do, otherwise ok false with detail naming the missing file(s). Change nothing.`, { ...CHEAP, label: 'score-inputs', phase: 'Score', schema: RUN_RESULT })
   if (!has || !has.ok) return { stopped: 'Score', reason: (has && has.detail) || 'there is no rebuild or parity result to score yet' }
   const mustRun = (r, what) => { if (!r || !r.ok) throw new Error(`Score: ${what} failed: ${(r && r.detail) || 'agent died'}`) }
 
   // 1. Measure both sides, then make the blind copies. Labels stay in this script's memory until judging ends.
   const prep = await agent(`Run these in order, stopping at the first error:
-(1) mkdir -p ${SC}
-(2) ${SCORE} measure "$(${SCORE} source ${runDir} original)" ${runDir}/golden ${SC}/original.json --run ${runDir}/run.json
-(3) ${SCORE} measure "$(${SCORE} source ${runDir} rebuild)" ${runDir}/golden-rebuild ${SC}/rebuild.json --run ${runDir}/project/rebuild-run.json
-(4) ${SCORE} blind ${runDir} ${JUDGES}
+(1) rm -rf ${q(SC)} && mkdir -p ${q(SC)}
+(2) ${SCORE} measure "$(${SCORE} source ${q(runDir)} original)" ${q(`${runDir}/golden`)} ${q(`${SC}/original.json`)} --run ${q(`${runDir}/run.json`)}
+(3) ${SCORE} measure "$(${SCORE} source ${q(runDir)} rebuild)" ${q(`${runDir}/golden-rebuild`)} ${q(`${SC}/rebuild.json`)} --run ${q(`${runDir}/project/rebuild-run.json`)}
+(4) ${SCORE} blind ${q(runDir)} ${JUDGES}
 Step 4 prints one line of JSON {folder, judges:[{A,B},...]}. Return ok true with folder and judges copied exactly from it. If a step failed return ok false with the error as detail. Do not write the label map to any file.`,
   { ...CHEAP, label: 'score-measure-blind', phase: 'Score', schema: { type: 'object', required: ['ok'], properties: { ok: { type: 'boolean' }, detail: { type: 'string' }, folder: { type: 'string' }, judges: { type: 'array', items: { type: 'object', required: ['A', 'B'], properties: { A: { type: 'string' }, B: { type: 'string' } } } } } } })
   mustRun(prep, 'measure and blind')
@@ -152,21 +153,21 @@ Step 4 prints one line of JSON {folder, judges:[{A,B},...]}. Return ok true with
   const judged = await parallel(judges.map((_, i) => async () => {
     const dir = `${folder}/judge-${i}`
     const out = `${SC}/judge-${i}.json`
-    const j = await agent(`Read ${pluginRoot}/prompts/judge.md and follow it. Your folder is ${dir} (read nothing outside it, except ${RUBRIC} for the questions). Write your answer to ${out}.`, { ...SCORE_AGENT, label: `judge-${i}`, phase: 'Score' })
+    const j = await agent(`Read ${pluginRoot}/prompts/judge.md and follow it. Your folder is ${dir} (read nothing outside it, except ${RUBRIC} for the questions). Write your answer to ${dir}/answer.json.`, { ...SCORE_AGENT, label: `judge-${i}`, phase: 'Score' })
     if (j === null) return null
-    return agent(`Run exactly: ${SCORE} check ${out} ${dir} . Return ok true with its output as detail if it exited 0, otherwise ok false with the error. Change nothing else.`, { ...CHEAP, label: `check-${i}`, phase: 'Score', schema: RUN_RESULT })
+    return agent(`Run exactly: ${SCORE} check ${q(`${dir}/answer.json`)} ${q(dir)} ${q(out)} . Return ok true with its output as detail if it exited 0, otherwise ok false with the error. Change nothing else.`, { ...CHEAP, label: `check-${i}`, phase: 'Score', schema: RUN_RESULT })
   }))
   if (judged.every(r => !r || !r.ok)) throw new Error('Score: no judge produced a usable answer')
 
   // 3. Judging is over: write the label map, then the skeptics look at each large gap.
-  mustRun(await agent(`Run exactly this one command (the JSON is single-quoted, copy it character for character): ${SCORE} labels ${runDir} ${folder} '${JSON.stringify({ judges })}' . Return ok true with its output as detail if it exited 0, otherwise ok false with the error. Change nothing else.`, { ...CHEAP, label: 'write-labels', phase: 'Score', schema: RUN_RESULT }), 'writing the label map')
-  const gapList = await agent(`Run exactly: ${SCORE} gaps ${runDir} ${RUBRIC} . It prints a JSON list. Return ok true and gaps as that list (each entry copied exactly, as a JSON string in "json"), or ok false with the error as detail. Change nothing else.`,
+  mustRun(await agent(`Run exactly this one command (the JSON is single-quoted, copy it character for character): ${SCORE} labels ${q(runDir)} ${q(folder)} '${JSON.stringify({ judges })}' . Return ok true with its output as detail if it exited 0, otherwise ok false with the error. Change nothing else.`, { ...CHEAP, label: 'write-labels', phase: 'Score', schema: RUN_RESULT }), 'writing the label map')
+  const gapList = await agent(`Run exactly: ${SCORE} gaps ${q(runDir)} ${q(RUBRIC)} . It prints a JSON list. Return ok true and gaps as that list (each entry copied exactly, as a JSON string in "json"), or ok false with the error as detail. Change nothing else.`,
     { ...CHEAP, label: 'score-gaps', phase: 'Score', schema: { type: 'object', required: ['ok'], properties: { ok: { type: 'boolean' }, detail: { type: 'string' }, gaps: { type: 'array', items: { type: 'object', required: ['id', 'json'], properties: { id: { type: 'string' }, json: { type: 'string' } } } } } } })
   mustRun(gapList, 'gaps')
   await parallel((gapList.gaps || []).map(g => () => agent(`Read ${pluginRoot}/prompts/skeptic.md and follow it. The gap: ${g.json}. Its id is ${g.id}. Evidence: for ids starting with j<N>-, the judge's folder is ${folder}/judge-<N>/ (the label map is in ${SC}/.labels.json); for ids starting with m-, see ${SC}/original.json, ${SC}/rebuild.json, ${runDir}/golden and ${runDir}/golden-rebuild. Write your answer to ${SC}/skeptic/${g.id}.json (mkdir -p the folder).`, { ...SCORE_AGENT, label: `skeptic-${g.id}`, phase: 'Score' })))
 
   // 4. The arithmetic is code.
-  mustRun(await agent(`Run exactly: ${SCORE} collate ${runDir} ${RUBRIC} . Return ok true with its output as detail if it exited 0, otherwise ok false with the error. Change nothing else.`, { ...CHEAP, label: 'collate', phase: 'Score', schema: RUN_RESULT }), 'collate')
+  mustRun(await agent(`Run exactly: ${SCORE} collate ${q(runDir)} ${q(RUBRIC)} . Return ok true with its output as detail if it exited 0, otherwise ok false with the error. Change nothing else.`, { ...CHEAP, label: 'collate', phase: 'Score', schema: RUN_RESULT }), 'collate')
 
   // 5. Three-way compare.
   const cmp = await agent(`Read ${pluginRoot}/prompts/compare.md and follow it. The run folder is ${runDir}; write ${SC}/compare.md.`, { ...SCORE_AGENT, label: 'compare', phase: 'Score' })

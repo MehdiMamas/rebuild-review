@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { verifyLabels, delta, gate, totals, checkJudge, blind, labelsFor, seeded, measure, collate, gaps } from './score.mjs';
+import { execFileSync } from 'node:child_process';
+import { verifyLabels, delta, gate, totals, checkJudge, blind, labelsFor, seeded, measure, collate, gaps, listSource } from './score.mjs';
 
 const rubricFile = new URL('../rubric.json', import.meta.url).pathname;
 const rubric = JSON.parse(fs.readFileSync(rubricFile, 'utf8'));
@@ -144,4 +145,45 @@ test('verifyLabels catches a mis-copied label map', () => {
   assert.deepEqual(verifyLabels(run, folder, judges), []);
   const flipped = judges.map((m) => ({ A: m.B, B: m.A }));
   assert.equal(verifyLabels(run, folder, flipped).length, 6);
+});
+
+test('listSource keeps a tracked src/build/x but a walk still skips build folders', () => {
+  const d = tmp();
+  put(path.join(d, 'src/build/x.js'), 'x\n');
+  put(path.join(d, 'a.js'), 'a\n');
+  execFileSync('git', ['init', '-q'], { cwd: d });
+  execFileSync('git', ['add', '.'], { cwd: d });
+  assert.deepEqual(listSource(d), ['a.js', path.join('src', 'build', 'x.js')]);
+  const w = tmp();
+  put(path.join(w, 'build/y.js'), 'y\n');
+  put(path.join(w, 'b.js'), 'b\n');
+  assert.deepEqual(listSource(w), ['b.js']);
+});
+
+test('judged items count only for a value that has a question', () => {
+  const noQ = Object.keys(rubric.values).find((n) => !rubric.values[n].question);
+  assert.ok(noQ);
+  const t = totals(rubric, {}, {}, [{ value: noQ, delta: 1 }]);
+  assert.equal(t.values[noQ].judged.count, 0);
+  assert.equal(t.overall, 0);
+});
+
+test('a judge with no checked file contributes nothing, and check writes only to the out file', () => {
+  const d = tmp();
+  put(path.join(d, 'score/original.json'), { lcp: 1000 });
+  put(path.join(d, 'score/rebuild.json'), { lcp: 1000 });
+  put(path.join(d, 'score/.labels.json'), { judges: [{ A: 'original', B: 'rebuild' }] });
+  const r = collate(d, rubricFile);
+  assert.equal(r.overall, 0);
+  assert.equal(r.values.ux.judged.count, 0);
+  const j = path.join(d, 'j');
+  put(path.join(j, 'A/source/a.js'), 'one\n');
+  put(path.join(j, 'B/source/a.js'), 'one\n');
+  put(path.join(j, 'answer.json'), [{ value: 'ux', question: 'q', A: { score: 5, cite: 'A/source/a.js:1' }, B: { score: 5, cite: 'B/source/nope.js' } }]);
+  const script = new URL('./score.mjs', import.meta.url).pathname;
+  const out = path.join(d, 'score/judge-0.json');
+  execFileSync('node', [script, 'check', path.join(j, 'answer.json'), j, out]);
+  assert.deepEqual(JSON.parse(fs.readFileSync(out, 'utf8')), []);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(d, 'score/judge-0.dropped.json'), 'utf8')).length, 1);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(j, 'answer.json'), 'utf8')).length, 1);
 });

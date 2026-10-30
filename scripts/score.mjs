@@ -3,7 +3,7 @@
 //      score.mjs source <runDir> original|rebuild
 //      score.mjs blind <runDir> <n> [--seed s] [--labels file]
 //      score.mjs labels <runDir> <blindFolder> '<json of judges>'   (writes score/.labels.json after verifying it)
-//      score.mjs check <judgeOut.json> <judgeDir>
+//      score.mjs check <answer.json> <judgeDir> <out.json>   (writes kept items to out.json, dropped ones beside it)
 //      score.mjs gaps <runDir> <rubric.json>
 //      score.mjs collate <runDir> <rubric.json>
 import fs from 'node:fs';
@@ -45,7 +45,7 @@ export function totals(rubric, original, rebuild, judged) {
       if (typeof o !== 'number' || typeof r !== 'number') { notMeasured.push(m.name); continue; }
       measured.push({ name: m.name, original: o, rebuild: r, delta: round(delta(o, r, m.better, m.floor)) });
     }
-    const js = judged.filter((j) => j.value === name);
+    const js = v.question ? judged.filter((j) => j.value === name) : []; // a value with no question is measured only
     const parts = [];
     if (measured.length) parts.push(mean(measured.map((m) => m.delta)));
     if (js.length) parts.push(mean(js.map((j) => j.delta)));
@@ -70,7 +70,7 @@ export function listSource(dir) {
     const walk = (d) => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? (SKIP_DIRS.has(e.name) ? [] : walk(path.join(d, e.name)).map((f) => path.join(e.name, f))) : [e.name]));
     rel = walk(dir);
   }
-  return rel.filter((f) => !f.split(path.sep).some((p) => SKIP_DIRS.has(p)) && !LOCKS.has(path.basename(f)) && !['run.json', 'rebuild-run.json'].includes(path.basename(f)) && fs.existsSync(path.join(dir, f)) && fs.statSync(path.join(dir, f)).isFile() && !isBinary(path.join(dir, f))).sort();
+  return rel.filter((f) => !LOCKS.has(path.basename(f)) && !['run.json', 'rebuild-run.json'].includes(path.basename(f)) && fs.existsSync(path.join(dir, f)) && fs.statSync(path.join(dir, f)).isFile() && !isBinary(path.join(dir, f))).sort();
 }
 
 const lineCount = (f) => { const t = fs.readFileSync(f, 'utf8'); return t === '' ? 0 : t.split('\n').length - (t.endsWith('\n') ? 1 : 0); };
@@ -312,8 +312,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === new URL(import.meta.url
     console.log('labels written');
   } else if (cmd === 'check') {
     const { kept, dropped } = checkJudge(a, b);
-    writeJson(a, kept);
-    writeJson(a.replace(/\.json$/, '.dropped.json'), dropped);
+    writeJson(c, kept);
+    writeJson(c.replace(/\.json$/, '.dropped.json'), dropped);
     console.log(`dropped ${dropped.length}`);
   } else if (cmd === 'gaps') {
     const g = gaps(a, b);
