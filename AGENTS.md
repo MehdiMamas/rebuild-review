@@ -66,6 +66,14 @@ what it renders, then scores the rebuild against the original. See README.md.
 - The report is private: the skill publishes it with the Artifact tool when present and the target is not sensitive; otherwise only a `file://` link.
 - Tests: `node --test scripts/report.test.mjs`.
 
+## Score phase (phase 2: the rebuild beats the original)
+
+- Checker: `node benchmark/score-rebuild.mjs <runDir> [--out file] [--control]`. It starts the original (`run.json`) and the rebuild (`project/rebuild-run.json`) one after the other with `startApp`, runs every planted-problem check on both and prints a table: item, original, rebuild, evidence. Exit 0 only if the original has every item and the rebuild has beaten every one. `--control` checks only the original (every D, H and B item must read `present`).
+- Written from `answers.json` but black-box: controls are found by role and label, slow and failed requests are made with `page.route`; bloat (B1 to B4) is read from the source files; D1 multiplies the list response to 2000 rows with `page.route`, types 5 keystrokes into the search box at 4x CPU slowdown and compares script ms per key (present above 16 ms; gone at or under 16 ms or 50% lower than the original). If the original does not read above 16 ms under that load, D1 is `could not check` on both sides.
+- Results are `present`, `gone` or `could not check`; the last never counts as beaten. Beaten means `gone` for D and B items, `present` for H items (features that must survive).
+- Never tune the checker, `rubric.json`, tests or prompts to get a pass; an item the rebuild does not beat is reported with its cause.
+- `score.mjs blind` flips the label order for each judge after the first, so both orders occur in every run. Test: `node --test scripts/score.test.mjs`.
+
 ## Conventions
 
 - Any kind of project, not only web. Nothing outside a platform adapter may assume HTML,
