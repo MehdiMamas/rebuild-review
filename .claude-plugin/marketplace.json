@@ -1,0 +1,11 @@
+{
+  "name": "rebuild-review",
+  "owner": { "name": "MehdiMamas" },
+  "plugins": [
+    {
+      "name": "rebuild-review",
+      "source": "./",
+      "description": "Rebuild a project from its behaviour and score the rebuild against the original."
+    }
+  ]
+}
