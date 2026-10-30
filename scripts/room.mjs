@@ -91,8 +91,11 @@ export function prepareRoom({ runDir, target, inputs }) {
   return room;
 }
 
+// The settings name the denied paths, so they live next to the room, never inside it.
+export const settingsPath = (room) => path.join(room + '.settings', 'settings.json');
+
 export function writeSettings(room, { denyPaths, only }) {
-  fs.mkdirSync(path.join(room, '.claude'), { recursive: true });
+  fs.mkdirSync(path.dirname(settingsPath(room)), { recursive: true });
   const settings = {
     sandbox: {
       enabled: true,
@@ -105,7 +108,7 @@ export function writeSettings(room, { denyPaths, only }) {
   };
   if (only === 'deny') delete settings.sandbox;
   if (only === 'sandbox') delete settings.permissions;
-  fs.writeFileSync(path.join(room, '.claude', 'settings.json'), JSON.stringify(settings, null, 2));
+  fs.writeFileSync(settingsPath(room), JSON.stringify(settings, null, 2));
 }
 
 export function runChild({ room, prompt, model, maxBudgetUsd, transcriptPath, mode = PERMISSION_MODE }) {
@@ -114,7 +117,7 @@ export function runChild({ room, prompt, model, maxBudgetUsd, transcriptPath, mo
   const args = ['-p', '--model', model, '--max-budget-usd', String(maxBudgetUsd), '--permission-mode', mode,
     '--setting-sources', 'project', '--disallowedTools', 'WebFetch', 'WebSearch', '--disable-slash-commands',
     '--strict-mcp-config', '--no-session-persistence', '--output-format', 'stream-json', '--verbose'];
-  args.push('--settings', path.join(room, '.claude', 'settings.json'));
+  args.push('--settings', settingsPath(room));
   const out = fs.openSync(transcriptPath, 'w');
   return new Promise((resolve) => {
     const c = spawn('claude', args, { cwd: room, env, stdio: ['pipe', out, out] });
@@ -220,7 +223,7 @@ export async function main(argv) {
   } catch (e) {
     result.reason = String(e.message || e);
   } finally {
-    if (room) fs.rmSync(room, { recursive: true, force: true });
+    if (room) { fs.rmSync(room, { recursive: true, force: true }); fs.rmSync(room + '.settings', { recursive: true, force: true }); }
     fs.rmSync(path.join(runDir, '.canary'), { force: true });
   }
   fs.writeFileSync(resultPath, JSON.stringify(result, null, 2));
