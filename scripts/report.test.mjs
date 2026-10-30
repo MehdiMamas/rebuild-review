@@ -7,7 +7,7 @@ import { verdict, checkActions, render, parseCompare, esc } from './report.mjs';
 
 const T = { adoptOverall: 15, worseValue: -0.15 };
 const sc = (over = {}) => ({ gate: { passed: true, rate: 0.97, failing: [] }, overall: 41, values: { speed: { delta: 0.4 }, ux: { delta: 0.2 } }, notChecked: ['other browsers'], dropped: [], refuted: [], ...over });
-const w = (f, t) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, typeof t === 'string' ? t : JSON.stringify(t)); };
+const w = (f, t) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, typeof t === 'string' || Buffer.isBuffer(t) ? t : JSON.stringify(t)); };
 
 function makeRun({ screens = true, compare = true, actions } = {}) {
   const d = fs.mkdtempSync(path.join(os.tmpdir(), 'report-test-'));
