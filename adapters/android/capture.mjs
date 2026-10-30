@@ -61,7 +61,7 @@ async function main() {
     nodes.forEach((n, i) => {
       const w = n.bounds[2] - n.bounds[0], h = n.bounds[3] - n.bounds[1];
       // rows of a list are tappable and long-pressable even when the platform does not flag them
-      let inList = false; for (let p = n.parent; p >= 0 && !inList; p = nodes[p].parent) inList = nodes[p].scrollable;
+      let inList = false; for (let p = n.parent; p >= 0 && !inList; p = nodes[p].parent) inList = nodes[p].scrollable || /ListView|RecyclerView|GridView/.test(nodes[p].cls);
       const row = inList && !!n.label;
       if (!(n.clickable || n.longClickable || row) || !n.enabled || n.scrollable || w <= 0 || h <= 0 || (w > 900 && h > 1500)) return;
       const name = n.label || labelBelow(nodes, i) || `(unlabeled ${n.cls.split('.').pop()})`;
