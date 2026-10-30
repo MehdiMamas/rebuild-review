@@ -1,0 +1,52 @@
+From 545d4bc14af0d021249ead6dae6530c400916586 Mon Sep 17 00:00:00 2001
+From: Bench Fixture <bench@example.invalid>
+Date: Fri, 30 Oct 2026 13:40:27 -0500
+Subject: [PATCH 07/10] Add settings panel
+
+---
+ app/src/components/SettingsPanel.jsx | 33 ++++++++++++++++++++++++++++
+ 1 file changed, 33 insertions(+)
+ create mode 100644 app/src/components/SettingsPanel.jsx
+
+diff --git a/app/src/components/SettingsPanel.jsx b/app/src/components/SettingsPanel.jsx
+new file mode 100644
+index 0000000..0c2af6a
+--- /dev/null
++++ b/app/src/components/SettingsPanel.jsx
+@@ -0,0 +1,33 @@
++import React, { useState } from 'react';
++import { url } from '../api.js';
++
++export default function SettingsPanel() {
++  const [form, setForm] = useState({ name: 'Sam', email: 'sam@example.com' });
++  const [saved, setSaved] = useState(false);
++  const Field = ({ name }) => (
++    <label>
++      {name}{' '}
++      <input
++        id={`field-${name}`}
++        value={form[name]}
++        onChange={(e) => setForm({ ...form, [name]: e.target.value })}
++      />
++    </label>
++  );
++  async function save() {
++    await fetch(url('/api/settings'), {
++      method: 'PUT',
++      headers: { 'content-type': 'application/json' },
++      body: JSON.stringify(form),
++    });
++    setSaved(true);
++  }
++  return (
++    <div className="settings">
++      <h3>Settings</h3>
++      <Field name="name" /> <Field name="email" />
++      <button id="save-settings" onClick={save}>Save</button>
++      {saved && <span data-testid="saved"> Saved</span>}
++    </div>
++  );
++}
+-- 
+2.51.0
+
