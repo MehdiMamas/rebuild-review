@@ -10,6 +10,7 @@ produce the same layout.
 
 ```
 { "platform": "...", "dir": "path inside work/", "install": "...", "build": "...", "start": "...", "address": "..." }
+(android and flutter add "apk" and "package", see below)
 ```
 
 - `dir` is relative, never absolute (the adapter throws otherwise): to `work/` next to `run.json`, except in a file named `rebuild-run.json`, where it is relative to that file's own folder.
@@ -22,7 +23,7 @@ Call: `capture --app <run.json> --out <runDir>/golden [--states states.json]`
 
 ```
 golden/manifest.json       platform, app version, screens, states, blocked requests, what could not be captured
-golden/screens/<id>/       render.* (the rendered structure and computed style), a11y.json, <size>-<theme>.png
+golden/screens/<id>/       render.* (the rendered structure and computed style), a11y.json, <size>-<theme>.png (size is the adapter's own name)
 golden/network.har         every request and response, secrets removed
 golden/timings.json        list of { name, value, unit }
 golden/probes.json         list of { probe, screen, passed, evidence }; passed=false means the probe flagged a problem
@@ -30,7 +31,7 @@ golden/console.log         errors the app printed
 golden/a11y-violations.json  optional: list of { screen, violations: [{ id, impact, nodes }] }
 ```
 
-Screenshots are taken at a narrow and a wide size, in light and dark theme.
+Screenshots are taken at a narrow and a wide size (a phone and a larger one on mobile), in light and dark theme.
 
 ## Score outputs (optional)
 
@@ -69,9 +70,14 @@ so capture runs twice.
 
 ## Probes
 
-Each probe is a general check for one kind of failure, not a check for a known app. Required kinds:
-focus lost while typing, input delay, layout shift, repeated identical requests, errors in the
-console, no visible feedback during a slow request, a failed request with no visible error (only requests the app's own code made count: framework route prefetches and client navigation payloads, such as headers `sec-purpose`/`purpose` prefetch, `next-router-prefetch`, `rsc` without `next-action`, and `/_next/data/` paths, are not data requests), script time per keystroke (`script-cost-per-key`: script time over 5 characters typed 100 ms apart into the first text input of each screen, CPU throttled 4x; the worst value goes to `timings.json` as `script-ms-per-key`, `passed` means 16 ms or less, one frame).
+Each probe is a general check for one kind of failure, not a check for a known app. Required kinds are those
+that apply to the platform. Common to all: repeated identical requests, no visible feedback during a slow
+request, a failed request with no visible error, errors the app prints (console or crash log). Web adds focus
+lost while typing, input delay, layout shift. Android adds crash or ANR, dropped frames, touch targets under
+48 dp, interactive elements with no label.
+
+
+Web also has a probe for script time per keystroke (`script-cost-per-key`: script time over 5 characters typed 100 ms apart into the first text input of each screen, CPU throttled 4x; the worst value goes to `timings.json` as `script-ms-per-key`, `passed` means 16 ms or less, one frame). For the web "failed request with no visible error" probe only requests the app's own code made count: framework route prefetches and client navigation payloads (headers `sec-purpose`/`purpose` prefetch, `next-router-prefetch`, `rsc` without `next-action`, and `/_next/data/` paths) are not data requests.
 
 ## Parity
 
@@ -98,3 +104,30 @@ It drives Chromium: crawl by following links and clicking buttons on the app's o
 `node adapters/web/check.mjs --base-url <url> --routes /a,/b [--out <dir>] [--budget-seconds 110] [--storage-state file] [--allow-origin https://x,...]`
 
 A standalone run of the probes on the routes a change touched, against an app that is already running; no run folder. Exit 0 pass, 1 fail, 2 incomplete (nothing failed but something was not checked), 3 error (bad arguments, app unreachable, browser missing). Never a pass for something not checked. `--out` is a directory with `result.json` (`version, status, baseUrl, routes, screenshots, elapsedMs, passed, failed, notChecked, blockedOrigins`) and `<slug>-390.png`, `<slug>-1440.png` per route, taken before any probe. Load probes run first on every route, one at a time; click probes after, 4 at a time; at the budget what has not run goes to `notChecked`. A route that ends on another path is `notChecked`. Blocked cross-origin requests are listed, not counted as console errors. Clicks on labels that look destructive or outward-facing are skipped and listed; on a non-localhost base URL no click runs.
+
+
+## Android and Flutter
+
+One adapter, `adapters/android/`, serves both platforms; `run.json` differs only in `platform` (`android` or
+`flutter`) and the build command. Extra fields: `apk` (built apk, relative to `dir`), `package` (application id).
+`start` runs the app's own local API and `address` is that API (localhost); the emulator reaches it as
+`10.0.2.2` and the adapter never starts anything else on the network.
+
+It uses plain adb and uiautomator, no Maestro or Appium, on a dedicated headless AVD `rebuild-review` on
+port 5584 (every adb call carries `-s emulator-5584`). The AVD is wiped at start and the emulator is stopped
+at the end, also on failure. Sizes: `phone` (1080x2400) and `tablet` (1600x2560), light and dark. The render
+files are `render.xml` (the uiautomator dump) and `render.json` (flat node list), plus `a11y.json`.
+
+Network: the emulator starts with `-http-proxy` pointing at the adapter's recording proxy. The proxy passes
+only the app's own API, answers everything else with 403 and lists it in `blockedRequests`, simulates
+`failRequest` and `slowRequest`, and strips secrets from the HAR exactly like the web adapter. HTTPS is refused
+by host (no certificate is installed) and listed under `notCaptured`.
+Timings: `am start -W` (cold and per screen), `dumpsys gfxinfo` during a scripted scroll, apk size.
+In `states.json`, `open` relaunches the app (its value is ignored), and `click` and `type` match the visible text
+or content description.
+
+## Changes made to neutral parts for Android
+
+- Screenshot names are `<size>-<theme>.png` with the adapter's own size names, not pixel widths.
+- Required probe kinds now depend on the platform.
+- The workflow's Capture step picks the adapter folder from `platform`.
