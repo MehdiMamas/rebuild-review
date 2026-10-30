@@ -81,12 +81,20 @@ export function failing(parDir, featuresMd) {
     .map((id) => ({ feature: id, kind: kindMap[id], detail: by[id] ? String(by[id].detail || '') : 'no result for this feature' }));
 }
 
-// A failure message without stack lines or absolute file paths, at most 15 lines.
+// A failure message without stack lines, quoted test source, or absolute file paths, at most 15 lines.
 export function cleanDetail(text, parDir) {
   let t = String(text);
   if (parDir) t = t.split(parDir).join('<path>');
-  return t.split('\n').filter((l) => !/^\s*at\s/.test(l))
-    .map((l) => l.replace(/(?<!\w)[A-Za-z]:[\\/](?:[^\s\\/:*?"<>|]+[\\/])*[^\s\\/:*?"<>|]*/g, '<path>').replace(/(?<![\w:/.])(?:\/[\w.@~+-]+){2,}\/?/g, '<path>'))
+  const kept = [];
+  let blanks = 0; // blank lines left before the source node quotes after "The expression evaluated to a falsy value:" ends
+  for (const l of t.split('\n')) {
+    if (/The expression evaluated to a falsy value/.test(l)) { blanks = 2; continue; }
+    if (blanks > 0) { if (l.trim() === '') blanks--; continue; }
+    if (/^\s*at\s/.test(l) || /^\s*(generatedMessage|code|operator):/.test(l) || /^\s*test at\s/.test(l) || /^\s*assert(\.\w+)?\(/.test(l)) continue;
+    kept.push(l);
+  }
+  return kept
+    .map((l) => l.replace(/file:\/\/\/?[^\s)'"]+/g, '<path>').replace(/(?<!\w)[A-Za-z]:[\\/](?:[^\s\\/:*?"<>|]+[\\/])*[^\s\\/:*?"<>|]*/g, '<path>').replace(/(?<![\w:/.])(?:\/[\w.@~+-]+){2,}\/?/g, '<path>'))
     .slice(0, 15).join('\n');
 }
 

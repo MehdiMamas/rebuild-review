@@ -197,3 +197,19 @@ test('a build with failures and no budget left fails with the reason budget', as
   assert.equal(code, 1);
   assert.equal(JSON.parse(fs.readFileSync(path.join(runDir, 'rebuild', 'build-2.result.json'), 'utf8')).reason, 'budget');
 });
+
+test('prepareRoom gives the committed project only: no ignored files, no uncommitted files, no origin remote', () => {
+  const { target, runDir } = makeRun('F-001 A user sees a list.\n');
+  const proj = repo({ 'a.js': 'a', '.gitignore': 'node_modules\n' });
+  fs.mkdirSync(path.join(proj, 'node_modules')); fs.writeFileSync(path.join(proj, 'node_modules', 'x.js'), 'x');
+  fs.writeFileSync(path.join(proj, 'dirty.js'), 'd');
+  execFileSync('git', ['-C', proj, 'remote', 'add', 'origin', runDir]);
+  fs.cpSync(proj, path.join(runDir, 'project'), { recursive: true });
+  const room = prepareRoom({ runDir, target, inputs: ['features.md'] });
+  const p = path.join(room, 'project');
+  assert.equal(fs.existsSync(path.join(p, 'a.js')), true);
+  assert.equal(fs.existsSync(path.join(p, 'node_modules')), false);
+  assert.equal(fs.existsSync(path.join(p, 'dirty.js')), false);
+  assert.equal(execFileSync('git', ['-C', p, 'remote'], { encoding: 'utf8' }).trim(), '');
+  fs.rmSync(room, { recursive: true, force: true });
+});
