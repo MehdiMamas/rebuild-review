@@ -59,12 +59,16 @@ export async function jankProbe(dev, screens, timings, notCaptured) {
   let measured = 0;
   for (const s of screens.filter((x) => x.nodes.some((n) => n.scrollable && n.bounds[3] - n.bounds[1] > 900))) {
     await dev.reopen(s.path);
-    adb('shell', 'dumpsys', 'gfxinfo', dev.pkg, 'reset');
-    for (const d of [1, 1, 1, -1, -1, -1]) { d > 0 ? dev.swipe(540, 1800, 540, 600, 300) : dev.swipe(540, 600, 540, 1800, 300); await sleep(150); }
-    await sleep(500);
-    const g = adb('shell', 'dumpsys', 'gfxinfo', dev.pkg);
-    const frames = Number((g.match(/Total frames rendered:\s*(\d+)/) || [])[1] || 0);
-    const janky = Number((g.match(/Janky frames:\s*(\d+)/) || [])[1] || 0);
+    let frames = 0, janky = 0;
+    for (let attempt = 0; attempt < 3 && frames < BUDGET.minFrames; attempt++) {
+      await sleep(800);
+      adb('shell', 'dumpsys', 'gfxinfo', dev.pkg, 'reset');
+      for (const d of [1, 1, 1, -1, -1, -1]) { d > 0 ? dev.swipe(540, 1800, 540, 600, 300) : dev.swipe(540, 600, 540, 1800, 300); await sleep(150); }
+      await sleep(500);
+      const g = adb('shell', 'dumpsys', 'gfxinfo', dev.pkg);
+      frames = Number((g.match(/Total frames rendered:\s*(\d+)/) || [])[1] || 0);
+      janky = Number((g.match(/Janky frames:\s*(\d+)/) || [])[1] || 0);
+    }
     if (frames < BUDGET.minFrames) { notCaptured.push(`dropped frames on ${s.id}: gfxinfo reported only ${frames} frames for the scroll, so it cannot be measured`); continue; }
     measured++;
     const pct = Math.round((janky / frames) * 1000) / 10;

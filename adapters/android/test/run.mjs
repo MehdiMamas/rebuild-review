@@ -21,7 +21,7 @@ const listFiles = (d) => fs.readdirSync(d, { recursive: true }).filter((f) => fs
 
 const FIXTURES = {
   android: { dir: 'benchmark-android', run: { platform: 'android', build: './gradlew --no-daemon -q assembleDebug', start: 'node server.mjs', address: 'http://127.0.0.1:4301', apk: 'app/build/outputs/apk/debug/app-debug.apk', package: 'dev.rr.tasks' } },
-  flutter: { dir: 'benchmark-flutter', run: { platform: 'flutter', build: 'flutter create --platforms=android --org dev.rr --project-name rr_tasks . && flutter build apk --release --target-platform android-arm64', start: 'node server.mjs', address: 'http://127.0.0.1:4301', apk: 'build/app/outputs/flutter-apk/app-release.apk', package: 'dev.rr.rr_tasks' } },
+  flutter: { dir: 'benchmark-flutter', run: { platform: 'flutter', build: 'flutter create --platforms=android --org dev.rr --project-name rr_tasks . && node prepare-android.mjs && flutter build apk --release --target-platform android-arm64', start: 'node server.mjs', address: 'http://127.0.0.1:4301', apk: 'build/app/outputs/flutter-apk/app-release.apk', package: 'dev.rr.rr_tasks' } },
 };
 const wanted = process.argv.slice(2).length ? process.argv.slice(2) : ['android', 'flutter'];
 
