@@ -74,13 +74,11 @@ export function prepareRoom({ runDir, target, inputs }) {
     if (f === 'golden') filterGolden(s, path.join(inp, 'golden'));
     else fs.copyFileSync(s, path.join(inp, f));
   }
-  const name = path.basename(target);
-  const nameRe = new RegExp(`[/\\\\]${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w.-])|(?<![\\w.-])${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[/\\\\]`);
   const forbidden = [...new Set([target, runDir, fs.realpathSync(target), fs.realpathSync(runDir)])];
   for (const p of allFiles(inp)) {
     if (IMG.test(p)) continue;
     const t = fs.readFileSync(p, 'utf8');
-    const hit = forbidden.find((x) => t.includes(x)) || (nameRe.test(t) && name);
+    const hit = forbidden.find((x) => t.includes(x));
     if (hit) {
       fs.rmSync(room, { recursive: true, force: true });
       throw new Error(`room input ${path.relative(inp, p)} contains "${hit}"`);
@@ -94,7 +92,7 @@ export function prepareRoom({ runDir, target, inputs }) {
 // The settings name the denied paths, so they live next to the room, never inside it.
 export const settingsPath = (room) => path.join(room + '.settings', 'settings.json');
 
-export function writeSettings(room, { denyPaths, only }) {
+export function writeSettings(room, { denyPaths, noWrite = [], only }) {
   fs.mkdirSync(path.dirname(settingsPath(room)), { recursive: true });
   const settings = {
     sandbox: {
@@ -104,7 +102,7 @@ export function writeSettings(room, { denyPaths, only }) {
       filesystem: { denyRead: denyPaths },
       network: { allowedDomains: REGISTRIES, strictAllowlist: true },
     },
-    permissions: { deny: denyPaths.flatMap((p) => [`Read(/${p})`, `Read(/${p}/**)`]) },
+    permissions: { deny: [...denyPaths.flatMap((p) => [`Read(/${p})`, `Read(/${p}/**)`]), ...noWrite.flatMap((p) => [`Edit(/${p})`, `Edit(/${p}/**)`])] },
   };
   if (only === 'deny') delete settings.sandbox;
   if (only === 'sandbox') delete settings.permissions;
@@ -150,6 +148,21 @@ export function scanTranscript(file, forbidden) {
   return hits;
 }
 
+// True when the transcript holds a Bash tool_use running cat and a Read tool_use on the canary file.
+export function wallTried(transcriptPath, file) {
+  let bash = false, read = false;
+  for (const l of fs.readFileSync(transcriptPath, 'utf8').split('\n')) {
+    let j; try { j = JSON.parse(l); } catch { continue; }
+    const content = j.message && Array.isArray(j.message.content) ? j.message.content : [];
+    for (const c of content) {
+      if (c.type !== 'tool_use' || !c.input) continue;
+      if (c.name === 'Bash' && /\bcat\b/.test(String(c.input.command || '')) && String(c.input.command).includes(file)) bash = true;
+      if (c.name === 'Read' && c.input.file_path === file) read = true;
+    }
+  }
+  return bash && read;
+}
+
 export async function provewall({ runDir, room, target, transcriptPath }) {
   const canary = 'CANARY-' + crypto.randomBytes(12).toString('hex');
   const file = path.join(runDir, '.canary');
@@ -162,22 +175,45 @@ export async function provewall({ runDir, room, target, transcriptPath }) {
     const hits = scanTranscript(transcriptPath, [canary]);
     if (hits.length) throw new Error('Sandbox did not hold: the canary content came back');
     if (r.code !== 0 || r.isError) throw new Error('Sandbox did not hold: the wall check child failed to run');
+    if (!wallTried(transcriptPath, file)) throw new Error('Sandbox did not hold: the wall check did not try');
     return r.costUsd;
   } finally {
     fs.rmSync(file, { force: true });
   }
 }
 
+// Paths the child may not read: the target and run folder (also the scan list), plus everything else that holds the source or secrets.
+export function scanPaths(runDir, target) {
+  return [...new Set([runDir, fs.realpathSync(runDir), target, fs.realpathSync(target)])];
+}
+
 export function denyList(runDir, target) {
   const home = os.homedir();
-  return [...new Set([runDir, fs.realpathSync(runDir), target, fs.realpathSync(target), path.join(home, '.claude', 'projects')])];
+  const out = scanPaths(runDir, target);
+  const parent = path.dirname(fs.realpathSync(runDir));
+  if (parent.endsWith('-rebuild-review')) out.push(parent, path.dirname(runDir));
+  const g = spawnSync('git', ['-C', target, 'rev-parse', '--path-format=absolute', '--git-common-dir'], { encoding: 'utf8' });
+  if (g.status === 0 && g.stdout.trim()) {
+    const common = fs.realpathSync(g.stdout.trim()), real = fs.realpathSync(target);
+    if (common !== real && !common.startsWith(real + path.sep)) out.push(common);
+  }
+  out.push(path.resolve(HERE, '..'), path.join(home, '.claude', 'projects'));
+  for (const c of ['.ssh', '.aws', '.gnupg', '.config/gh', '.netrc', '.npmrc', '.docker']) {
+    const p = path.join(home, c);
+    if (fs.existsSync(p)) out.push(p);
+  }
+  return [...new Set(out)];
 }
 
 // ---- CLI ----
-function copyProject(from, to) {
+export function cloneProject(from, to) {
+  const git = (...a) => spawnSync('git', ['-C', from, ...a], { encoding: 'utf8' });
+  if (git('rev-parse', '--verify', 'HEAD').status !== 0) throw new Error('the built project is not a git repo with a commit');
+  const st = git('status', '--porcelain');
+  if (st.status !== 0 || st.stdout.trim()) throw new Error('the built project has uncommitted files: commit everything before finishing');
   fs.rmSync(to, { recursive: true, force: true });
-  const skip = new Set(['node_modules', 'dist', 'build', '.next', 'target', '.dart_tool', '__pycache__']);
-  fs.cpSync(from, to, { recursive: true, filter: (s) => !skip.has(path.basename(s)) });
+  const c = spawnSync('git', ['clone', '--quiet', from, to], { encoding: 'utf8' });
+  if (c.status !== 0) throw new Error('git clone of the built project failed: ' + c.stderr.slice(0, 200));
 }
 
 export async function main(argv) {
@@ -204,12 +240,12 @@ export async function main(argv) {
     }
     room = prepareRoom({ runDir, target, inputs });
     const deny = denyList(runDir, target);
-    writeSettings(room, { denyPaths: deny });
+    writeSettings(room, { denyPaths: deny, noWrite: scanPaths(runDir, target) });
     result.costUsd += await provewall({ runDir, room, target, transcriptPath: path.join(dir, `${mode}-${n}.wall.jsonl`) });
     const prompt = fs.readFileSync(path.join(HERE, '..', 'prompts', mode + '.md'), 'utf8') + (failures ? '\n\nFix the failures in input/failures.md.' : '');
     const r = await runChild({ room, prompt, model: MODEL[mode], maxBudgetUsd: BUDGET_USD[mode], transcriptPath: transcript });
     result.costUsd += r.costUsd;
-    const hits = scanTranscript(transcript, deny.slice(0, -1));
+    const hits = scanTranscript(transcript, scanPaths(runDir, target));
     if (hits.length) throw new Error(`transcript names a forbidden path (${hits[0].forbidden})`);
     if (r.code !== 0 || r.isError) throw new Error(`child failed: ${(r.text || r.error || 'exit ' + r.code).slice(0, 300)}`);
     if (mode === 'stack') {
@@ -217,7 +253,7 @@ export async function main(argv) {
       fs.copyFileSync(path.join(room, 'stack.md'), path.join(runDir, 'stack.md'));
     } else {
       if (!fs.existsSync(path.join(room, 'project'))) throw new Error('child built no project/');
-      copyProject(path.join(room, 'project'), path.join(runDir, 'project'));
+      cloneProject(path.join(room, 'project'), path.join(runDir, 'project'));
     }
     result.ok = true;
   } catch (e) {

@@ -12,3 +12,4 @@ Build the whole project in `project/` as its own git repo (`git init`, commit as
 - Include tests and a README.
 - Write `project/rebuild-run.json` with the same shape as `run.json`: `{"platform": "...", "dir": "...", "install": "...", "build": "...", "start": "...", "address": "http://127.0.0.1:<port>"}`, with one start command that reads the port from the PORT environment variable. `dir` is relative to the folder holding `rebuild-run.json`: write `"dir": "."` for a project at its root.
 - Packages come from the public package registries only.
+- Before finishing, commit everything, including `rebuild-run.json`, and leave `git status` clean. Add a `.gitignore` for dependencies and build output: ignored and uncommitted files are not delivered.

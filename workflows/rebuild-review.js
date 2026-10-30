@@ -49,6 +49,9 @@ async function runInventory() {
     const found = await parallel(FINDERS.map(f => () => agent(f.prompt, { ...FINDER, label: f.name, phase: 'Inventory' })))
     if (found.some(r => r === null)) throw new Error('Inventory: a finder died, so features.md would be incomplete')
 
+    const techCheck = await agent(`Run: node ${pluginRoot}/scripts/check-features.mjs ${runDir}/technology.md ${WORK}. If it prints failures, edit ${runDir}/technology.md to remove them (rewrite file paths, import lines and long copied runs as plain names and versions) and run it again, at most 2 fix attempts. Report the final check output. Return checkPassed. Do not write anywhere else.`, { ...CHEAP, label: 'technology-check', phase: 'Inventory', schema: { type: 'object', required: ['checkPassed'], properties: { checkPassed: { type: 'boolean' } } } })
+    if (!techCheck || !techCheck.checkPassed) throw new Error('Inventory: technology.md failed the no-source check after 2 fix tries')
+
     const fixRule = `Then run: ${CHECK}. If it prints failures, edit features.md to remove them (rewrite fenced code, file paths, import or JSX lines and long copied runs in plain prose) and run it again, at most 2 fix attempts. Report the final check output.`
     const checkSchema = { type: 'object', required: ['checkPassed'], properties: { checkPassed: { type: 'boolean' } } }
     const merged = await agent(`You are the merger. Read every file in ${INV} (the finders' lists; ignore states.json) and merge them into ${runDir}/features.md. You may read ${runDir}/golden/ if it exists. Each entry is one paragraph or bullet that starts with its ID and kind: "F-001 keep." or "F-002 defect." (exactly that start, nothing before the ID except a list marker), then a short name, what it does, given/when/then, and "seen by:" (which finders). A defect states the intended behaviour and cites evidence from golden/probes.json or a finder's observation; it never contains a fix that depends on the implementation. Merge duplicates, but never drop an item that only one finder reported. Entries describe behaviour only: no code blocks, file paths, imports or copied source text. ${fixRule} Return checkPassed.`, { label: 'merge', phase: 'Inventory', schema: checkSchema })
@@ -149,7 +152,7 @@ for (const phase of PHASES) {
     const mode = phase === 'Stack' ? 'stack' : 'build'
     // The room script does the work in a clean room (scripts/room.mjs); the agent only runs it and reports.
     const r = await agent(
-      `Run this command with the Bash tool and run_in_background true, then wait until it exits (do not poll in a loop; check once it has finished): node ${pluginRoot}/scripts/room.mjs ${mode} --target ${target} --run-dir ${runDir}\nWhen it exits, its last lines are "RESULT <file>" and a JSON line. Read that result file and return ok and reason from it. Change nothing else, and never read anything under ${target} or ${runDir}/work.`,
+      `Run this command with the Bash tool and run_in_background true, then wait until it exits (do not poll in a loop; check once it has finished): node ${JSON.stringify(pluginRoot + '/scripts/room.mjs')} ${mode} --target ${JSON.stringify(target)} --run-dir ${JSON.stringify(runDir)}\nWhen it exits, its last lines are "RESULT <file>" and a JSON line. Read that result file and return ok and reason from it. Change nothing else, and never read anything under ${target} or ${runDir}/work.`,
       { model: 'sonnet', effort: 'low', label: phase, phase, schema: { type: 'object', required: ['ok'], properties: { ok: { type: 'boolean' }, reason: { type: 'string' } } } },
     )
     if (!r || !r.ok) return { ran, stopped: phase, reason: (r && r.reason) || 'room agent died' }
