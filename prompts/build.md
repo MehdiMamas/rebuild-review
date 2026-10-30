@@ -10,5 +10,5 @@ Build the whole project in `project/` as its own git repo (`git init`, commit as
 - Meet the API contract you can see in the requests and responses of `input/golden/network.har`.
 - A `defect` entry is built to its "Intended" text. A golden that shows the defect is not a target.
 - Include tests and a README.
-- Write `project/rebuild-run.json` with the same shape as `run.json`: `{"platform": "...", "dir": "...", "install": "...", "build": "...", "start": "...", "address": "http://127.0.0.1:<port>"}`, with one start command that reads the port from the PORT environment variable.
+- Write `project/rebuild-run.json` with the same shape as `run.json`: `{"platform": "...", "dir": "...", "install": "...", "build": "...", "start": "...", "address": "http://127.0.0.1:<port>"}`, with one start command that reads the port from the PORT environment variable. `dir` is relative to the folder holding `rebuild-run.json`: write `"dir": "."` for a project at its root.
 - Packages come from the public package registries only.

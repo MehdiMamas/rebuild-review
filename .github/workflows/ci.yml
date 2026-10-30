@@ -19,3 +19,4 @@ jobs:
           node --test scripts/visual-diff.test.mjs
           node --test scripts/check-features.test.mjs
           node --test scripts/parity-results.test.mjs
+          node --test scripts/room.test.mjs
