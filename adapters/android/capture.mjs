@@ -93,8 +93,8 @@ async function main() {
     for (const c of s.candidates.flatMap((x) => (x.canLong ? [x, { ...x, long: true }] : [x]))) {
       if (at !== s) { await dev.reopen(s.path); at = s; }
       c.long ? dev.longPress(c.at) : dev.tap(c.at);
-      await sleep(900);
-      const nodes = await dev.dump();
+      await sleep(500);
+      const nodes = await dev.stable(1);
       const what = `${c.long ? 'long-pressing' : 'tapping'} "${c.name}"`;
       if (!nodes.length) { crawlNotes.push({ screen: s.id, what, leftApp: true }); notCaptured.push(`${s.id}: the app left the screen after ${what}`); at = null; continue; }
       const sig = sigOf(nodes);

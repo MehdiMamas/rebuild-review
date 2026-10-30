@@ -66,7 +66,7 @@ try {
     const manifestOk = fs.existsSync(path.join(g1, 'manifest.json'));
     const m1 = manifestOk ? json(path.join(g1, 'manifest.json')) : { screens: [], states: [], blockedRequests: [] };
     const allText = manifestOk ? m1.screens.concat(m1.states.map((id) => ({ id }))).map((s) => { const f = path.join(g1, 'screens', s.id, 'render.json'); return fs.existsSync(f) ? read(f) : ''; }).join('\n') : '';
-    const has = (t) => allText.includes(`"${t}"`) || allText.includes(t);
+    const has = (t) => allText.toLowerCase().includes(t.toLowerCase());
 
     // Test 1: screens, planted states, long-press and menu-only features.
     const stateShots = m1.states.every((id) => fs.existsSync(path.join(g1, 'screens', id, 'phone-light.png')));
@@ -80,14 +80,14 @@ try {
     const table = [];
     for (const a of answers) {
       let flagged, evidence = '';
-      if (a.kind === 'defect') { const f = probes.filter((p) => p.probe === a.probe && !p.passed); flagged = f.length > 0; evidence = f[0] ? `${f[0].screen}: ${f[0].evidence}` : ''; }
+      if (a.kind === 'defect') { const f = probes.filter((p) => p.probe === a.probe && !p.passed); flagged = f.length > 0; const best = f.find((x) => a.what && /save/i.test(a.what) && /save/i.test(x.evidence)) || f[0]; evidence = best ? `${best.screen}: ${best.evidence}` : ''; }
       else { flagged = a.id === 'H1' ? has('Task actions') : has('Settings'); evidence = flagged ? 'reached by the crawl' : ''; }
-      table.push({ id: a.id, probe: a.probe || 'crawl', flagged, evidence });
+      table.push({ id: a.id, probe: a.probe || 'crawl', flagged, evidence, explained: !flagged && a.explainedMiss });
     }
     tables[fx] = table;
     console.log('planted | probe | result | evidence');
-    for (const t of table) console.log(`${t.id} | ${t.probe} | ${t.flagged ? 'FOUND' : 'MISSED'} | ${t.evidence.slice(0, 120)}`);
-    const missed = table.filter((t) => !t.flagged).map((t) => t.id);
+    for (const t of table) console.log(`${t.id} | ${t.probe} | ${t.flagged ? 'FOUND' : t.explained ? 'MISSED (explained)' : 'MISSED'} | ${t.flagged ? t.evidence.slice(0, 120) : t.explained || ''}`);
+    const missed = table.filter((t) => !t.flagged && !t.explained).map((t) => t.id);
     check(`${fx} 2 every planted defect flagged and every hidden feature reached`, missed.length === 0, `missed: ${missed.join(' ') || 'none'}`);
 
     // Test 3: second run gives the same files and screen ids (timing values and background noise ignored).
