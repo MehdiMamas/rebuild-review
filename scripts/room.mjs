@@ -101,17 +101,17 @@ export function writeSettings(room, { denyPaths, only }) {
       filesystem: { denyRead: denyPaths },
       network: { allowedDomains: REGISTRIES },
     },
-    permissions: { deny: denyPaths.flatMap((p) => [`Read(${p})`, `Read(${p}/**)`]) },
+    permissions: { deny: denyPaths.flatMap((p) => [`Read(/${p})`, `Read(/${p}/**)`]) },
   };
   if (only === 'deny') delete settings.sandbox;
   if (only === 'sandbox') delete settings.permissions;
   fs.writeFileSync(path.join(room, '.claude', 'settings.json'), JSON.stringify(settings, null, 2));
 }
 
-export function runChild({ room, prompt, model, maxBudgetUsd, transcriptPath, settings }) {
+export function runChild({ room, prompt, model, maxBudgetUsd, transcriptPath, settings, mode = PERMISSION_MODE }) {
   const env = { PATH: process.env.PATH, HOME: process.env.HOME };
   for (const k of ['TMPDIR', 'USER', 'LANG', 'ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN']) if (process.env[k]) env[k] = process.env[k];
-  const args = ['-p', '--model', model, '--max-budget-usd', String(maxBudgetUsd), '--permission-mode', PERMISSION_MODE,
+  const args = ['-p', '--model', model, '--max-budget-usd', String(maxBudgetUsd), '--permission-mode', mode,
     '--setting-sources', 'project', '--disallowedTools', 'WebFetch', 'WebSearch', '--disable-slash-commands',
     '--strict-mcp-config', '--no-session-persistence', '--output-format', 'stream-json', '--verbose'];
   if (settings) args.push('--settings', settings);
