@@ -75,6 +75,47 @@ async function runInventory() {
   return stoppedBy
 }
 
+// ---- Parity ----
+const PAR = `${runDir}/parity`
+const TESTS = `${PAR}/tests`
+const WRITER = { model: 'sonnet', effort: 'medium' }
+const RUN_RESULT = { type: 'object', required: ['ok'], properties: { ok: { type: 'boolean' }, detail: { type: 'string' } } }
+
+async function runParity() {
+  const has = await agent(`Read "platform" in ${runDir}/run.json. The adapter folder is ${ADAPTER}/<platform> (flutter uses the android folder). Return ok true if ${ADAPTER}/<that folder>/parity.mjs exists, otherwise ok false with detail "No parity adapter for platform <platform>". Change nothing.`, { ...CHEAP, label: 'parity-adapter', phase: 'Parity', schema: RUN_RESULT })
+  if (!has || !has.ok) return { stopped: 'Parity', reason: (has && has.detail) || 'adapter check agent died' }
+
+  const runOn = (label, appJson, out) => agent(`Read "platform" in ${runDir}/run.json; the adapter folder is ${ADAPTER}/<platform> (flutter uses the android folder). Run: node <adapter folder>/parity.mjs --app ${appJson} --tests ${TESTS} --out ${out}. Return ok true if it exited 0 and ${out} exists, with its one-line summary as detail; otherwise ok false with the error. Change nothing else.`, { model: 'sonnet', effort: 'low', label, phase: 'Parity', schema: RUN_RESULT })
+  const mustRun = (r, what) => { if (!r || !r.ok) throw new Error(`Parity: ${what} failed: ${(r && r.detail) || 'agent died'}`) }
+
+  await agent(`Create the folders ${TESTS} (mkdir -p). Change nothing else.`, { ...CHEAP, label: 'parity-setup', phase: 'Parity' })
+  const wrote = await agent(`You are the parity test writer. Read ${runDir}/features.md and ${runDir}/run.json. For every feature write one test file ${TESTS}/F-xxx.test.mjs, named by the feature's ID (F-001.test.mjs, ...). You may start the copy named in run.json to look at the running app (start it from its copy, use the platform's driver, stop it after), but you must NOT read any source file under ${WORK} or ${target}; you work only from features.md and what the running app shows. Never quote source in a test.
+Each test is a node:test file (import test from 'node:test'; import assert from 'node:assert/strict') that reads the address from process.env.APP_URL. For a web app import the driver by absolute path: import { chromium } from '${ADAPTER}/web/node_modules/playwright/index.mjs'. Find things the way a person names them (role, label, visible text), never by id, class or DOM shape. Each test launches its own browser and closes it at the end.
+A feature marked "keep" gets a test asserting the behaviour. A feature marked "defect" gets a test asserting the Intended behaviour its entry states, so it should fail on the original app. A feature the critic marked unconfirmed, or that cannot be reached from the app, gets no test: list it in ${PAR}/untested.md as "F-xxx: reason". Create untested.md even if it is empty. ${DRIVER} Do not write anywhere else. ${NOTE}`, { ...WRITER, label: 'parity-writer', phase: 'Parity' })
+  if (!wrote) throw new Error('Parity: the test writer died')
+
+  // Fix loop: a keep test failing on the original, or a defect test passing on it, means the test is wrong.
+  const judge = { type: 'object', required: ['wrong'], properties: { wrong: { type: 'number' } } }
+  for (let round = 1; round <= 3; round++) {
+    mustRun(await runOn(`parity-original-${round}`, `${runDir}/run.json`, `${PAR}/original.json`), 'the run on the original')
+    const j = await agent(`You are the parity fixer, round ${round} of 3. Read ${PAR}/original.json (results per feature) and ${runDir}/features.md (each feature is keep or defect). A "keep" test that failed on the original, or a "defect" test that passed on it, means the test is wrong. Count them and return wrong. If wrong is 0, change nothing. Otherwise fix those test files in ${TESTS}: fix the test, not features.md, unless using the running app (start it from the copy named in ${runDir}/run.json, stop it after) proves the features.md entry itself is wrong; then correct the entry in plain behaviour words (no source). Do not read source under ${WORK} or ${target}. Never delete a test. ${DRIVER}`, { ...WRITER, label: `parity-fix-${round}`, phase: 'Parity', schema: judge })
+    if (!j) throw new Error('Parity: the fix agent died')
+    if (j.wrong === 0) break
+  }
+  mustRun(await runOn('parity-original-a', `${runDir}/run.json`, `${PAR}/original.json`), 'the run on the original')
+  mustRun(await runOn('parity-original-b', `${runDir}/run.json`, `${PAR}/original-2.json`), 'the second run on the original')
+
+  const settled = await agent(`You are the parity settler. Read ${PAR}/original.json and ${PAR}/original-2.json (two runs of the same tests on the original) and ${runDir}/features.md. A test is still wrong when a keep test fails or a defect test passes; a test is flaky when its result differs between the two runs. For each such test: move its file from ${TESTS} to ${PAR}/removed/ (never delete it) and add a line to ${PAR}/untested.md: "F-xxx: still wrong after 3 fix rounds, <reason>" or "F-xxx: flaky". Then rewrite ${PAR}/original.json to hold only the results of the tests that remain (they agree across both runs). Return how many moved.`, { ...WRITER, label: 'parity-settle', phase: 'Parity', schema: { type: 'object', required: ['moved'], properties: { moved: { type: 'number' } } } })
+  if (!settled) throw new Error('Parity: the settle agent died')
+
+  // The rebuild, when there is one: same tests, same states, then the visual diff.
+  const RB = `${runDir}/project/rebuild-run.json`
+  const rb = await agent(`If ${RB} does not exist, return ok true with detail "no rebuild" and do nothing else. Otherwise read "platform" in ${runDir}/run.json (the adapter folder is ${ADAPTER}/<platform>; flutter uses the android folder) and run, in order: (1) node <adapter folder>/parity.mjs --app ${RB} --tests ${TESTS} --out ${PAR}/rebuild.json; (2) node <adapter folder>/capture.mjs --app ${RB} --out ${runDir}/golden-rebuild --states ${INV}/states.json; (3) node ${pluginRoot}/scripts/visual-diff.mjs ${runDir}/golden ${runDir}/golden-rebuild ${PAR}/visual-diff.json. Return ok true with detail "rebuilt" if all three exited 0, otherwise ok false with the first error. Change nothing else.`, { model: 'sonnet', effort: 'low', label: 'parity-rebuild', phase: 'Parity', schema: RUN_RESULT })
+  mustRun(rb, 'the rebuild run')
+
+  await agent(`Write ${PAR}/parity.json: a JSON list with one entry {feature, kind, original, rebuild, note} for every feature in ${runDir}/features.md. kind is keep or defect. original and rebuild are "pass", "fail" or "not run" from ${PAR}/original.json and ${PAR}/rebuild.json (rebuild is "not run" for all if rebuild.json does not exist, or for a feature with no result). A feature listed in ${PAR}/untested.md is "not run" in both, with its reason as note. Otherwise note is empty unless the two results disagree, then one plain sentence. Then write ${runDir}/Parity.done containing the word done. Touch nothing else.`, { ...CHEAP, label: 'Parity.done', phase: 'Parity' })
+}
+
 const ran = []
 for (const phase of PHASES) {
   if (done.has(`${phase}.done`)) continue
@@ -93,6 +134,12 @@ for (const phase of PHASES) {
     continue
   }
   if (phase === 'Inventory') { await runInventory(); ran.push(phase); continue }
+  if (phase === 'Parity') {
+    const p = await runParity()
+    if (p && p.stopped) return { ran, stopped: p.stopped, reason: p.reason }
+    ran.push(phase)
+    continue
+  }
   await agent(
     `Stub for the ${phase} phase. Write a file at ${runDir}/${phase}.done containing the word done. Touch nothing else. The target ${target} must not be modified.`,
     { ...CHEAP, label: phase, phase },

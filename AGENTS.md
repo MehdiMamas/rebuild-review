@@ -29,6 +29,14 @@ what it renders, then scores the rebuild against the original. See README.md.
 - Each run gets its own port from `scripts/free-port.mjs` (capture writes it into `run.json`; the finders start the app with `PORT` set to it).
 - If the second capture fails, run the skill again with the same run folder: `InventoryFound.done` makes it skip the finders, merge and critics and repeat only the capture. Test: `node --test scripts/free-port.test.mjs`.
 
+## Parity phase (phase 1: the suite)
+
+- Needs `features.md`, `run.json` and `golden/`. Adapter entry point: `parity.mjs --app <run.json> --tests <dir> --out <results.json>` (contract in `adapters/CONTRACT.md`); a platform with no `parity.mjs` stops the phase with a plain reason. Web: `adapters/web/parity.mjs`, app start and stop shared with capture in `adapters/web/app.mjs`.
+- A writer agent (sonnet) writes `<runDir>/parity/tests/F-xxx.test.mjs`, one per feature, from `features.md` and the running app, never from `work/`. `keep` tests assert the behaviour, `defect` tests assert the Intended text and should fail on the original. A fix loop (3 rounds) repairs wrong tests; two runs on the original must agree. Tests that stay wrong or flip move to `parity/removed/` and are listed in `parity/untested.md`.
+- With `<runDir>/project/rebuild-run.json` it also runs the tests on the rebuild (`parity/rebuild.json`), captures it into `golden-rebuild/` and runs `scripts/visual-diff.mjs` (`parity/visual-diff.json`, percent of differing pixels, no pass or fail). Writes `parity/parity.json` and `Parity.done`. Phase 2 (feeding failures back to the builder) is not built yet.
+- Probe `script-cost-per-key` (web): script time per keystroke at 4x CPU slowdown; the value is `script-ms-per-key` in `golden/timings.json`, flagged above 16 ms. The threshold is not tuned to the fixture.
+- Tests: `node --test scripts/visual-diff.test.mjs` (needs `cd adapters/web && npm install` first); `cd adapters/web && npm test` checks the timing is written and prints it.
+
 ## Conventions
 
 - Any kind of project, not only web. Nothing outside a platform adapter may assume HTML,

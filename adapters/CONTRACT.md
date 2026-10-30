@@ -53,7 +53,13 @@ so capture runs twice.
 
 Each probe is a general check for one kind of failure, not a check for a known app. Required kinds:
 focus lost while typing, input delay, layout shift, repeated identical requests, errors in the
-console, no visible feedback during a slow request, a failed request with no visible error.
+console, no visible feedback during a slow request, a failed request with no visible error, script time per keystroke (`script-cost-per-key`: script time over 5 characters typed 100 ms apart into the first text input of each screen, CPU throttled 4x; the worst value goes to `timings.json` as `script-ms-per-key`, `passed` means 16 ms or less, one frame).
+
+## Parity
+
+Call: `parity --app <run.json> --tests <dir> --out <results.json>`
+
+The adapter starts the app named in `run.json`, passes its address in the `APP_URL` environment variable, runs each `<dir>/F-*.test.*` (one file per feature, named by feature ID) with a 60 second limit, and stops the app. Results: a list of `{ feature, passed, detail }`, `detail` being the last lines of the test's output. The same safety rules as capture apply. A platform with no `parity` entry point has no parity phase: the workflow stops with a plain reason.
 
 ## Safety, enforced in code
 
@@ -67,4 +73,4 @@ The web adapter lives in `adapters/web/`. Address is a localhost URL. It starts 
 `install`, `build` and `start` in `work/<dir>`, with the port in the `PORT` environment variable.
 It drives Chromium: crawl by following links and clicking buttons on the app's own origin, sizes
 390 and 1440 wide, `render.html` and `render.css.json` as the render files, the accessibility tree as
-`a11y.json`, a HAR as `network.har`. Probes are in `probes.mjs`.
+`a11y.json`, a HAR as `network.har`. Probes are in `probes.mjs`. Parity is `parity.mjs`: each test is a `node --test` file that imports Playwright by absolute path from `adapters/web/node_modules`.
