@@ -52,7 +52,7 @@ function setupRun(fx, name) {
 }
 const runCapture = (runDir) => {
   const r = spawnSync('node', [capture, '--app', path.join(runDir, 'run.json'), '--out', path.join(runDir, 'golden'), '--states', states], { encoding: 'utf8', env: process.env, maxBuffer: 1 << 28 });
-  console.log(`  capture exit ${r.status}: ${(r.stdout || '').trim().split('\n').pop()}${r.status ? '\n' + (r.stderr || '').slice(-1500) : ''}`);
+  console.log(`  capture exit ${r.status}: ${(r.stdout || '').trim().split('\n').pop()}${r.status ? '\n' + (r.stderr || '').slice(-1500) : process.env.RR_DEBUG ? '\n' + r.stderr : ''}`);
   return r;
 };
 

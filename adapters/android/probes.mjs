@@ -27,12 +27,15 @@ export function staticProbes(screens, density) {
 }
 
 // Crash or ANR in logcat (also errors a Flutter app logs as uncaught), plus any time the app left the screen after a tap.
-export function crashProbe(logcat, crawlNotes) {
+export function crashProbe(logcat, crawlNotes, pkg) {
   const flags = [];
   const lines = logcat.split('\n');
   const hit = (re, what) => { const l = lines.find((x) => re.test(x)); if (l) flags.push({ probe: 'crash-anr', screen: '*', passed: false, evidence: `${what}: ${scrub(l.trim()).slice(0, 200)}` }); };
-  hit(/FATAL EXCEPTION/, 'crash');
-  hit(/ANR in /, 'ANR');
+  // only the app's own process counts: other apps on the device crash and stall too
+  const own = pkg.replace(/\./g, '\\.');
+  const fatal = lines.findIndex((x, i) => /FATAL EXCEPTION/.test(x) && lines.slice(i, i + 4).some((y) => new RegExp('Process: ' + own + '\\b').test(y)));
+  if (fatal >= 0) flags.push({ probe: 'crash-anr', screen: '*', passed: false, evidence: `crash: ${scrub((lines.slice(fatal + 1, fatal + 5).find((y) => /(Exception|Error)\b/.test(y) && !/Process:/.test(y)) || lines[fatal]).trim()).slice(0, 200)}` });
+  hit(new RegExp('ANR in ' + own + '\\b'), 'ANR');
   hit(/ flutter\s*:.*(EXCEPTION CAUGHT|Unhandled Exception)|E\/flutter.*(EXCEPTION CAUGHT|Unhandled Exception)/, 'uncaught Flutter error');
   for (const n of crawlNotes.filter((x) => x.leftApp)) flags.push({ probe: 'crash-anr', screen: n.screen, passed: false, evidence: `the app left the screen after ${n.what}` });
   return verdict('crash-anr', flags, 'no crash, ANR or uncaught error in logcat');

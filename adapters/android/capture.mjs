@@ -45,6 +45,19 @@ async function main() {
   proxy = await startProxy({ apiPort });
   ensureAvd();
   stopEmu = await startEmulator(proxy.port);
+  // The emulator takes its proxy a little after boot: wait until a connection from the device really reaches ours.
+  {
+    let reached = false;
+    for (let i = 0; i < 40 && !reached; i++) {
+      const before = proxy.state.seen;
+      try { adb('shell', `printf 'GET /api/tasks HTTP/1.0\\r\\n\\r\\n' | toybox nc -w 3 10.0.2.2 ${apiPort}`); } catch {}
+      await sleep(500);
+      reached = proxy.state.seen > before;
+      if (!reached) await sleep(1500);
+    }
+    if (!reached) throw new Error('the emulator did not send its traffic through the recording proxy within 80 s, so nothing could be captured');
+  }
+  proxy.state.har.length = 0; proxy.state.seen = 0; proxy.state.blocked.clear();
   const dev = new Device({ pkg: run.package, proxy });
   const apk = path.resolve(workDir, run.apk);
   adb('install', '-r', apk);
@@ -90,11 +103,20 @@ async function main() {
     if (s.depth >= MAX_DEPTH) continue;
     proxy.mark(s.id);
     let at = null; // the screen the app is showing now
+    let fresh = false; // true until the first tap after a fresh start
     for (const c of s.candidates.flatMap((x) => (x.canLong ? [x, { ...x, long: true }] : [x]))) {
-      if (at !== s) { await dev.reopen(s.path); at = s; }
+      if (at !== s) { await dev.reopen(s.path); at = s; fresh = true; }
+      const wasFresh = fresh; fresh = false;
       c.long ? dev.longPress(c.at) : dev.tap(c.at);
       await sleep(500);
-      const nodes = await dev.stable(1);
+      let nodes = await dev.stable(1, 3); // a popup or dialog can take over a second to appear
+      // Nothing changed after earlier taps on this screen: ask again from a fresh start, because an earlier tap (a reload, say) can swallow this one.
+      if (!wasFresh && nodes.length && sigOf(nodes) === s.sig) {
+        await dev.reopen(s.path); at = s;
+        c.long ? dev.longPress(c.at) : dev.tap(c.at);
+        await sleep(500);
+        nodes = await dev.stable(1, 3);
+      }
       const what = `${c.long ? 'long-pressing' : 'tapping'} "${c.name}"`;
       if (!nodes.length) { crawlNotes.push({ screen: s.id, what, leftApp: true }); notCaptured.push(`${s.id}: the app left the screen after ${what}`); at = null; continue; }
       const sig = sigOf(nodes);
@@ -150,7 +172,7 @@ async function main() {
   probes.push(...await jankProbe(dev, screens, timings, notCaptured));
   probes.push(...await faultProbes(dev, proxy, screens));
   const logcat = adb('logcat', '-d', '-v', 'threadtime');
-  probes.push(...crashProbe(logcat, crawlNotes));
+  probes.push(...crashProbe(logcat, crawlNotes, run.package));
   const errLines = logcat.split('\n').filter((l) => / E /.test(l) && (l.includes(run.package) || /AndroidRuntime|flutter/.test(l))).map(scrub);
 
   let appVersion = run.appVersion || null;
