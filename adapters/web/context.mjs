@@ -93,6 +93,10 @@ export async function locate(page, name) {
 }
 
 export async function runStep(page, origin, step) {
+  if ('type' in step && (!step.type || typeof step.type.into !== 'string' || typeof step.type.text !== 'string'))
+    throw new Error(`bad step: type needs string fields into and text: ${JSON.stringify(step)}`);
+  if ('failRequest' in step && typeof step.failRequest !== 'string')
+    throw new Error(`bad step: failRequest must be a string: ${JSON.stringify(step)}`);
   if ('open' in step) await page.goto(new URL(step.open, origin).toString());
   else if ('click' in step) await (await locate(page, step.click)).click();
   else if ('type' in step) await (await locate(page, step.type.into)).pressSequentially(step.type.text, { delay: 30 });
