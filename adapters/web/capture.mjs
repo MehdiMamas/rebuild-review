@@ -2,9 +2,9 @@
 // run.json: { platform: "web", dir?, install?, build?, start, address, appVersion? }; dir is relative to the run folder's work/.
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn, execSync } from 'node:child_process';
 import { chromium } from 'playwright';
-import { makeContext, assertLocalhost, runStep, sleep, scrub } from './context.mjs';
+import { makeContext, runStep, sleep, scrub } from './context.mjs';
+import { startApp } from './app.mjs';
 import { runProbes } from './probes.mjs';
 
 const arg = (n) => { const i = process.argv.indexOf(`--${n}`); return i > 0 ? process.argv[i + 1] : undefined; };
@@ -13,28 +13,13 @@ const out = path.resolve(arg('out') || '');
 const statesFile = arg('states');
 const run = JSON.parse(fs.readFileSync(appFile, 'utf8'));
 if (run.platform !== 'web') throw new Error(`web adapter cannot capture platform "${run.platform}"`);
-const origin = assertLocalhost(run.address).origin;
-const workDir = path.resolve(path.dirname(appFile), 'work', run.dir || '.');
-// Something already answering there would be captured in place of this app.
-if (await fetch(origin).then(() => true, () => false)) throw new Error(`refusing to start: something already answers on ${origin}`);
+const { origin, workDir, stop } = await startApp(run, appFile);
 const SIZES = [{ w: 390, h: 844 }, { w: 1440, h: 900 }];
 const THEMES = ['light', 'dark'];
 const MAX_SCREENS = 30;
 const notCaptured = [];
 const slug = (u) => { const p = new URL(u).pathname.replace(/^\/|\/$/g, '').replace(/[^\w-]+/g, '-'); return p || 'root'; };
 const write = (f, data) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, typeof data === 'string' ? data : JSON.stringify(data, null, 2)); };
-
-// Install, build and start the app in the work copy (never the target itself).
-for (const key of ['install', 'build']) if (run[key]) execSync(run[key], { cwd: workDir, stdio: 'inherit' });
-const port = new URL(origin).port;
-const server = spawn(run.start, { cwd: workDir, shell: true, detached: true, stdio: 'ignore', env: { ...process.env, PORT: port } });
-const stop = () => { try { process.kill(-server.pid); } catch {} server.kill(); };
-process.on('exit', stop);
-for (let i = 0; ; i++) {
-  if (await fetch(origin).then(() => true, () => false)) break;
-  if (i > 100) { stop(); throw new Error(`app did not answer on ${origin}`); }
-  await sleep(300);
-}
 
 const browser = await chromium.launch();
 const har = [], consoleLines = [], blocked = new Set(), timings = [];
@@ -127,7 +112,7 @@ if (statesFile) {
 }
 
 // 4. Probes.
-const probes = await runProbes({ browser, origin, screens });
+const probes = await runProbes({ browser, origin, screens, timings });
 await browser.close();
 stop();
 

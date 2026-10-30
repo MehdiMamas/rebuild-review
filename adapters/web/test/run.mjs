@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import { execFileSync, spawnSync } from 'node:child_process';
+import { startApp } from '../app.mjs';
 
 const here = path.dirname(new URL(import.meta.url).pathname);
 const repo = path.resolve(here, '../../..');
@@ -80,6 +81,10 @@ for (const t of table) console.log(`${t.id} | ${t.probe} | ${t.flagged ? 'FLAGGE
 const must = ['D2', 'D3', 'D5', 'D6', 'D7'];
 check('3 probes flag D2 D3 D5 D6 D7 (D1 and D4 reported only)', must.every((id) => table.find((t) => t.id === id).flagged), `required missed: ${must.filter((id) => !table.find((t) => t.id === id).flagged).join(' ') || 'none'}; D1 ${table.find((t) => t.id === 'D1').flagged ? 'caught' : 'NOT caught'}; D4 ${table.find((t) => t.id === 'D4').flagged ? 'caught' : 'NOT caught'}`);
 
+// Test 3b: the script-cost probe wrote its number. Printed so #9 can compare it between original and rebuild.
+const sm = json(path.join(g1, 'timings.json')).find((t) => t.name === 'script-ms-per-key');
+check('3b script-ms-per-key is in timings.json', !!sm && typeof sm.value === 'number', sm ? `${sm.value} ${sm.unit} per key at 4x CPU slowdown (budget 16 ms); D1 ${sm.value > 16 ? 'flagged' : 'not flagged'}` : 'missing');
+
 // Test 4: a second run gives the same files and screen list.
 const run2 = setupRun('run2', 4234);
 runCapture(run2, ['--states', states]);
@@ -103,6 +108,20 @@ check('5b non-localhost address refused', rr.status !== 0 && /only localhost/.te
 // Test 6: the target stays untouched.
 const status = execFileSync('git', ['status', '--porcelain', '--ignored'], { cwd: target }).toString().trim();
 check('6 target git status is clean after the runs', status === '', status || 'clean');
+
+// Test 7: a rebuild-run.json takes "dir" relative to its own folder, and an absolute "dir" is refused.
+{
+  const rb = path.join(tmp, 'rb');
+  fs.cpSync(path.join(run1, 'work/app'), rb, { recursive: true });
+  const f = path.join(rb, 'rebuild-run.json');
+  fs.writeFileSync(f, JSON.stringify({ platform: 'web', dir: '.', start: 'node server.mjs', address: 'http://127.0.0.1:4235' }));
+  let started = false, refused = false;
+  try { const a = await startApp(JSON.parse(read(f)), f); started = (await fetch(a.origin)).ok; a.stop(); } catch (e) { started = e.message; }
+  try { await startApp({ platform: 'web', dir: rb, start: 'true', address: 'http://127.0.0.1:4236' }, f); } catch (e) { refused = /relative/.test(e.message); }
+  let escaped = false;
+  try { await startApp({ platform: 'web', dir: '../..', start: 'true', address: 'http://127.0.0.1:4236' }, f); } catch (e) { escaped = /stay inside/.test(e.message); }
+  check('7 rebuild-run.json starts from its own folder with dir "."; absolute dir and .. refused', started === true && refused && escaped, `started ${started}; absolute refused ${refused}; .. refused ${escaped}`);
+}
 
 fs.rmSync(tmp, { recursive: true, force: true });
 const failed = results.filter((r) => !r).length;
