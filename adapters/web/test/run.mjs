@@ -28,6 +28,8 @@ function setupRun(name, port) {
 const states = path.join(tmp, 'states.json');
 fs.writeFileSync(states, JSON.stringify([
   { id: 'list-error', steps: [{ failRequest: '/api/tasks' }, { open: '/' }, { wait: 500 }] },
+  { id: 'bad-type', steps: [{ open: '/' }, { type: { target: 'x', text: 'y' } }] },
+  { id: 'bad-fail', steps: [{ failRequest: { match: '/api/tasks', status: 500 } }, { open: '/' }] },
   { id: 'list-loading', steps: [{ slowRequest: { match: '/api/tasks', ms: 2000 } }, { open: '/' }, { wait: 300 }] },
 ]));
 const runCapture = (runDir, extra = []) => spawnSync('node', [capture, '--app', path.join(runDir, 'run.json'), '--out', path.join(runDir, 'golden'), ...extra], { encoding: 'utf8', env: process.env });
@@ -56,6 +58,10 @@ check('1 crawl finds every route, including link-only ones', JSON.stringify(site
 const errHtml = fs.existsSync(path.join(g1, 'screens/list-error/render.html')) ? read(path.join(g1, 'screens/list-error/render.html')) : '';
 const loadHtml = fs.existsSync(path.join(g1, 'screens/list-loading/render.html')) ? read(path.join(g1, 'screens/list-loading/render.html')) : 'missing';
 check('2 states.json captures the error and loading states', errHtml.includes('Could not load tasks') && !loadHtml.includes('data-testid="row"') && loadHtml !== 'missing' && fs.existsSync(path.join(g1, 'screens/list-loading/1440-light.png')), `error state shows banner: ${errHtml.includes('Could not load tasks')}; loading state has no rows yet: ${!loadHtml.includes('data-testid="row"')}`);
+
+// Test 2b: malformed steps are reported, a valid failRequest string still captures.
+const nc = m1.notCaptured.join('\n');
+check('2b bad type and object failRequest listed as bad step; valid failRequest captured', /state bad-type: bad step/.test(nc) && /state bad-fail: bad step/.test(nc) && errHtml.includes('Could not load tasks'), nc.split('\n').filter((l) => l.includes('bad-')).join(' | ') || 'none listed');
 
 // Test 3: probes.json against answers.json (read here only, never by capture code).
 const answers = json(path.join(repo, 'benchmark/answers.json'));
