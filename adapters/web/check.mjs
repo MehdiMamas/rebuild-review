@@ -8,6 +8,8 @@ import { loadProbes, clickProbes } from './probes.mjs';
 import { statusOf, exitCodeOf } from './check-result.mjs';
 
 const t0 = Date.now();
+// A throw nobody handled is an error (3), never a failed check (1).
+for (const ev of ['uncaughtException', 'unhandledRejection']) process.on(ev, (e) => { console.error(`error: ${String(e?.message ?? e).split('\n')[0]}`); process.exit(3); });
 const die = (msg) => { console.error(`error: ${msg}`); process.exit(exitCodeOf('error')); };
 const arg = (n) => { const i = process.argv.indexOf(`--${n}`); return i > 0 ? process.argv[i + 1] : undefined; };
 
@@ -35,7 +37,8 @@ try { browser = await chromium.launch(); } catch (e) { die(`browser could not st
 
 const slug = (u) => u.replace(/^\//, '').replace(/[^A-Za-z0-9]+/g, '_') || 'root';
 const blocked = new Set(), notChecked = [], reached = [], screenshots = [];
-const env = { storageState, allowOrigins, onBlocked: (u) => blocked.add(u) };
+// A polling app never goes idle: cap each idle wait; other waits fail fast instead of eating the budget.
+const env = { storageState, allowOrigins, onBlocked: (u) => blocked.add(u), timeout: 5000, navTimeout: 15000 };
 
 // A route that ends on another path (a redirect to login) is not checked.
 for (const route of routes) {
@@ -46,12 +49,12 @@ for (const route of routes) {
     const want = new URL(route, origin).pathname.replace(/\/$/, ''), got = new URL(page.url()).pathname.replace(/\/$/, '');
     // Screenshots come first for every route, before any probe, so a cut budget never loses them.
     if (out) {
-      await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
+      await page.waitForLoadState('networkidle', { timeout: 3000 }).catch(() => {});
       for (const width of [1440, 390]) {
         try {
           await page.setViewportSize({ width, height: 900 });
           const file = `${slug(route)}-${width}.png`;
-          await page.screenshot({ path: path.join(out, file) });
+          await page.screenshot({ path: path.join(out, file), fullPage: true });
           screenshots.push({ route, width, file });
         } catch (e) { notChecked.push({ probe: 'screenshot', route, reason: `${width} px: ${String(e.message).split('\n')[0]}` }); }
       }
@@ -66,16 +69,21 @@ for (const route of routes) {
 }
 
 const rows = [];
-const common = { browser, origin, screens: reached, deadline, notChecked, ...env };
+const common = { browser, origin, screens: reached, deadline, notChecked, idleMs: 3000, ...env };
 rows.push(...await loadProbes({ ...common, ignoreBlocked: true }));
 // Clicks that look destructive or outward-facing are skipped and listed; on a non-local app no click runs.
-const RISKY = /\b(delete|remove|destroy|pay|buy|purchase|checkout|send|publish|sign\s?out|log\s?out|unsubscribe|deactivate)\b/i;
+const RISKY = /\b(delete|remove|destroy|pay|buy|purchase|checkout|send|publish|sign[\s-]?out|log[\s-]?out|unsubscribe|deactivate|trash|discard|reset|archive|revoke|wipe|clear|drop)\b/i;
 const skipped = [];
 rows.push(...await clickProbes({ ...common, concurrency: 4, labelFilter: (l) => !RISKY.test(l), skipped, noClicks: local ? undefined : 'the app is not local, a click could act on real data' }));
 for (const k of skipped) notChecked.push({ probe: 'click', route: k.route, reason: `skipped "${k.label}": looks destructive or outward-facing` });
 await browser.close();
 
-const failed = rows.filter((r) => !r.passed).map((r) => ({ probe: r.probe, route: r.screen, evidence: r.evidence }));
+// A row's screen is the route's id, then '@390', or ':' and detail; give the route and put the detail before the evidence.
+const routeOf = (screen) => {
+  const hit = reached.filter((r) => screen === r.id || screen.startsWith(r.id + ':') || screen.startsWith(r.id + '@')).sort((a, b) => b.id.length - a.id.length)[0];
+  return hit ? { route: hit.url, rest: screen.slice(hit.id.length).replace(/^:/, '') } : { route: screen, rest: '' };
+};
+const failed = rows.filter((r) => !r.passed).map((r) => { const { route, rest } = routeOf(r.screen); return { probe: r.probe, route, evidence: rest ? `${rest}: ${r.evidence}` : r.evidence }; });
 const status = statusOf({ failed, notChecked });
 const result = { version: 1, status, baseUrl, routes, screenshots, elapsedMs: Date.now() - t0, passed: rows.length - failed.length, failed, notChecked, blockedOrigins: [...new Set([...blocked].map((u) => { try { return new URL(u).origin; } catch { return u; } }))].sort() };
 if (out) fs.writeFileSync(path.join(out, 'result.json'), JSON.stringify(result, null, 2));

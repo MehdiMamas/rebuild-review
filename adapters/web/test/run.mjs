@@ -164,6 +164,7 @@ check('6 target git status is clean after the runs', status === '', status || 'c
   check('9a check.mjs on the benchmark: exit 1, D2 D3 D5 D6 D7 flagged, under 120 s', full.status === 1 && must.every(flagged) && full.sec < 120 && res.elapsedMs < 120000,
     `exit ${full.status}; ${full.sec.toFixed(1)} s; flagged ${must.filter(flagged).join(' ')}; not checked ${res.notChecked.length}`);
   const shotsOk = ['1440', '390'].every((w) => (res.screenshots || []).some((x) => x.route === '/' && x.width === Number(w) && x.file === `root-${w}.png` && fs.statSync(path.join(outDir, x.file)).size > 0));
+  check('9a1 failed[].route holds the route, the click detail is in the evidence', res.failed.length > 0 && res.failed.every((f) => f.route === '/') && res.failed.some((f) => /^click "Save": /.test(f.evidence)), res.failed.slice(0, 3).map((f) => `${f.route} ${f.evidence.slice(0, 50)}`).join(' | '));
   check('9a2 screenshots at 390 and 1440 exist for every route and are listed in result.json', shotsOk, (res.screenshots || []).map((x) => x.file).join(' ') || 'none');
   const small = runCheck(['--base-url', app.origin, '--routes', '/', '--budget-seconds', '5', '--out', outDir]);
   const rs5 = json(outFile);
@@ -176,9 +177,33 @@ check('6 target git status is clean after the runs', status === '', status || 'c
   check('9d missing --base-url exits 3', bad.status === 3, `exit ${bad.status}`);
   // A route that redirects is not checked: exit 2, never a pass.
   // The server runs in a child process: spawnSync blocks this process's own event loop.
-  const redir = spawn('node', ['-e', "require('http').createServer((q,s)=>{if(q.url==='/old'){s.writeHead(302,{location:'/login'});s.end()}else{s.writeHead(200,{'content-type':'text/html'});s.end('<title>x</title><p>hi</p>')}}).listen(4241)"], { stdio: 'ignore' });
+  // /old redirects, /hang never answers, /stuck has a field that cannot be clicked, /icon has an icon-only Delete button.
+  const pages = {
+    '/': '<title>x</title><p>hi</p>',
+    '/stuck': '<title>x</title><input disabled placeholder="stuck">',
+    '/icon': '<title>x</title><button aria-label="Delete" style="width:20px;height:20px" onclick="fetch(\'/api/x\',{method:\'DELETE\'})"></button>',
+  };
+  const serverJs = `require('http').createServer((q,s)=>{const pages=${JSON.stringify(pages)};
+    if(q.url==='/old'){s.writeHead(302,{location:'/login'});s.end()}
+    else if(q.url==='/hang'){}
+    else if(q.url.startsWith('/api/')){console.error('API '+q.method+' '+q.url);s.end('{}')}
+    else{s.writeHead(200,{'content-type':'text/html'});s.end(pages[q.url]||pages['/'])}}).listen(4241)`;
+  const redir = spawn('node', ['-e', serverJs], { stdio: ['ignore', 'ignore', 'pipe'] });
+  let apiHits = '';
+  redir.stderr.on('data', (d) => { apiHits += d; });
   for (let i = 0; i < 50 && !(await fetch('http://127.0.0.1:4241').then(() => true, () => false)); i++) await new Promise((r) => setTimeout(r, 100));
-  const rd = runCheck(['--base-url', 'http://127.0.0.1:4241', '--routes', '/old', '--out', outDir]);
+  const ok = { b: 'http://127.0.0.1:4241' };
+  const stuck = runCheck(['--base-url', ok.b, '--routes', '/stuck', '--out', outDir]);
+  const stuckR = json(outFile);
+  check('9f a field that cannot be clicked gives notChecked and exit 2, no crash', stuck.status === 2 && stuckR.notChecked.some((n) => n.route === '/stuck' && n.probe === 'script-cost-per-key'), `exit ${stuck.status}; ${stuck.sec.toFixed(1)} s; ${stuckR.notChecked.map((n) => n.probe).join(' ')}`);
+  const hang = runCheck(['--base-url', ok.b, '--routes', '/hang', '--out', outDir]);
+  const hangR = json(outFile);
+  check('9g a route that hangs gives notChecked and exit 2, no crash', hang.status === 2 && hangR.notChecked.some((n) => n.route === '/hang'), `exit ${hang.status}; ${hang.sec.toFixed(1)} s; ${hangR.notChecked.map((n) => n.reason).join(' | ').slice(0, 120)}`);
+  const icon = runCheck(['--base-url', ok.b, '--routes', '/icon', '--out', outDir]);
+  const iconR = json(outFile);
+  await new Promise((r) => setTimeout(r, 300)); // let the server's stderr reach this process
+  check('9h an icon-only button with aria-label Delete is skipped, listed, and never clicked', icon.status === 2 && iconR.notChecked.some((n) => n.probe === 'click' && /skipped/.test(n.reason)) && !/DELETE/.test(apiHits), `exit ${icon.status}; ${iconR.notChecked.map((n) => n.reason).join(' | ')}; DELETE requests seen: ${/DELETE/.test(apiHits)}`);
+  const rd = runCheck(['--base-url', ok.b, '--routes', '/old', '--out', outDir]);
   const rdr = json(outFile);
   redir.kill();
   check('9e a redirecting route is notChecked, exit 2', rd.status === 2 && rdr.notChecked.some((n) => n.route === '/old' && /\/login/.test(n.reason)), `exit ${rd.status}; ${rdr.notChecked.map((n) => n.reason).join(' | ')}`);

@@ -48,6 +48,7 @@ const WATCH = `(() => {
 async function open(browser, origin, url, opts = {}) {
   const faults = {};
   const { context, rec } = await makeContext(browser, origin, { viewport: { width: 1440, height: 900 }, ...opts, faults });
+  opts.track?.add(context);
   const page = await context.newPage();
   await page.addInitScript(WATCH);
   const api = { pending: 0, seen: [] };
@@ -65,12 +66,26 @@ async function open(browser, origin, url, opts = {}) {
 //   ignoreBlocked   console errors caused by a blocked cross-origin request are not flagged
 //   deadline        ms timestamp; what has not started by then goes to notChecked ({probe, route, reason})
 //   maxClickables (10), labelFilter(label) => false skips a click (listed in skipped: [{route, label}]),
+//   idleMs caps each networkidle wait, timeout / navTimeout set the context defaults (absent: Playwright's)
 //   concurrency (1) for click probes, noClicks: reason string, no click runs and each is notChecked
 const BLOCKED = /ERR_BLOCKED_BY_CLIENT/;
 
 function setup(o) {
-  const env = { storageState: o.storageState, allowOrigins: o.allowOrigins, onBlocked: o.onBlocked };
+  const env = { storageState: o.storageState, allowOrigins: o.allowOrigins, onBlocked: o.onBlocked, timeout: o.timeout, navTimeout: o.navTimeout };
   return { ...o, env, maxClickables: o.maxClickables ?? 10, concurrency: o.concurrency ?? 1, state: { worstMs: null } };
+}
+
+// networkidle wait; idleMs (check only) caps it, since a polling app never goes idle.
+const idle = (c, page) => page.waitForLoadState('networkidle', c.idleMs ? { timeout: c.idleMs } : undefined).catch(() => {});
+
+// Runs one probe group. A throw closes the group's contexts; with c.notChecked it becomes notChecked rows, else it is rethrown.
+async function guard(c, s, probes, what, fn) {
+  const live = new Set();
+  try { await fn({ ...c.env, track: live }); }
+  catch (e) {
+    if (!c.notChecked) throw e;
+    for (const probe of probes) c.notChecked.push({ probe, route: s.url, reason: `${what}${String(e.message).split('\n')[0]}` });
+  } finally { for (const x of live) await x.close().catch(() => {}); }
 }
 
 const late = (c, s, probes, what = '') => {
@@ -80,15 +95,15 @@ const late = (c, s, probes, what = '') => {
 };
 
 async function loadScreen(c, s, add) {
-  const { browser, origin, env } = c;
+  const { browser, origin } = c;
   const url = new URL(s.url, origin).toString();
 
   // Console errors, plain load; also focus-lost and input delay while typing into every text field.
-  if (!late(c, s, ['console-errors', 'focus-lost', 'input-delay'])) {
+  if (!late(c, s, ['console-errors', 'focus-lost', 'input-delay'])) await guard(c, s, ['console-errors', 'focus-lost', 'input-delay'], '', async (env) => {
     const t = await open(browser, origin, url, env);
     const cdp = await t.context.newCDPSession(t.page);
     await t.go();
-    await t.page.waitForLoadState('networkidle').catch(() => {});
+    await idle(c, t.page);
     await cdp.send('Emulation.setCPUThrottlingRate', { rate: 4 });
     const errs = [...t.rec.console, ...t.rec.pageErrors].filter((e) => !(c.ignoreBlocked && BLOCKED.test(e)));
     add('console-errors', s.id, errs.length === 0, errs.length ? errs.slice(0, 3).join(' | ') : 'none');
@@ -118,17 +133,17 @@ async function loadScreen(c, s, add) {
     add('focus-lost', s.id, lost.length === 0, lost.length ? lost.join('; ') : `${count} field(s) kept focus while typing`);
     add('input-delay', s.id, worst < 50, `slowest input event ${Math.round(worst)} ms at 4x CPU slowdown${worstField ? ` in ${worstField}` : ''}; budget 50 ms`);
     await t.context.close();
-  }
+  });
 
   // Script time per keystroke: every visible text input (up to 5), each on a fresh page, CPU 4x slower,
   // 5 characters 100 ms apart. Budget one frame (16 ms).
-  if (!late(c, s, ['script-cost-per-key'])) {
+  if (!late(c, s, ['script-cost-per-key'])) await guard(c, s, ['script-cost-per-key'], '', async (env) => {
     const SEL = 'input:not([type=hidden]):not([type=checkbox]):not([type=radio]):not([type=button]):not([type=submit]), textarea';
     const visible = [];
     {
       const t = await open(browser, origin, url, env);
       await t.go();
-      await t.page.waitForLoadState('networkidle').catch(() => {});
+      await idle(c, t.page);
       const all = t.page.locator(SEL);
       for (let i = 0, n = await all.count(); i < n && visible.length < 5; i++) if (await all.nth(i).isVisible()) visible.push(i);
       await t.context.close();
@@ -137,7 +152,7 @@ async function loadScreen(c, s, add) {
       if (late(c, s, ['script-cost-per-key'])) break;
       const t = await open(browser, origin, url, env);
       await t.go();
-      await t.page.waitForLoadState('networkidle').catch(() => {});
+      await idle(c, t.page);
       const field = t.page.locator(SEL).nth(i);
       const label = (await field.evaluate((e) => e.id || e.name || e.placeholder || e.tagName)) || 'field';
       const cdp = await t.context.newCDPSession(t.page);
@@ -152,12 +167,12 @@ async function loadScreen(c, s, add) {
       add('script-cost-per-key', `${s.id}:${label}`, ms <= 16, `${ms.toFixed(1)} ms of script per keystroke at 4x CPU slowdown in ${label}; budget 16 ms`);
       await t.context.close();
     }
-  }
+  });
 
   // Layout shift on load, both sizes, with and without slow API answers. Two signals: the browser's
   // layout-shift entries, and any element present early that later moved 8 px or more (an empty
   // container the content later pushes down produces no entry, but is a shift all the same).
-  if (!late(c, s, ['layout-shift'])) {
+  if (!late(c, s, ['layout-shift'])) await guard(c, s, ['layout-shift'], '', async (env) => {
     for (const width of [390, 1440]) {
       for (const slowMs of [0, 1500]) {
         const t = await open(browser, origin, url, { ...env, viewport: { width, height: 900 } });
@@ -171,10 +186,10 @@ async function loadScreen(c, s, add) {
         await t.context.close();
       }
     }
-  }
+  });
 
   // No visible feedback while the page's own requests are slow.
-  if (!late(c, s, ['no-feedback-slow'])) {
+  if (!late(c, s, ['no-feedback-slow'])) await guard(c, s, ['no-feedback-slow'], '', async (env) => {
     const t = await open(browser, origin, url, env);
     t.faults.slowMs = 1500;
     await t.go();
@@ -183,10 +198,10 @@ async function loadScreen(c, s, add) {
     const fb = await t.page.evaluate(FEEDBACK);
     add('no-feedback-slow', s.id, pending === 0 || fb, pending === 0 ? 'no request in flight' : fb ? 'loading indication visible while a request was in flight' : `${pending} request(s) in flight at 500 ms and no spinner, busy state, loading text or animation`);
     await t.context.close();
-  }
+  });
 
   // A failed request at load with no visible error.
-  if (!late(c, s, ['failed-request-no-error'])) {
+  if (!late(c, s, ['failed-request-no-error'])) await guard(c, s, ['failed-request-no-error'], '', async (env) => {
     const t = await open(browser, origin, url, env);
     t.faults.failApi = true;
     await t.go();
@@ -195,62 +210,70 @@ async function loadScreen(c, s, add) {
     const n = await t.page.evaluate(ERRORISH);
     add('failed-request-no-error', `${s.id}:load`, sent === 0 || n > 0, sent === 0 ? 'no request sent' : n > 0 ? 'error text or alert shown' : `${sent} request(s) failed with 500, no error text or alert appeared`);
     await t.context.close();
-  }
+  });
 }
 
 const MODE_PROBE = { repeat: 'repeat-requests', slow: 'no-feedback-slow', fail: 'failed-request-no-error' };
 
 // Click every distinct clickable: repeat requests, then slow, then failing answers.
 async function clickScreen(c, s, add) {
-  const { browser, origin, env } = c;
+  const { browser, origin } = c;
   const url = new URL(s.url, origin).toString();
   if (c.noClicks) { for (const probe of Object.values(MODE_PROBE)) c.notChecked?.push({ probe, route: s.url, reason: `clicks not run: ${c.noClicks}` }); return; }
   if (late(c, s, Object.values(MODE_PROBE), 'clicks: ')) return;
   const TAG = tagClickables(c.maxClickables);
-  const names = await (async () => {
+  let names = [], texts = [];
+  await guard(c, s, Object.values(MODE_PROBE), 'clicks: ', async (env) => {
     const t = await open(browser, origin, url, env);
     await t.go();
-    await t.page.waitForLoadState('networkidle').catch(() => {});
-    const n = await t.page.evaluate(TAG);
+    await idle(c, t.page);
+    names = await t.page.evaluate(TAG);
+    // What the filter reads: visible text plus aria-label, title, value and href (an icon-only button has no text).
+    texts = await t.page.evaluate(`[...document.querySelectorAll('[data-rr-click]')].map((e) => [e.innerText, e.getAttribute('aria-label'), e.getAttribute('title'), e.value, e.getAttribute('href')].filter(Boolean).join(' '))`);
     await t.context.close();
-    return n;
-  })();
+  });
   const tasks = [];
   const rows = [];
   for (let i = 0; i < names.length; i++) {
-    if (c.labelFilter && !c.labelFilter(names[i])) { c.skipped?.push({ route: s.url, label: names[i] }); continue; }
+    if (c.labelFilter && !c.labelFilter(`${names[i]} ${texts[i] || ''}`)) { c.skipped?.push({ route: s.url, label: names[i] }); continue; }
     const where = `${s.id}:click "${names[i]}"`;
     for (const mode of ['repeat', 'slow', 'fail']) {
       const slot = tasks.length;
       tasks.push(async () => {
         if (late(c, s, [MODE_PROBE[mode]], `click "${names[i]}": `)) return;
-        const t = await open(browser, origin, url, env);
-        await t.go();
-        await t.page.waitForLoadState('networkidle').catch(() => {});
-        await t.page.evaluate(TAG);
-        const target = t.page.locator(`[data-rr-click="${i}"]`).first();
-        if (mode === 'slow') t.faults.slowMs = 1200;
-        if (mode === 'fail') t.faults.failApi = true;
-        const before = await t.page.evaluate(() => document.body.innerHTML);
-        const errBefore = await t.page.evaluate(ERRORISH);
-        t.api.seen.length = 0;
-        try { await target.click({ timeout: 2000 }); } catch { await t.context.close(); return; }
-        await sleep(mode === 'slow' ? 500 : 1500);
-        const reqs = t.api.seen.length;
-        if (mode === 'repeat') {
-          const counts = {};
-          for (const k of t.api.seen) counts[k] = (counts[k] || 0) + 1;
-          const [k, n] = Object.entries(counts).sort((a, b) => b[1] - a[1])[0] || ['', 0];
-          rows[slot] = ['repeat-requests', where, n < 5, n < 5 ? `${reqs} request(s), none repeated more than ${n}x in 1.5 s` : `${n} identical requests in 1.5 s: ${k.replace(/^(\S+) https?:\/\/[^/]+/, '$1 ')}`];
-        } else if (mode === 'slow') {
-          const changed = (await t.page.evaluate(() => document.body.innerHTML)) !== before;
-          const fb = await t.page.evaluate(FEEDBACK);
-          rows[slot] = ['no-feedback-slow', where, t.api.pending === 0 || changed || fb, t.api.pending === 0 ? 'no request in flight' : changed || fb ? 'page changed while the request was in flight' : 'request in flight at 500 ms and nothing on the page changed'];
-        } else {
-          const errAfter = await t.page.evaluate(ERRORISH);
-          rows[slot] = ['failed-request-no-error', where, reqs === 0 || errAfter > errBefore, reqs === 0 ? 'no request sent' : errAfter > errBefore ? 'error text or alert appeared' : `${reqs} request(s) answered 500 and no new error text or alert appeared`];
-        }
-        await t.context.close();
+        await guard(c, s, [MODE_PROBE[mode]], `click "${names[i]}": `, async (env) => {
+          const t = await open(browser, origin, url, env);
+          await t.go();
+          await idle(c, t.page);
+          await t.page.evaluate(TAG);
+          const target = t.page.locator(`[data-rr-click="${i}"]`).first();
+          if (mode === 'slow') t.faults.slowMs = 1200;
+          if (mode === 'fail') t.faults.failApi = true;
+          const before = await t.page.evaluate(() => document.body.innerHTML);
+          const errBefore = await t.page.evaluate(ERRORISH);
+          t.api.seen.length = 0;
+          try { await target.click({ timeout: 2000 }); } catch {
+            c.notChecked?.push({ probe: MODE_PROBE[mode], route: s.url, reason: `could not click "${names[i]}"` });
+            await t.context.close();
+            return;
+          }
+          await sleep(mode === 'slow' ? 500 : 1500);
+          const reqs = t.api.seen.length;
+          if (mode === 'repeat') {
+            const counts = {};
+            for (const k of t.api.seen) counts[k] = (counts[k] || 0) + 1;
+            const [k, n] = Object.entries(counts).sort((a, b) => b[1] - a[1])[0] || ['', 0];
+            rows[slot] = ['repeat-requests', where, n < 5, n < 5 ? `${reqs} request(s), none repeated more than ${n}x in 1.5 s` : `${n} identical requests in 1.5 s: ${k.replace(/^(\S+) https?:\/\/[^/]+/, '$1 ')}`];
+          } else if (mode === 'slow') {
+            const changed = (await t.page.evaluate(() => document.body.innerHTML)) !== before;
+            const fb = await t.page.evaluate(FEEDBACK);
+            rows[slot] = ['no-feedback-slow', where, t.api.pending === 0 || changed || fb, t.api.pending === 0 ? 'no request in flight' : changed || fb ? 'page changed while the request was in flight' : 'request in flight at 500 ms and nothing on the page changed'];
+          } else {
+            const errAfter = await t.page.evaluate(ERRORISH);
+            rows[slot] = ['failed-request-no-error', where, reqs === 0 || errAfter > errBefore, reqs === 0 ? 'no request sent' : errAfter > errBefore ? 'error text or alert appeared' : `${reqs} request(s) answered 500 and no new error text or alert appeared`];
+          }
+          await t.context.close();
+        });
       });
     }
   }
