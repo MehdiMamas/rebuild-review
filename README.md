@@ -27,3 +27,7 @@ With it come:
 - **Parity:** one test suite run against both. A rebuild that lost a feature gets no score.
 - **Score:** how it was done, how it's done now, what should be done, judged on
   simplicity, compatibility, speed and performance, and UX.
+
+## Cost and size
+
+A run always covers the whole app. Before spending, the skill measures the source (`scripts/size.mjs`) and prints an estimated cost range; the run needs `maxUsd` at or above the high end, otherwise nothing is spent. Budgets scale with size (`scale.json`), and actual spend per phase is written to `cost.json` in the run folder.
