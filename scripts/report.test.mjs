@@ -196,6 +196,7 @@ test('the CLI works from a folder with a space in its path', () => {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'report space-'));
   fs.mkdirSync(path.join(base, 'scripts'));
   fs.copyFileSync(CLI, path.join(base, 'scripts/report.mjs'));
+  fs.copyFileSync(new URL('./confidence.mjs', import.meta.url), path.join(base, 'scripts/confidence.mjs'));
   fs.copyFileSync(new URL('../rubric.json', import.meta.url), path.join(base, 'rubric.json'));
   const run = path.join(base, 'run');
   fs.mkdirSync(run);
@@ -203,4 +204,21 @@ test('the CLI works from a folder with a space in its path', () => {
   assert.match(out, /wrote/);
   assert.ok(fs.existsSync(path.join(run, 'report/index.html')));
   assert.match(execFileSync('node', [path.join(base, 'scripts/report.mjs'), 'verdict', run], { encoding: 'utf8' }), /leave/);
+});
+
+test('the page shows the confidence, what limits it and each part\'s inputs, escaped', () => {
+  const d = makeRun();
+  const html = render(d);
+  assert.match(html, /Confidence: \d+(\.\d+)?%/);
+  assert.match(html, /limited by <strong>[^<]+<\/strong>/);
+  for (const part of ['coverage', 'agreement', 'margin', 'track record']) assert.ok(html.includes(`<td>${part}</td>`), part);
+  assert.match(html, /featuresCompared: 2; featuresFound: 2/);
+  assert.match(html, /Confidence in this value/);
+  assert.doesNotMatch(html, /<script>alert/);
+});
+
+test('no score renders confidence as not measured', () => {
+  const d = makeRun();
+  fs.rmSync(path.join(d, 'score/score.json'));
+  assert.match(render(d), /Confidence:<\/strong> not measured/);
 });

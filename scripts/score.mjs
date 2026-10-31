@@ -50,7 +50,10 @@ export function totals(rubric, original, rebuild, judged) {
     if (measured.length) parts.push(mean(measured.map((m) => m.delta)));
     if (js.length) parts.push(mean(js.map((j) => j.delta)));
     const d = parts.length ? mean(parts) : 0;
-    values[name] = { delta: round(d), measured, judged: { delta: js.length ? round(mean(js.map((j) => j.delta))) : null, count: js.length }, notMeasured };
+    const byJudge = {};
+    for (const j of js) if (j.judge !== undefined) (byJudge[j.judge] = byJudge[j.judge] || []).push(j.delta);
+    const judges = Object.keys(byJudge).sort((a, b) => a - b).map((k) => round(mean(byJudge[k]))); // per-judge mean delta, for the confidence's agreement part
+    values[name] = { delta: round(d), measured, judged: { delta: js.length ? round(mean(js.map((j) => j.delta))) : null, count: js.length }, judges, notMeasured };
     overall += v.weight * d;
   }
   return { values, overall: round(overall * 100, 1) };
@@ -259,7 +262,7 @@ function load(runDir, rubricFile) {
     readJson(f).forEach((it, k) => {
       const score = (real) => it[map.A === real ? 'A' : 'B'];
       const o = score('original'), r = score('rebuild');
-      items.push({ id: `j${j}-${k}`, value: it.value, question: it.question, original: o, rebuild: r, points: r.score - o.score, delta: (r.score - o.score) / 10 });
+      items.push({ id: `j${j}-${k}`, judge: j, value: it.value, question: it.question, original: o, rebuild: r, points: r.score - o.score, delta: (r.score - o.score) / 10 });
     });
   });
   const dropped = [];

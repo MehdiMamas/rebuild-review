@@ -27,3 +27,9 @@ With it come:
 - **Parity:** one test suite run against both. A rebuild that lost a feature gets no score.
 - **Score:** how it was done, how it's done now, what should be done, judged on
   simplicity, compatibility, speed and performance, and UX.
+- **Confidence:** a percentage beside the verdict, computed by code, naming the part that limits
+  it. It is the weakest of four parts: coverage (what was tested and measured out of what was
+  found), agreement (do the judges agree, are their scores kept), margin (how far the result sits
+  from the verdict's thresholds) and track record (how often the tool was right on known answers,
+  `benchmark/calibration.json`). It is not yet a proven probability: it is only as good as the
+  known-answer runs behind it, and the page says what they covered.

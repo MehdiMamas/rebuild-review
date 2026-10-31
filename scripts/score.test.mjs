@@ -97,12 +97,15 @@ test('a fixed shuffle maps A and B back correctly through collate', () => {
   const r = collate(run, rubricFile);
   assert.equal(r.values.ux.judged.delta, 0.4);
   assert.equal(r.values.ux.judged.count, 4);
+  assert.deepEqual(r.values.ux.judges, [0.4, 0.4, 0.4, 0.4]); // one mean delta per judge
   assert.equal(gaps(run, rubricFile).filter((g) => g.kind === 'judged').length, 4);
   // A skeptic refutes one gap: it leaves the average and is listed.
   put(path.join(run, 'score/skeptic/j0-0.json'), { id: 'j0-0', refuted: true, why: 'cited line is a comment', cite: 'x' });
   const r2 = collate(run, rubricFile);
   assert.equal(r2.values.ux.judged.count, 3);
   assert.deepEqual(r2.refuted.map((x) => x.id), ['j0-0']);
+  assert.equal(r2.values.ux.judges.length, 3); // judge 0's only item was refuted, so it has no mean
+  assert.equal(r2.overall, r.overall); // every judge said +0.4, so the mean and overall do not move
 });
 
 test('measure: source counts from a walk, dependencies, build steps, worst per stem', () => {

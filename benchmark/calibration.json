@@ -1,0 +1,62 @@
+[
+  {
+    "kind": "same",
+    "expected": "leave",
+    "got": "leave",
+    "right": true,
+    "overall": 0,
+    "sourceLines": 325,
+    "commit": "8a502ef",
+    "date": "2026-10-31"
+  },
+  {
+    "kind": "same",
+    "expected": "leave",
+    "got": "leave",
+    "right": true,
+    "overall": 0,
+    "sourceLines": 325,
+    "commit": "8a502ef",
+    "date": "2026-10-31"
+  },
+  {
+    "kind": "worse",
+    "expected": "leave",
+    "got": "leave",
+    "right": true,
+    "overall": -24.6,
+    "sourceLines": 325,
+    "commit": "8a502ef",
+    "date": "2026-10-31"
+  },
+  {
+    "kind": "worse",
+    "expected": "leave",
+    "got": "leave",
+    "right": true,
+    "overall": -23.2,
+    "sourceLines": 325,
+    "commit": "8a502ef",
+    "date": "2026-10-31"
+  },
+  {
+    "kind": "fixed",
+    "expected": "adopt",
+    "got": "adopt",
+    "right": true,
+    "overall": 23.6,
+    "sourceLines": 325,
+    "commit": "8a502ef",
+    "date": "2026-10-31"
+  },
+  {
+    "kind": "fixed",
+    "expected": "adopt",
+    "got": "adopt",
+    "right": true,
+    "overall": 28.4,
+    "sourceLines": 325,
+    "commit": "8a502ef",
+    "date": "2026-10-31"
+  }
+]

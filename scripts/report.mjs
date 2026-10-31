@@ -5,6 +5,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { confidence } from './confidence.mjs';
 
 const readJson = (f) => JSON.parse(fs.readFileSync(f, 'utf8'));
 const tryJson = (f) => { try { return readJson(f); } catch { return null; } };
@@ -154,7 +155,7 @@ a{color:var(--link)}*{box-sizing:border-box}body{margin:0;background:var(--bg);c
 main{max-width:860px;margin:0 auto;padding:16px}section{margin:0 0 28px}h1,h2,h3{line-height:1.25}h2{border-bottom:1px solid var(--line);padding-bottom:4px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 16px;margin:0 0 12px;overflow-wrap:anywhere}
 .badge{display:inline-block;font-weight:700;font-size:1.4rem;text-transform:uppercase}.adopt{color:var(--adopt)}.port{color:var(--port)}.leave{color:var(--leave)}
-.mut{color:var(--mut)}table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:4px 8px;border-bottom:1px solid var(--line);overflow-wrap:anywhere}
+.parts td:nth-child(-n+2),.parts th:nth-child(2){white-space:nowrap}.mut{color:var(--mut)}table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:4px 8px;border-bottom:1px solid var(--line);overflow-wrap:anywhere}
 .pair{display:flex;gap:8px;margin:0 0 12px}.pair figure{flex:1;margin:0;min-width:0}.pair img{max-width:100%;height:auto;border:1px solid var(--line)}
 @media (max-width:600px){.pair{flex-direction:column}}code{overflow-wrap:anywhere}`;
 
@@ -174,16 +175,22 @@ export function render(runDir, { embedCap = EMBED_CAP, thresholds, stopped } = {
   const html = [];
   const sec = (id, title, body) => html.push(`<section id="${id}"><h2>${esc(title)}</h2>${body}</section>`);
 
-  // 1 Verdict
-  sec('verdict', 'Verdict', `<p><span class="badge ${v.verdict}">${esc(v.verdict)}</span></p><p>${esc(v.why)}</p>` +
+  // 1 Verdict, with the confidence and what limits it
+  const conf = stopped ? null : confidence(runDir, { rubric: rubric || undefined });
+  const inputText = (o) => Object.entries(o || {}).map(([k, x]) => `${k}: ${x !== null && typeof x === 'object' ? Object.entries(x).map(([a, b]) => `${a} ${b}`).join(', ') : x}`).join('; ');
+  const confHtml = !conf ? '' : conf.percent === null
+    ? '<p><strong>Confidence:</strong> not measured (there is no score).</p>'
+    : `<p><strong>Confidence: ${esc(conf.percent)}%</strong>, limited by <strong>${esc(conf.limitedBy)}</strong>. It is the weakest of four parts, not a calibrated probability.${conf.outsideRange ? ` This target (${esc(conf.parts['track record'].inputs.targetSourceLines)} source lines) is outside what was tested (up to ${esc(conf.calibratedUpTo)} lines), so it is capped.` : ''}</p>` +
+      `<table class="parts"><tr><th>Part</th><th>Reads</th><th>Inputs</th></tr>${Object.entries(conf.parts).map(([n, p]) => `<tr><td>${esc(n)}</td><td>${esc(p.percent)}%</td><td>${esc(inputText(p.inputs))}${p.left && p.left.length ? `<br><span class="mut">left out: ${esc(p.left.join('; '))}</span>` : ''}</td></tr>`).join('')}</table>`;
+  sec('verdict', 'Verdict', `<p><span class="badge ${v.verdict}">${esc(v.verdict)}</span></p><p>${esc(v.why)}</p>` + confHtml +
     `<div class="card"><strong>Do this first:</strong> ${esc(actions.length ? actions[0].title : FIRST[v.verdict])}</div>`);
 
   // 2 Scores, gate beside them
   if (score && score.values) {
     const g = score.gate || {};
-    const rows = Object.entries(score.values).map(([n, x]) => `<tr><td>${esc(n)}</td><td>${typeof x.delta === 'number' ? esc(signed(x.delta)) : 'not measured'}</td></tr>`).join('');
+    const rows = Object.entries(score.values).map(([n, x]) => `<tr><td>${esc(n)}</td><td>${typeof x.delta === 'number' ? esc(signed(x.delta)) : 'not measured'}</td><td>${conf && conf.perValue && typeof conf.perValue[n] === 'number' ? `${esc(conf.perValue[n])}%` : 'n/a'}</td></tr>`).join('');
     const gate = `<p><strong>Gate (functionality):</strong> ${g.rate == null ? 'no tests ran' : `${g.passed ? 'passed' : 'failed'}, ${pct(g.rate)} of tests pass on the rebuild`}${g.failing && g.failing.length ? `; failing: ${esc(g.failing.join(', '))}` : ''}. The gate is never blended into the scores.</p>`;
-    sec('scores', 'Scores', `${gate}<table><tr><th>Value</th><th>Rebuild against original (+ is better)</th></tr>${rows}<tr><th>Overall</th><th>${esc(signed(score.overall, 1))}</th></tr></table>`);
+    sec('scores', 'Scores', `${gate}<table><tr><th>Value</th><th>Rebuild against original (+ is better)</th><th>Confidence in this value</th></tr>${rows}<tr><th>Overall</th><th>${esc(signed(score.overall, 1))}</th><th></th></tr></table>`);
   } else sec('scores', 'Scores', '<p>There is no score for this run.</p>');
 
   // 3 Actions

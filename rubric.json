@@ -1,6 +1,7 @@
 {
   "gate": { "minPassRate": 0.95 },
   "verdict": { "adoptOverall": 15, "worseValue": -0.15, "betterValue": 0.15 },
+  "confidence": { "spreadZero": 0.5, "noiseOverall": 10, "noiseValue": 0.1, "outsideRangeCap": 30, "note": "First guesses, not tuned to a fixture. noiseOverall and noiseValue are the size of one noise unit for the margin part (same-against-same overall read 0 twice, so the noise could not be read from it). spreadZero is the judge spread (in delta units) at which agreement reads 0. outsideRangeCap is the most the page may say for a target bigger than the biggest calibrated run." },
   "values": {
     "speed": {
       "weight": 0.4,
