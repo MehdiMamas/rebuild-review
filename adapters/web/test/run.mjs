@@ -150,6 +150,39 @@ check('6 target git status is clean after the runs', status === '', status || 'c
     `fixture reached ${cov.screensReached.length}, cut ${cov.screensCut.length}; capped site reached ${cc.screensReached.join(' ')}, cut ${cc.screensCut.join(' ')}`);
 }
 
+// Test 9: check.mjs, the per-change run of the probes, on the same fixture.
+{
+  const checkMjs = path.join(here, '..', 'check.mjs');
+  const runCheck = (args) => { const t = Date.now(); const r = spawnSync('node', [checkMjs, ...args], { encoding: 'utf8' }); return { ...r, sec: (Date.now() - t) / 1000 }; };
+  const chk = setupRun('chk', 4238);
+  const app = await startApp(JSON.parse(read(path.join(chk, 'run.json'))), path.join(chk, 'run.json'));
+  const outFile = path.join(tmp, 'check-result.json');
+  const full = runCheck(['--base-url', app.origin, '--routes', '/', '--out', outFile]);
+  const res = fs.existsSync(outFile) ? json(outFile) : { failed: [], notChecked: [] };
+  console.log(full.stdout.trim());
+  const flagged = (id) => res.failed.some((f) => f.probe === probeOf[id]);
+  check('9a check.mjs on the benchmark: exit 1, D2 D3 D5 D6 D7 flagged, under 120 s', full.status === 1 && must.every(flagged) && full.sec < 120 && res.elapsedMs < 120000,
+    `exit ${full.status}; ${full.sec.toFixed(1)} s; flagged ${must.filter(flagged).join(' ')}; not checked ${res.notChecked.length}`);
+  const small = runCheck(['--base-url', app.origin, '--routes', '/', '--budget-seconds', '5', '--out', outFile]);
+  const rs5 = json(outFile);
+  check('9b a 5 second budget gives notChecked rows and exit 2 or 1, never 0', [1, 2].includes(small.status) && rs5.notChecked.length > 0 && rs5.status !== 'pass',
+    `exit ${small.status}; ${small.sec.toFixed(1)} s; ${rs5.notChecked.length} not checked, e.g. ${rs5.notChecked[0] ? rs5.notChecked[0].probe + ': ' + rs5.notChecked[0].reason : 'none'}`);
+  app.stop();
+  const dead = runCheck(['--base-url', 'http://127.0.0.1:4240', '--routes', '/']);
+  check('9c a dead port exits 3', dead.status === 3 && /does not answer/.test(dead.stderr), `exit ${dead.status}; ${dead.stderr.trim()}`);
+  const bad = runCheck(['--routes', '/']);
+  check('9d missing --base-url exits 3', bad.status === 3, `exit ${bad.status}`);
+  // A route that redirects is not checked: exit 2, never a pass.
+  const redir = http.createServer((q, s) => {
+    if (q.url === '/old') { s.writeHead(302, { location: '/login' }); s.end(); } else { s.writeHead(200, { 'content-type': 'text/html' }); s.end('<!doctype html><title>x</title><p>hello</p>'); }
+  }).listen(4241);
+  await new Promise((r) => redir.on('listening', r));
+  const rd = runCheck(['--base-url', 'http://127.0.0.1:4241', '--routes', '/old', '--out', outFile]);
+  const rdr = json(outFile);
+  redir.close();
+  check('9e a redirecting route is notChecked, exit 2', rd.status === 2 && rdr.notChecked.some((n) => n.route === '/old' && /\/login/.test(n.reason)), `exit ${rd.status}; ${rdr.notChecked.map((n) => n.reason).join(' | ')}`);
+}
+
 fs.rmSync(tmp, { recursive: true, force: true });
 const failed = results.filter((r) => !r).length;
 console.log(`${results.length - failed}/${results.length} passed`);

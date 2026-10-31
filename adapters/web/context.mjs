@@ -43,12 +43,16 @@ const isApi = (r) => ['fetch', 'xhr'].includes(r.request().resourceType());
 
 // Makes a context that blocks anything off the app's origin and records a redacted HAR.
 // faults (mutable): { slowMs: delay every fetch/xhr, failApi: answer every fetch/xhr with 500 }
-export async function makeContext(browser, origin, { viewport, colorScheme = 'light', faults = {} } = {}) {
-  const context = await browser.newContext({ viewport, colorScheme });
+// storageState: a Playwright storage state file (a signed-in session). allowOrigins: other origins let through.
+// onBlocked(url): called for each blocked request (the url is redacted).
+export async function makeContext(browser, origin, { viewport, colorScheme = 'light', faults = {}, storageState, allowOrigins = [], onBlocked } = {}) {
+  const context = await browser.newContext({ viewport, colorScheme, ...(storageState ? { storageState } : {}) });
   const rec = { blocked: [], har: [], console: [], pageErrors: [] };
   await context.route('**/*', async (route) => {
-    if (new URL(route.request().url()).origin !== origin) {
+    const o = new URL(route.request().url()).origin;
+    if (o !== origin && !allowOrigins.includes(o)) {
       rec.blocked.push(redactUrl(route.request().url()));
+      if (onBlocked) onBlocked(redactUrl(route.request().url()));
       return route.abort('blockedbyclient');
     }
     return route.fallback();
