@@ -254,3 +254,20 @@ test('prepareRoom gives the committed project only: no ignored files, no uncommi
   assert.equal(execFileSync('git', ['-C', p, 'remote'], { encoding: 'utf8' }).trim(), '');
   fs.rmSync(room, { recursive: true, force: true });
 });
+
+test('env written by copyEnv stays out of the room, a dirty rebuild-run.json does not fail the round, and a later delivery gets the env again', () => {
+  const { target, runDir } = makeRun('F-001 A user sees a list.\n');
+  fs.writeFileSync(path.join(runDir, 'run.json'), JSON.stringify({ start: 'y', env: { SETTING: 'stand-in' } }));
+  const proj = repo({ 'rebuild-run.json': JSON.stringify({ start: 'x', dir: '.' }) });
+  fs.cpSync(proj, path.join(runDir, 'project'), { recursive: true });
+  copyEnv(runDir);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(runDir, 'project', 'rebuild-run.json'), 'utf8')).env, { SETTING: 'stand-in' });
+  const room = prepareRoom({ runDir, target, inputs: ['features.md'] });
+  assert.equal('env' in JSON.parse(fs.readFileSync(path.join(room, 'project', 'rebuild-run.json'), 'utf8')), false);
+  // round 2: the delivery replaces the project, then copyEnv puts the settings back
+  fs.mkdirSync(path.join(runDir, 'rebuild'), { recursive: true });
+  replaceProject(runDir, 2, path.join(room, 'project'));
+  assert.equal('env' in JSON.parse(fs.readFileSync(path.join(runDir, 'project', 'rebuild-run.json'), 'utf8')), false);
+  copyEnv(runDir);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(runDir, 'project', 'rebuild-run.json'), 'utf8')).env, { SETTING: 'stand-in' });
+});
