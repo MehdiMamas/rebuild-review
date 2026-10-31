@@ -312,6 +312,14 @@ export function replaceProject(runDir, n, roomProject) {
   }
 }
 
+// The rebuild stays on the platform of the original: a web app is rebuilt as a web app, an Electron app as an Electron app.
+export function platformNote(runDir) {
+  let platform = '';
+  try { platform = JSON.parse(fs.readFileSync(path.join(runDir, 'run.json'), 'utf8')).platform || ''; } catch {}
+  if (!platform) return '';
+  return `\n\nThe original runs on the platform "${platform}". The rebuild must run on the same platform, so the review can drive it the same way. Do not change the platform.`;
+}
+
 export async function main(argv) {
   const mode = argv[0];
   const opt = (k) => { const i = argv.indexOf(k); return i > 0 ? argv[i + 1] : undefined; };
@@ -348,7 +356,7 @@ export async function main(argv) {
     const spec = readAreas(runDir);
     const multi = !!spec && spec.areas.length > 1;
     const failNote = failures ? '\n\nproject/ already holds the last round. Change it, do not start over. Fix the failures in input/failures.md without breaking any other feature in input/features.md. Commit when done.' : '';
-    const base = fs.readFileSync(path.join(HERE, '..', 'prompts', mode + '.md'), 'utf8');
+    const base = fs.readFileSync(path.join(HERE, '..', 'prompts', mode + '.md'), 'utf8') + platformNote(runDir);
     if (mode === 'stack') {
       const ids = multi ? spec.areas.map((a) => a.id) : [];
       const prompt = base + (multi ? areaStackNote(ids, featureCounts(runDir, spec)) : '');

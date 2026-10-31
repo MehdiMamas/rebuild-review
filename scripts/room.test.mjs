@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { BUDGET_USD, filterGolden, prepareRoom, scanTranscript, wallTried, cloneProject, copyEnv, denyList, writeSettings, fixStack, stackFixPrompt, replaceProject, main } from './room.mjs';
+import { platformNote, BUDGET_USD, filterGolden, prepareRoom, scanTranscript, wallTried, cloneProject, copyEnv, denyList, writeSettings, fixStack, stackFixPrompt, replaceProject, main } from './room.mjs';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'room-test-'));
 
@@ -291,4 +291,11 @@ test('env written by copyEnv stays out of the room, a dirty rebuild-run.json doe
 test('every BUDGET_USD key room.mjs uses exists, so no child gets --max-budget-usd undefined', () => {
   const src = fs.readFileSync(new URL('./room.mjs', import.meta.url), 'utf8');
   for (const [, key] of src.matchAll(/BUDGET_USD\.(\w+)/g)) assert.ok(key in BUDGET_USD, `BUDGET_USD.${key} does not exist`);
+});
+
+test('platformNote names the original platform and is empty without a run file', () => {
+  const d = tmp();
+  assert.equal(platformNote(d), '');
+  fs.writeFileSync(path.join(d, 'run.json'), JSON.stringify({ platform: 'electron' }));
+  assert.match(platformNote(d), /platform "electron"[\s\S]*same platform/);
 });
