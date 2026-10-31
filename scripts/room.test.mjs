@@ -49,6 +49,22 @@ test('filterGolden empties inline scripts and source map comments', () => {
   assert.ok(t.includes('<p>hi</p>'));
 });
 
+test('filterGolden empties bodies of file: and custom-scheme entries, whatever their type', () => {
+  const src = tmp(), dest = path.join(tmp(), 'g');
+  makeGolden(src);
+  const f = path.join(src, 'network.har');
+  const j = JSON.parse(fs.readFileSync(f, 'utf8'));
+  const add = (url, mimeType, text) => j.log.entries.push({ request: { url }, response: { content: { mimeType, text } } });
+  add('file:///<app>/data.json', 'application/json', '{"source":1}');
+  add('app://main/config.json', 'application/json', '{"source":2}');
+  fs.writeFileSync(f, JSON.stringify(j));
+  filterGolden(src, dest);
+  const by = Object.fromEntries(JSON.parse(fs.readFileSync(path.join(dest, 'network.har'), 'utf8')).log.entries.map((e) => [e.request.url, e.response.content.text]));
+  assert.equal(by['file:///<app>/data.json'], '');
+  assert.equal(by['app://main/config.json'], '');
+  assert.equal(by['http://127.0.0.1:1/api/tasks'], '[{"id":1}]');
+});
+
 function makeRun(features) {
   const base = fs.realpathSync(tmp());
   const target = path.join(base, 'mytarget'), runDir = path.join(base, 'run-1');

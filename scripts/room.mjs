@@ -29,7 +29,9 @@ export function filterGolden(src, dest) {
     j.log.entries = j.log.entries.filter((e) => !isMap(e.request && e.request.url));
     for (const e of j.log.entries) {
       const c = e.response && e.response.content;
-      if (c && typeof c.text === 'string' && !KEEP_BODY.test(c.mimeType || '')) c.text = '';
+      // A page of the app itself (file: or its own scheme) is source, whatever its type; only answers from http(s) can stay.
+      const own = !/^https?:/i.test(String((e.request && e.request.url) || ''));
+      if (c && typeof c.text === 'string' && (own || !KEEP_BODY.test(c.mimeType || ''))) c.text = '';
     }
     fs.writeFileSync(har, JSON.stringify(j));
   }
