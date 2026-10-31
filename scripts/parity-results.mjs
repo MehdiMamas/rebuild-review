@@ -98,6 +98,9 @@ export function cleanDetail(text, parDir) {
     .slice(0, 15).join('\n');
 }
 
+// Node's own text for assert.ok(value) with no message: the test said nothing about what it expected or saw.
+function noMessage(text) { return /The expression evaluated to a falsy value/.test(String(text)); }
+
 // Total cost of the build children, and the highest build number, from <runDir>/rebuild/build-*.result.json.
 export function readCost(runDir) {
   const dir = path.join(runDir, 'rebuild');
@@ -124,7 +127,7 @@ export function loop(parDir, featuresMd, runDir) {
   const rounds = fs.existsSync(rf) ? readJson(rf) : [];
   rounds.push({ round: rounds.length + 1, build, failing: fails.map((f) => f.feature), costUsd: spent });
   fs.writeFileSync(rf, JSON.stringify(rounds, null, 2));
-  fs.writeFileSync(path.join(parDir, 'failures.md'), fails.map((f) => `## ${f.feature} (${f.kind})\n${cleanDetail(f.detail, parDir)}\n`).join('\n'));
+  fs.writeFileSync(path.join(parDir, 'failures.md'), fails.map((f) => `## ${f.feature} (${f.kind})\n${noMessage(f.detail) ? `The test gave no message for ${f.feature}; read its text in features.md.\n` : ''}${cleanDetail(f.detail, parDir)}\n`).join('\n'));
   const counts = rounds.map((r) => r.failing.length), low = Math.min(...counts);
   let out;
   if (!fails.length) out = { action: 'done', reason: 'all tested features pass' };

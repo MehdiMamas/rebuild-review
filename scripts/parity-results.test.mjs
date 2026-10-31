@@ -128,3 +128,21 @@ test('cleanDetail drops quoted test source, assertion fields and test-at lines f
   assert.equal(cleanDetail(eq), '\u2716 eq (0.1ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  3 !== 4\n  ');
   assert.equal(cleanDetail('failed in file:///Users/x/y/a.mjs:3 here'), 'failed in <path> here');
 });
+
+test('failures.md carries the assertion message; a failure with no message says so and names the feature; no test source or path', () => {
+  const head = ['test at /tmp/p/tests/F-002.test.mjs:3:1', '\u2716 seeded rows (1.0ms)'];
+  const withMsg = [...head, '  AssertionError [ERR_ASSERTION]: expected title, status and due date on each row; saw only the title', '      at TestContext.<anonymous> (file:///tmp/p/tests/F-002.test.mjs:3:48)', '    actual: false,'].join('\n');
+  const noMsg = [...head, '  AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:', '  ', '    assert.ok(rows.every(Boolean))', '  ', '      at TestContext.<anonymous> (file:///tmp/p/tests/F-002.test.mjs:3:48)', '    actual: false,'].join('\n');
+  const run = (detail) => {
+    const f = runFixture({});
+    fs.writeFileSync(path.join(f.par, 'run-error.txt'), detail);
+    loop(f.par, f.md, f.run);
+    return fs.readFileSync(path.join(f.par, 'failures.md'), 'utf8');
+  };
+  const a = run(withMsg);
+  assert.match(a, /expected title, status and due date on each row; saw only the title/);
+  assert.doesNotMatch(a, /gave no message|assert\.ok|\/tmp\/p/);
+  const b = run(noMsg);
+  assert.match(b, /## F-001 \(keep\)\nThe test gave no message for F-001; read its text in features\.md\./);
+  assert.doesNotMatch(b, /assert\.ok|rows\.every|\/tmp\/p/);
+});
