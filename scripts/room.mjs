@@ -206,6 +206,26 @@ export function denyList(runDir, target) {
   return [...new Set(out)];
 }
 
+// Checks stack.md; while problems remain and tries are left, asks the child for a rewrite. Returns the problems left.
+export async function fixStack({ check, ask, tries = 2 }) {
+  let problems = check();
+  for (let i = 1; problems.length && i <= tries; i++) {
+    await ask(problems, i);
+    problems = check();
+  }
+  return problems;
+}
+
+// The child is inside the wall: a "copied from" problem names a source file and quotes it, so only the line problems reach it.
+export function stackFixPrompt(problems) {
+  const lines = problems.filter((p) => p.startsWith('line ')).slice(0, 10);
+  const copied = problems.some((p) => !p.startsWith('line '));
+  return 'stack.md in this folder was not accepted. Rewrite that file and nothing else.\n'
+    + (lines.length ? 'These lines failed the check:\n- ' + lines.join('\n- ') + '\n' : '')
+    + (copied ? 'Some of its wording matches the original project too closely: use your own words throughout.\n' : '')
+    + '\nName libraries without a file ending (write Day, not Day.js) and use no file names.';
+}
+
 // ---- CLI ----
 // run.json's optional "env" (stand-in settings) is copied into the delivered rebuild-run.json so the rebuild starts like the original. Values are never printed.
 export function copyEnv(runDir) {
@@ -271,6 +291,19 @@ export async function main(argv) {
     if (r.code !== 0 || r.isError) throw new Error(`child failed: ${(r.text || r.error || 'exit ' + r.code).slice(0, 300)}`);
     if (mode === 'stack') {
       if (!fs.existsSync(path.join(room, 'stack.md'))) throw new Error('child wrote no stack.md');
+      const srcTexts = trackedTexts(path.join(runDir, 'work'));
+      const left = await fixStack({
+        check: () => checkText(fs.readFileSync(path.join(room, 'stack.md'), 'utf8'), srcTexts),
+        ask: async (problems, i) => {
+          const tr = path.join(dir, `${mode}-${n}.fix-${i}.jsonl`);
+          const fr = await runChild({ room, prompt: stackFixPrompt(problems), model: MODEL.stack, maxBudgetUsd: BUDGET_USD.stack, transcriptPath: tr });
+          result.costUsd += fr.costUsd;
+          const h = scanTranscript(tr, scanPaths(runDir, target));
+          if (h.length) throw new Error(`transcript names a forbidden path (${h[0].forbidden})`);
+          if (fr.code !== 0 || fr.isError) throw new Error(`child failed: ${(fr.text || fr.error || 'exit ' + fr.code).slice(0, 300)}`);
+        },
+      });
+      if (left.length) throw new Error(`stack.md fails the no-source check: ${left.slice(0, 5).join('; ')}`);
       fs.copyFileSync(path.join(room, 'stack.md'), path.join(runDir, 'stack.md'));
     } else {
       if (!fs.existsSync(path.join(room, 'project'))) throw new Error('child built no project/');
