@@ -25,6 +25,7 @@ jobs:
           node --test scripts/room.test.mjs
           node --test scripts/free-port.test.mjs
           node --test scripts/score.test.mjs
+          node --test scripts/confidence.test.mjs
           node --test scripts/report.test.mjs
           node --test scripts/size.test.mjs
 
