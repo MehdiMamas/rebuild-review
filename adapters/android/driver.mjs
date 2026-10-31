@@ -151,7 +151,14 @@ export class Device {
       nodes = await this.dump();
       const k = nodes.length >= minNodes ? key(nodes) : null;
       run = k !== null && k === prev ? run + 1 : 1;
-      if (run >= agree) return nodes;
+      if (run >= agree) {
+        // the app's own requests must be done too: a list that is still loading looks stable
+        const t0 = Date.now();
+        while (this.proxy && this.proxy.state.inflight > 0 && Date.now() - t0 < 8000) await sleep(250);
+        if (Date.now() - t0 < 250) return nodes;
+        await sleep(600);
+        return this.dump();
+      }
       prev = k;
       await sleep(500);
     }
