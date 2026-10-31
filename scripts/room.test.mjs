@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { filterGolden, prepareRoom, scanTranscript, wallTried, cloneProject, copyEnv, denyList, writeSettings } from './room.mjs';
+import { filterGolden, prepareRoom, scanTranscript, wallTried, cloneProject, copyEnv, denyList, writeSettings, fixStack } from './room.mjs';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'room-test-'));
 
@@ -177,4 +177,25 @@ test('copyEnv copies run.json env into rebuild-run.json, and leaves it alone whe
   fs.writeFileSync(path.join(runDir, 'run.json'), JSON.stringify({ start: 'y', env: { SETTING: 'stand-in' } }));
   copyEnv(runDir);
   assert.deepEqual(JSON.parse(fs.readFileSync(rb, 'utf8')), { start: 'x', dir: '.', env: { SETTING: 'stand-in' } });
+});
+
+test('fixStack passes first time with no ask call', async () => {
+  let asked = 0;
+  const left = await fixStack({ check: () => [], ask: async () => { asked++; } });
+  assert.deepEqual(left, []);
+  assert.equal(asked, 0);
+});
+
+test('fixStack passes after one retry', async () => {
+  let asked = 0, bad = ['Day.js'];
+  const left = await fixStack({ check: () => bad, ask: async () => { asked++; bad = []; } });
+  assert.deepEqual(left, []);
+  assert.equal(asked, 1);
+});
+
+test('fixStack fails after two tries with the problems returned', async () => {
+  let asked = 0;
+  const left = await fixStack({ check: () => ['Day.js'], ask: async () => { asked++; } });
+  assert.deepEqual(left, ['Day.js']);
+  assert.equal(asked, 2);
 });
