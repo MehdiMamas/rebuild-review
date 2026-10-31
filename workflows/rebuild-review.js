@@ -118,7 +118,7 @@ A feature marked "keep" gets a test asserting the behaviour. A feature marked "d
 
   // The rebuild, when there is one: same tests, same states, then the visual diff.
   const RB = `${runDir}/project/rebuild-run.json`
-  const rb = await agent(`If ${RB} does not exist, return ok true with detail "no rebuild" and do nothing else. Otherwise read "platform" in ${runDir}/run.json (the adapter folder is ${ADAPTER}/<platform>; flutter uses the android folder) and run, in order: (1) node <adapter folder>/parity.mjs --app ${q(RB)} --tests ${q(TESTS)} --out ${q(PAR + '/rebuild.json')}; (2) node <adapter folder>/capture.mjs --app ${q(RB)} --out ${q(runDir + '/golden-rebuild')} --states ${q(INV + '/states.json')}; (3) node ${q(pluginRoot + '/scripts/visual-diff.mjs')} ${q(runDir + '/golden')} ${q(runDir + '/golden-rebuild')} ${q(PAR + '/visual-diff.json')}. Return ok true with detail "rebuilt" if all three exited 0, otherwise ok false with the first error. Change nothing else.`, { model: 'sonnet', effort: 'low', label: 'parity-rebuild', phase: 'Parity', schema: RUN_RESULT })
+  const rb = await agent(`If ${RB} does not exist, return ok true with detail "no rebuild" and do nothing else. Otherwise read "platform" in ${runDir}/run.json (the adapter folder is ${ADAPTER}/<platform>; flutter uses the android folder) and run, in order: (1) node <adapter folder>/parity.mjs --app ${q(RB)} --tests ${q(TESTS)} --out ${q(PAR + '/rebuild.json')}; (2) node <adapter folder>/capture.mjs --app ${q(RB)} --out ${q(runDir + '/golden-rebuild')} --states ${q(INV + '/states.json')}; (3) only if step (2) exited 0, node ${q(pluginRoot + '/scripts/visual-diff.mjs')} ${q(runDir + '/golden')} ${q(runDir + '/golden-rebuild')} ${q(PAR + '/visual-diff.json')}. Return ok true with detail "rebuilt" if all three exited 0, otherwise ok false with the first error (if step (2) failed, do not run step (3)). Change nothing else.`, { model: 'sonnet', effort: 'low', label: 'parity-rebuild', phase: 'Parity', schema: RUN_RESULT })
   mustRun(rb, 'the rebuild run')
 
   const merged = await agent(`Run exactly: node ${q(pluginRoot + '/scripts/parity-results.mjs')} merge ${q(PAR)} ${q(runDir + '/features.md')} . If it exited 0, write ${runDir}/Parity.done containing the word done and return ok true with its output as detail; otherwise return ok false with the error. Touch nothing else.`, { ...CHEAP, label: 'Parity.done', phase: 'Parity', schema: RUN_RESULT })
@@ -197,6 +197,12 @@ async function stoppedReport(phase, reason) {
 }
 
 const ran = []
+// First step of every run, resumes included: adapter dependencies (scripts/adapter-deps.mjs).
+const deps = await agent(`Run exactly: node ${q(pluginRoot + '/scripts/adapter-deps.mjs')} ${q(pluginRoot)} . Return ok true if it exited 0, otherwise ok false with its error output as detail. Change nothing else.`, { ...CHEAP, label: 'adapter-deps', schema: RUN_RESULT })
+if (!deps || !deps.ok) {
+  const reason = `adapter dependencies: ${(deps && deps.detail) || 'agent died'}`
+  return { ran, stopped: 'Setup', reason }
+}
 for (const phase of PHASES) {
   if (done.has(`${phase}.done`)) continue
   if (phase === 'Capture') {
