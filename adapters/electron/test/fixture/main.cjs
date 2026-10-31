@@ -3,12 +3,14 @@
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('node:path');
 const http = require('node:http');
+const os = require('node:os');
+const fs = require('node:fs');
 
 let apiBase = '';
 
 const outside = (process.argv.find((a) => a.startsWith('--outside=')) || '').slice('--outside='.length);
 const open = (title, file, w = 900, h = 650) => {
-  const win = new BrowserWindow({ width: w, height: h, show: true, webPreferences: { preload: path.join(__dirname, 'preload.cjs'), additionalArguments: [`--api=${apiBase}`] } });
+  const win = new BrowserWindow({ width: w, height: h, show: true, webPreferences: { preload: path.join(__dirname, 'preload.cjs'), additionalArguments: [`--api=${apiBase}`, `--outside=${outside}`] } });
   win.loadFile(path.join(__dirname, file));
   return win;
 };
@@ -29,7 +31,11 @@ app.whenReady().then(async () => {
   });
   ipcMain.handle('open-inspector', () => { open('Inspector', 'inspector.html', 600, 500); });
   open('Workbench', 'index.html');
+  // What the app can see of the machine it runs on: reported, never read by the adapter.
+  const tokenFile = path.join(os.homedir(), '.fake-token');
+  console.log('env-secret:', process.env.RR_SECRET_PARENT || 'absent');
+  console.log('token-file:', fs.existsSync(tokenFile) ? fs.readFileSync(tokenFile, 'utf8').trim() : 'absent');
   // A request from the main process to an outside address.
-  if (outside) fetch(outside).then(() => console.log('main-process fetch to outside address: answered'), (e) => console.log('main-process fetch to outside address: failed', (e.cause && e.cause.code) || e.message));
+  if (outside) fetch(outside + '/main').then(() => console.log('main-process fetch to outside address: answered'), (e) => console.log('main-process fetch to outside address: failed', (e.cause && e.cause.code) || e.message));
 });
 app.on('window-all-closed', () => app.quit());

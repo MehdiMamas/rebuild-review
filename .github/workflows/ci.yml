@@ -53,3 +53,21 @@ jobs:
           git clone -q "$T/target" "$T/run/work"
           echo '{"platform":"web","dir":"app","install":"npm install --no-audit --no-fund","build":"npm run build","start":"node server.mjs","address":"http://127.0.0.1:4471"}' > "$T/run/run.json"
           node benchmark/score-rebuild.mjs "$T/run" --control
+
+  electron-adapter:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install
+        run: |
+          (cd adapters/web && npm install --no-audit --no-fund)
+          (cd adapters/electron && npm install --no-audit --no-fund)
+          sudo apt-get update
+          sudo apt-get install -y xvfb libgtk-3-0 libnss3 libgbm1 libasound2t64 libxss1 libxtst6
+      - name: Adapter tests (nine checks, under a virtual display)
+        working-directory: adapters/electron
+        run: xvfb-run -a npm test

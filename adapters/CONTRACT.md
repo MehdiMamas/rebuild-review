@@ -13,6 +13,9 @@ produce the same layout.
 ```
 
 - `env` is optional: an object of environment variables the adapter adds when it starts the app (`{...process.env, ...env, PORT}`), so the original and the rebuild start with the same settings. `rebuild-run.json` gets the same `env`, copied from `run.json` after the build is delivered. Values are stand-ins only, never real secrets; they are never printed or put in the report.
+
+An Electron app has no address. Its `run.json` is `{ "platform": "electron", "dir", "install", "build", "launch": { "executablePath"?, "args", "schemes"? } }`: `args` start the app (usually `["."]`), `executablePath` overrides the Electron found in the app's own dependencies, `schemes` names the app's own URL schemes (allowed like `file:`). How an agent starts and drives each platform is in `adapters/<platform>/DRIVING.md`, which the workflow points the finders and the test writer to.
+
 - `dir` is relative, never absolute (the adapter throws otherwise): to `work/` next to `run.json`, except in a file named `rebuild-run.json`, where it is relative to that file's own folder.
 - The target is never run in place. The agent clones it to `<runDir>/work/` and the adapter runs that copy.
 - The adapter refuses an address that is not on this machine.
@@ -31,7 +34,17 @@ golden/console.log         errors the app printed
 golden/a11y-violations.json  optional: list of { screen, violations: [{ id, impact, nodes }] }
 ```
 
-Screenshots are taken at a narrow and a wide size, in light and dark theme.
+Screenshots are taken at a narrow and a wide size, in light and dark theme. Web: 390 and 1440 px wide. Electron: window content sizes 1024x700 and 1440x900; a window that refuses a size is noted in `manifest.json` `notCaptured`, as is a size where light and dark gave identical pixels ("theme did not change").
+
+`coverage.json` lists `screensReached`, `screensCut` (anything over `--max-screens`), `buttonsSkipped` and `harEntriesSkipped`. `manifest.json` also has `nativeDialogs` (Electron: each dialog the app asked for, answered "canceled").
+
+### Screen identity (Electron)
+
+A screen is the pair (window title kind, signature), where the signature is a hash of the window's accessibility snapshot with digits blanked. The crawl clicks every `button`, `[role=button|tab|menuitem|treeitem|link]`; a new signature is a new screen with the `steps` that reach it. To return to a screen the app is relaunched and the steps replayed. A window the app opens is crawled too, with `openedFrom` naming its parent. `open` in a step names a window kind (its title), not a path. Launch time is `launch-ms` in `timings.json`.
+
+### What an Electron capture does not see
+
+Requests made by the main process are not observed (only windows are); the app runs with `--proxy-server` and the proxy variables pointed at a dead address, so they cannot leave the machine. This is measured by `adapters/electron/test/run.mjs` check 5 (a main-process `fetch` to a server on this machine's network address; the hit count must be 0). Requests over a custom protocol handled in the main process are invisible to the driver. Anything behind a sign-in is not reached: the profile is empty and isolated.
 
 ## Score outputs (optional)
 
@@ -78,7 +91,7 @@ console, no visible feedback during a slow request, a failed request with no vis
 
 Call: `parity --app <run.json> --tests <dir> --out <results.json>`
 
-The adapter starts the app named in `run.json`, passes its address in the `APP_URL` environment variable, runs each `<dir>/F-*.test.*` (one file per feature, named by feature ID) with a 60 second limit, and stops the app. Results: a list of `{ feature, passed, detail }`, `detail` being the last lines of the test's output. The same safety rules as capture apply. A platform with no `parity` entry point has no parity phase: the workflow stops with a plain reason.
+The adapter starts the app named in `run.json`, passes its address in the `APP_URL` environment variable (an Electron app has no address: each test gets `APP_RUN`, the path of the run file, and launches its own isolated copy with `launchApp` from `adapters/electron/launch.mjs`), runs each `<dir>/F-*.test.*` (one file per feature, named by feature ID) with a 60 second limit (Electron: or the launch time plus 60 seconds when the launch alone takes longer, measured once at the start), and stops the app. Results: a list of `{ feature, passed, detail }`, `detail` being the last lines of the test's output. The same safety rules as capture apply. A platform with no `parity` entry point has no parity phase: the workflow stops with a plain reason.
 
 ## Safety, enforced in code
 
