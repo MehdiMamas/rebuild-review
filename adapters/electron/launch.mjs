@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { createRequire } from 'node:module';
-import { execSync, spawnSync } from 'node:child_process';
+import { execSync, spawnSync, spawn } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { _electron } from 'playwright';
 import { redactUrl, redactHeaders, scrub, sleep, locate, runStep } from '../web/context.mjs';
@@ -139,6 +139,9 @@ export async function launchApp(run, appFile, { theme = 'light' } = {}) {
     page.on('close', () => { const i = windows.indexOf(page); if (i >= 0) windows.splice(i, 1); });
   };
   app.on('window', watch);
+  // If this process is killed with SIGKILL no exit handler runs, so a small watcher outside it removes the app and its profile folder.
+  // The folder reaches the watcher through its environment, not its command line, so killing by that folder does not kill the watcher first.
+  spawn(process.execPath, ['--input-type=module', '-e', WATCHER, String(process.pid), String(app.process().pid)], { detached: true, stdio: 'ignore', env: { ...process.env, RR_WATCH_DIR: tmp } }).unref();
   const page = await app.firstWindow({ timeout: 30000 }).catch(async (e) => { await stopNow(); throw new Error(`the app opened no window: ${scrub(e.message).split('\n')[0]}`); });
   app.windows().forEach(watch);
 
@@ -194,6 +197,19 @@ export function electronOpener(run, appFile) {
     };
   };
 }
+
+const WATCHER = `
+import fs from 'node:fs'; import { spawnSync } from 'node:child_process';
+const [owner, app] = process.argv.slice(1).map(Number); const dir = process.env.RR_WATCH_DIR;
+const alive = (p) => { try { process.kill(p, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
+while (alive(owner) && alive(app)) await new Promise((r) => setTimeout(r, 400));
+if (alive(app)) {
+  if (process.platform === 'win32') spawnSync('taskkill', ['/F', '/T', '/PID', String(app)]);
+  else { spawnSync('pkill', ['-KILL', '-f', dir]); try { process.kill(app, 'SIGKILL'); } catch {} }
+}
+await new Promise((r) => setTimeout(r, 500));
+try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+`;
 
 // Kills any process whose command line contains marker (the app's profile folder lives under it) and removes the folder.
 export function killByMarker(marker) {

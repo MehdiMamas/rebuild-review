@@ -31,8 +31,12 @@ const screens = {
   },
   // Planted: an error in the console as the screen opens. A file chooser button is here too.
   settings() {
-    view.innerHTML = '<h1>Settings</h1><p id="file">No file chosen</p><button id="choose">Choose file</button>' + back();
+    view.innerHTML = '<h1>Settings</h1><p id="file">No file chosen</p><button id="choose">Choose file</button> <button id="upd">Check updates</button><p id="upd-out"></p>' + back();
     console.error('settings: could not read saved theme');
+    // A request from the window to an outside address; the adapter must block it.
+    document.getElementById('upd').onclick = async () => {
+      try { await fetch(bridge.outside + '/renderer'); document.getElementById('upd-out').textContent = 'Reached the server'; } catch { document.getElementById('upd-out').textContent = 'Could not check'; }
+    };
     document.getElementById('choose').onclick = async () => { document.getElementById('file').textContent = await window.bridge.chooseFile(); };
   },
   // Planted: the request fails and nothing on the screen says so.
