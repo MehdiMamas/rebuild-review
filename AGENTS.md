@@ -124,6 +124,13 @@ what it renders, then scores the rebuild against the original. See README.md.
 - Parity per area: one writer per area (`areas.mjs ids <runDir> <id>` gives its features), writes `parity/untested-<id>.md` (joined by `areas.mjs untested`) and its marker `parity/areas/<id>.done`; a finished area is skipped on rerun and a feature whose test file exists is not rewritten.
 - Tests: `node --test scripts/areas.test.mjs` (generated 450,000-line fixture, no model calls). The workflow itself is only checked for syntax; the prompts have not been run.
 
+## Rebuild per area (#35 step 4)
+
+- With more than one area, `room.mjs stack` appends a note asking `stack.md` for two sections: "Build order" (a list, one item per area starting with its ID, every area once; `areas.mjs buildOrder` parses it and the stack step fails if it is wrong) and "Shared contracts".
+- `room.mjs build` then runs one builder child per area, in that order, in the same room and its one git repo. Each child gets its area's features (the `[area: id]` tags in `features.md`), the stack and the contracts. The wall is proven once before the first child; the transcript check runs after every child. The pool is the build budget (`buildUsd`); each child may use what is left of it.
+- A finished area is committed, cloned into `project/` and recorded in `rebuild/areas-done.json`; a rerun builds only the areas not done (the room starts from the committed `project/`). A budget that runs out before an area fails with `budget`.
+- Parity loop rounds (`--failures`) go only to the areas that have failing features (feature IDs from `failures.md`). One area behaves as before.
+
 ## Per-change check (#38)
 - `node adapters/web/check.mjs --base-url <url> --routes /a,/b [--out dir] [--budget-seconds 110] [--storage-state f] [--allow-origin o,...]`; contract in `adapters/CONTRACT.md`. Files: `check.mjs`, `check-result.mjs` (status and exit code), `loadProbes`/`clickProbes` in `probes.mjs` (`runProbes` still calls both for capture, same rows).
 - Tests: `node --test adapters/web/test/check.test.mjs`; `cd adapters/web && npm test` check 9 runs it on the benchmark (exit 1, D2 D3 D5 D6 D7 flagged, under 120 s), a 5 s budget, a dead port, a redirect, a field that cannot be clicked, a hanging route, an icon-only Delete button and the screenshots. A thrown error in a probe group becomes `notChecked` (never a fail); uncaught errors exit 3.
