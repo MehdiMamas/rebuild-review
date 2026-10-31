@@ -33,3 +33,7 @@ With it come:
   from the verdict's thresholds) and track record (how often the tool was right on known answers,
   `benchmark/calibration.json`). It is not yet a proven probability: it is only as good as the
   known-answer runs behind it, and the page says what they covered.
+
+## Cost and size
+
+A run always covers the whole app. Before spending, the skill measures the source (`scripts/size.mjs`) and prints an estimated cost range; the run needs `maxUsd` at or above the high end, otherwise nothing is spent. Budgets scale with size (`scale.json`), and actual spend per phase is written to `cost.json` in the run folder.
