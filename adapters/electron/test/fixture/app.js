@@ -1,5 +1,5 @@
 const view = document.getElementById('view');
-const api = (p) => fetch('fixture://api' + p).then((r) => r.json());
+const api = (p) => fetch(bridge.api + p).then((r) => r.json());
 const screens = {
   home() {
     view.innerHTML = '<h1>Workbench</h1><nav><button data-go="tasks">Tasks</button><button data-go="search">Search</button><button data-go="reports">Reports</button><button data-go="settings">Settings</button><button data-go="profile">Profile</button><button data-go="sync">Sync</button><button data-go="about">About</button><button id="insp">Open inspector</button></nav>';
@@ -39,14 +39,14 @@ const screens = {
   profile() {
     view.innerHTML = '<h1>Profile</h1><p id="name">Name: not loaded</p><button id="load">Load profile</button>' + back();
     document.getElementById('load').onclick = async () => {
-      try { const r = await fetch('fixture://api/profile'); if (r.ok) document.getElementById('name').textContent = 'Name: Sam'; } catch {}
+      try { const r = await fetch(bridge.api + '/profile'); if (r.ok) document.getElementById('name').textContent = 'Name: Sam'; } catch {}
     };
   },
   // Planted: a slow request with nothing on the screen while it runs.
   sync() {
     view.innerHTML = '<h1>Sync</h1><p id="out">Never synced</p><button id="go">Sync now</button>' + back();
     document.getElementById('go').onclick = async () => {
-      const r = await fetch('fixture://api/sync');
+      const r = await fetch(bridge.api + '/sync');
       if (r.ok) document.getElementById('out').textContent = 'Synced';
     };
   },
