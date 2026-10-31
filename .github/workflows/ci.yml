@@ -26,6 +26,7 @@ jobs:
           node --test scripts/free-port.test.mjs
           node --test scripts/score.test.mjs
           node --test scripts/report.test.mjs
+          node --test scripts/size.test.mjs
 
   web-adapter:
     runs-on: ubuntu-latest

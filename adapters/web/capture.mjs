@@ -17,8 +17,10 @@ if (run.platform !== 'web') throw new Error(`web adapter cannot capture platform
 const { origin, workDir, stop, buildMs } = await startApp(run, appFile);
 const SIZES = [{ w: 390, h: 844 }, { w: 1440, h: 900 }];
 const THEMES = ['light', 'dark'];
-const MAX_SCREENS = 30;
-const notCaptured = [];
+const MAX_SCREENS = Number(arg('max-screens')) || 30;
+const MAX_BUTTONS = Number(arg('max-buttons')) || 10;
+const MAX_HAR_BYTES = Number(arg('max-har-bytes')) || 50 * 1024 * 1024;
+const notCaptured = [], cutScreens = [], skippedButtons = [];
 const slug = (u) => { const p = new URL(u).pathname.replace(/^\/|\/$/g, '').replace(/[^\w-]+/g, '-'); return p || 'root'; };
 const write = (f, data) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, typeof data === 'string' ? data : JSON.stringify(data, null, 2)); };
 
@@ -42,15 +44,19 @@ const queue = [start], seen = new Map();
     const url = queue.shift();
     const key = new URL(url).pathname + new URL(url).search;
     if (seen.has(key)) continue;
-    if (seen.size >= MAX_SCREENS) { notCaptured.push(`crawl stopped at ${MAX_SCREENS} screens; ${url} not visited`); break; }
+    if (seen.size >= MAX_SCREENS) {
+      notCaptured.push(`crawl stopped at ${MAX_SCREENS} screens; ${url} not visited`);
+      for (const u of [url, ...queue]) { const x = new URL(u), k = x.pathname + x.search; if (!seen.has(k) && !cutScreens.includes(k)) cutScreens.push(k); }
+      break;
+    }
     try { await page.goto(url); await settle(page); } catch (e) { notCaptured.push(`${url}: ${scrub(e.message).split('\n')[0]}`); seen.set(key, null); continue; }
     seen.set(key, { id: slug(url), url: key, title: await page.title() });
     const hrefs = await page.$$eval('a[href]', (as) => as.map((a) => a.href));
     const found = new Set(hrefs.filter((h) => new URL(h).origin === origin).map((h) => { const u = new URL(h); u.hash = ''; return u.toString(); }));
     const buttons = page.locator('button, [role=button]');
     const total = await buttons.count();
-    if (total > 10) notCaptured.push(`${key}: only the first 10 of ${total} buttons were tried`);
-    for (let i = 0, n = Math.min(total, 10); i < n; i++) {
+    if (total > MAX_BUTTONS) { notCaptured.push(`${key}: only the first ${MAX_BUTTONS} of ${total} buttons were tried`); skippedButtons.push({ screen: key, tried: MAX_BUTTONS, skipped: total - MAX_BUTTONS }); }
+    for (let i = 0, n = Math.min(total, MAX_BUTTONS); i < n; i++) {
       try {
         await buttons.nth(i).click({ timeout: 1500 });
         await sleep(200);
@@ -128,7 +134,16 @@ write(path.join(out, 'manifest.json'), {
   blockedRequests: [...blocked].sort(),
   notCaptured,
 });
-write(path.join(out, 'network.har'), { log: { version: '1.2', creator: { name: 'rebuild-review web adapter', version: '1' }, entries: har } });
+let harBytes = 0;
+const harKept = har.filter((e) => (harBytes += JSON.stringify(e).length) <= MAX_HAR_BYTES);
+write(path.join(out, 'network.har'), { log: { version: '1.2', creator: { name: 'rebuild-review web adapter', version: '1' }, entries: harKept } });
+write(path.join(out, 'coverage.json'), {
+  caps: { maxScreens: MAX_SCREENS, maxButtons: MAX_BUTTONS, maxHarBytes: MAX_HAR_BYTES },
+  screensReached: screens.map((s) => s.url),
+  screensCut: cutScreens,
+  buttonsSkipped: skippedButtons,
+  harEntriesSkipped: har.length - harKept.length,
+});
 write(path.join(out, 'timings.json'), timings);
 write(path.join(out, 'probes.json'), probes);
 write(path.join(out, 'a11y-violations.json'), a11y);

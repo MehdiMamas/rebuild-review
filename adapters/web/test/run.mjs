@@ -136,6 +136,20 @@ check('6 target git status is clean after the runs', status === '', status || 'c
   check('7 rebuild-run.json starts from its own folder with dir "."; absolute dir and .. refused', started === true && refused && escaped, `started ${started}; absolute refused ${refused}; .. refused ${escaped}`);
 }
 
+// Test 8: coverage.json lists what was reached; a low --max-screens lists the screens it cut.
+{
+  const cov = json(path.join(g1, 'coverage.json'));
+  const reachedOk = JSON.stringify(cov.screensReached) === JSON.stringify(m1.screens.map((s) => s.url)) && cov.screensCut.length === 0 && cov.harEntriesSkipped === 0;
+  const capRun = path.join(tmp, 'cap');
+  fs.mkdirSync(path.join(capRun, 'work'), { recursive: true });
+  fs.copyFileSync(path.join(here, 'site.mjs'), path.join(capRun, 'work/site.mjs'));
+  fs.writeFileSync(path.join(capRun, 'run.json'), JSON.stringify({ platform: 'web', start: 'node site.mjs', address: 'http://127.0.0.1:4237' }));
+  runCapture(capRun, ['--max-screens', '2']);
+  const cc = json(path.join(capRun, 'golden/coverage.json'));
+  check('8 coverage.json: full run reaches every screen; --max-screens 2 lists the cut ones', reachedOk && JSON.stringify(cc.screensReached) === JSON.stringify(['/', '/a']) && JSON.stringify(cc.screensCut) === JSON.stringify(['/b']) && cc.caps.maxScreens === 2,
+    `fixture reached ${cov.screensReached.length}, cut ${cov.screensCut.length}; capped site reached ${cc.screensReached.join(' ')}, cut ${cc.screensCut.join(' ')}`);
+}
+
 fs.rmSync(tmp, { recursive: true, force: true });
 const failed = results.filter((r) => !r).length;
 console.log(`${results.length - failed}/${results.length} passed`);
