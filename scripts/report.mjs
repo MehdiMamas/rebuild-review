@@ -210,6 +210,16 @@ export function render(runDir, { embedCap = EMBED_CAP, thresholds, stopped } = {
   const feats = (Array.isArray(parity) ? parity : []).slice().sort((x, y) => (order[x.rebuild] ?? 1) - (order[y.rebuild] ?? 1) || String(x.feature).localeCompare(String(y.feature)));
   sec('features', 'Feature list', feats.length ? `<table><tr><th>Feature</th><th>Kind</th><th>Original</th><th>Rebuild</th><th>Note</th></tr>${feats.map((f) => `<tr><td>${esc(f.feature)}</td><td>${esc(f.kind)}</td><td>${esc(f.original)}</td><td>${esc(f.rebuild)}</td><td>${esc(f.note)}</td></tr>`).join('')}</table>` : '<p class="mut">There is no parity result.</p>');
 
+  // Coverage: what the run covered and what it did not reach (written by areas.mjs coverage)
+  const cov = tryJson(path.join(runDir, 'coverage.json'));
+  if (cov && Array.isArray(cov.areas)) {
+    const t = cov.totals || {};
+    sec('coverage', 'Coverage', `<p>${esc(`${t.features} features found, ${t.tested} tested on the original, ${t.rebuilt} run on the rebuild (${t.passing} pass); ${cov.screens ? cov.screens.reached : 0} screens reached${cov.screens && cov.screens.cut ? `, ${cov.screens.cut} cut` : ''}.`)}</p>` +
+      `<table><tr><th>Area</th><th>Files</th><th>Lines</th><th>Features</th><th>Tested</th><th>Run on rebuild</th><th>Pass</th></tr>${cov.areas.map((a) => `<tr><td>${esc(a.id)}</td><td>${esc(a.files)}</td><td>${esc(a.lines)}</td><td>${esc(a.features)}</td><td>${esc(a.tested)}</td><td>${esc(a.rebuilt)}</td><td>${esc(a.passing)}</td></tr>`).join('')}</table>` +
+      `<h3>Not reached</h3>${cov.notReached && cov.notReached.length ? `<ul>${cov.notReached.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : '<p>Nothing was left out.</p>'}` +
+      `<h3>Excluded from the run</h3>${cov.excluded && cov.excluded.length ? `<ul>${cov.excluded.map((x) => `<li><code>${esc(x.path)}</code> (${esc(x.files)} files): ${esc(x.reason)}</li>`).join('')}</ul>` : '<p>Nothing was excluded.</p>'}`);
+  }
+
   // 6 Not checked
   const items = [];
   if (score) {

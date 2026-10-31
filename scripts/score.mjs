@@ -11,6 +11,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
+import { scan } from './size.mjs';
+import { validate } from './areas.mjs';
 
 const readJson = (f) => JSON.parse(fs.readFileSync(f, 'utf8'));
 const writeJson = (f, v) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, JSON.stringify(v, null, 2)); };
@@ -246,12 +248,13 @@ export function checkJudge(judgeOut, judgeDir) {
 // ---- gaps and collate ----
 const GAP_POINTS = 3, GAP_DELTA = 0.5;
 
-function load(runDir, rubricFile) {
+function load(runDir, rubricFile, area) {
   const rubric = readJson(rubricFile);
-  const sd = path.join(runDir, 'score');
-  const labelsFile = path.join(sd, '.labels.json');
+  const base = path.join(runDir, 'score');
+  const sd = area ? path.join(base, 'areas', area) : base; // judge answers, dropped items and skeptic answers; the rest is shared
+  const labelsFile = path.join(base, '.labels.json');
   const labels = fs.existsSync(labelsFile) ? readJson(labelsFile).judges : [];
-  const original = readJson(path.join(sd, 'original.json')), rebuild = readJson(path.join(sd, 'rebuild.json'));
+  const original = readJson(path.join(base, 'original.json')), rebuild = readJson(path.join(base, 'rebuild.json'));
   const items = [];
   labels.forEach((map, j) => {
     const f = path.join(sd, `judge-${j}.json`);
@@ -259,34 +262,83 @@ function load(runDir, rubricFile) {
     readJson(f).forEach((it, k) => {
       const score = (real) => it[map.A === real ? 'A' : 'B'];
       const o = score('original'), r = score('rebuild');
-      items.push({ id: `j${j}-${k}`, value: it.value, question: it.question, original: o, rebuild: r, points: r.score - o.score, delta: (r.score - o.score) / 10 });
+      items.push({ id: `${area ? area + '.' : ''}j${j}-${k}`, value: it.value, question: it.question, original: o, rebuild: r, points: r.score - o.score, delta: (r.score - o.score) / 10 });
     });
   });
   const dropped = [];
   if (fs.existsSync(sd)) for (const f of fs.readdirSync(sd).filter((n) => /^judge-\d+\.dropped\.json$/.test(n))) dropped.push(...readJson(path.join(sd, f)));
   const skeptic = {};
-  const sk = path.join(sd, 'skeptic');
+  const sk = path.join(base, 'skeptic'); // ids carry the area prefix, so one folder serves all areas
   if (fs.existsSync(sk)) for (const f of fs.readdirSync(sk).filter((n) => n.endsWith('.json'))) { const r = readJson(path.join(sk, f)); skeptic[r.id] = r; }
   return { rubric, original, rebuild, items, dropped, skeptic };
 }
 
-export function gaps(runDir, rubricFile) {
-  const { rubric, original, rebuild, items } = load(runDir, rubricFile);
+// Area ids when areas.json holds more than one area; null otherwise (then every function below does exactly what it did before areas).
+export function areaIds(runDir) {
+  try { const a = readJson(path.join(runDir, 'areas.json')).areas; return Array.isArray(a) && a.length > 1 ? a.map((x) => x.id) : null; } catch { return null; }
+}
+
+// Counted source lines of each area of the original (the weight of its result); falls back to equal weights when nothing is counted.
+export function areaWeights(runDir, ids) {
+  const v = validate(readJson(path.join(runDir, 'areas.json')), scan(path.join(runDir, 'work')).counted);
+  const lines = Object.fromEntries(v.areas.map((a) => [a.id, a.lines]));
+  const total = ids.reduce((n, i) => n + (lines[i] || 0), 0);
+  return Object.fromEntries(ids.map((i) => [i, { lines: lines[i] || 0, weight: total ? (lines[i] || 0) / total : 1 / ids.length }]));
+}
+
+// Combines per-area totals by weight. One part returns that part unchanged.
+export function weigh(parts) {
+  if (parts.length === 1) return { values: parts[0].values, overall: parts[0].overall };
+  const sum = parts.reduce((n, p) => n + p.weight, 0) || 1;
+  const values = {};
+  for (const name of Object.keys(parts[0].values)) {
+    const ds = parts.map((p) => p.values[name]);
+    const w = (f) => round(ds.reduce((n, d, i) => n + parts[i].weight * f(d), 0) / sum);
+    const counts = ds.reduce((n, d) => n + d.judged.count, 0);
+    values[name] = { delta: w((d) => d.delta), measured: ds[0].measured, judged: { delta: counts ? round(ds.reduce((n, d, i) => n + parts[i].weight * (d.judged.delta ?? 0), 0) / sum) : null, count: counts }, notMeasured: ds[0].notMeasured };
+  }
+  return { values, overall: round(parts.reduce((n, p) => n + p.weight * p.overall, 0) / sum, 1) };
+}
+
+function gapsOf(loaded, withMetrics) {
+  const { rubric, original, rebuild, items } = loaded;
   const out = items.filter((i) => Math.abs(i.points) >= GAP_POINTS).map((i) => ({ id: i.id, kind: 'judged', value: i.value, question: i.question, original: i.original, rebuild: i.rebuild }));
-  const { values } = totals(rubric, original, rebuild, []);
-  for (const v of Object.values(values)) for (const m of v.measured) if (Math.abs(m.delta) >= GAP_DELTA) out.push({ id: `m-${m.name}`, kind: 'metric', ...m });
+  if (withMetrics) {
+    const { values } = totals(rubric, original, rebuild, []);
+    for (const v of Object.values(values)) for (const m of v.measured) if (Math.abs(m.delta) >= GAP_DELTA) out.push({ id: `m-${m.name}`, kind: 'metric', ...m });
+  }
   return out;
 }
 
-export function collate(runDir, rubricFile) {
-  const { rubric, original, rebuild, items, dropped, skeptic } = load(runDir, rubricFile);
+export function gaps(runDir, rubricFile) {
+  const ids = areaIds(runDir);
+  if (!ids) return gapsOf(load(runDir, rubricFile), true);
+  return ids.flatMap((id, n) => gapsOf(load(runDir, rubricFile, id), n === 0)); // measured numbers are whole-app: their gaps are listed once
+}
+
+function collateOne(loaded) {
+  const { rubric, original, rebuild, items, dropped, skeptic } = loaded;
   const refuted = items.filter((i) => skeptic[i.id] && skeptic[i.id].refuted === true).map((i) => ({ id: i.id, value: i.value, question: i.question, points: i.points, why: skeptic[i.id].why, cite: skeptic[i.id].cite }));
   const gone = new Set(refuted.map((r) => r.id));
   const t = totals(rubric, original, rebuild, items.filter((i) => !gone.has(i.id)));
   for (const v of Object.values(t.values)) for (const m of v.measured) { const s = skeptic[`m-${m.name}`]; if (s) m.note = s.refuted ? `skeptic doubts this: ${s.why}` : `skeptic agrees: ${s.why}`; }
+  return { t, dropped, refuted };
+}
+
+export function collate(runDir, rubricFile) {
+  const ids = areaIds(runDir);
+  const parts = (ids || [undefined]).map((id) => ({ id, ...collateOne(load(runDir, rubricFile, id)) }));
+  const rubric = readJson(rubricFile);
+  let t = parts[0].t, areas;
+  if (ids) {
+    const w = areaWeights(runDir, ids);
+    t = weigh(parts.map((p) => ({ weight: w[p.id].weight, ...p.t })));
+    areas = parts.map((p) => ({ id: p.id, lines: w[p.id].lines, weight: round(w[p.id].weight), overall: p.t.overall, values: Object.fromEntries(Object.entries(p.t.values).map(([k, v]) => [k, v.delta])) }));
+  }
   const rf = path.join(runDir, 'parity', 'rebuild.json');
   const g = gate(fs.existsSync(rf) ? readJson(rf) : [], rubric.gate.minPassRate);
-  const result = { gate: g, values: t.values, overall: t.overall, dropped, refuted, notChecked: ['other browsers (the adapter only runs Chromium)'] };
+  const dropped = parts.flatMap((p) => p.dropped), refuted = parts.flatMap((p) => p.refuted);
+  const result = { gate: g, values: t.values, overall: t.overall, ...(areas ? { areas } : {}), dropped, refuted, notChecked: ['other browsers (the adapter only runs Chromium)'] };
   writeJson(path.join(runDir, 'score', 'score.json'), result);
   return result;
 }

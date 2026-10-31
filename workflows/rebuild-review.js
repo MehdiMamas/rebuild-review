@@ -257,13 +257,19 @@ Step 4 prints one line of JSON {folder, judges:[{A,B},...]}. Return ok true with
   mustRun(prep, 'measure and blind')
   const { folder, judges } = prep
 
-  // 2. Blind judges in parallel, each followed by the citation check.
-  const judged = await parallel(judges.map((_, i) => async () => {
+  // 2. Blind judges in parallel, each followed by the citation check. A big app is judged area by area: every judge answers once per area,
+  //    looking at that area's features and screens; code weighs the areas by their counted lines. One area is judged as before.
+  const areas = await ensureAreas()
+  const multi = areas.length > 1
+  const jobs = judges.flatMap((_, i) => (multi ? areas : [null]).map(a => ({ i, a })))
+  const judged = await parallel(jobs.map(({ i, a }) => async () => {
     const dir = `${folder}/judge-${i}`
-    const out = `${SC}/judge-${i}.json`
-    const j = await agent(`Read ${pluginRoot}/prompts/judge.md and follow it. Your folder is ${dir} (read nothing outside it, except ${RUBRIC} for the questions). Write your answer to ${dir}/answer.json.`, { ...SCORE_AGENT, label: `judge-${i}`, phase: 'Score' })
+    const out = a ? `${SC}/areas/${a.id}/judge-${i}.json` : `${SC}/judge-${i}.json`
+    const answer = a ? `${dir}/answer-${a.id}.json` : `${dir}/answer.json`
+    const scope = a ? ` Judge only the area "${a.id}": its features are the entries of ${runDir}/features.md tagged [area: ${a.id}] and its screens are the ones that belong to those features; ignore the rest of the app.` : ''
+    const j = await agent(`Read ${pluginRoot}/prompts/judge.md and follow it. Your folder is ${dir} (read nothing outside it, except ${RUBRIC} for the questions).${scope} Write your answer to ${answer}.`, { ...SCORE_AGENT, label: a ? `judge-${a.id}-${i}` : `judge-${i}`, phase: 'Score' })
     if (j === null) return null
-    return agent(`Run exactly: ${SCORE} check ${q(`${dir}/answer.json`)} ${q(dir)} ${q(out)} . Return ok true with its output as detail if it exited 0, otherwise ok false with the error. Change nothing else.`, { ...CHEAP, label: `check-${i}`, phase: 'Score', schema: RUN_RESULT })
+    return agent(`Run exactly: ${SCORE} check ${q(answer)} ${q(dir)} ${q(out)} . Return ok true with its output as detail if it exited 0, otherwise ok false with the error. Change nothing else.`, { ...CHEAP, label: a ? `check-${a.id}-${i}` : `check-${i}`, phase: 'Score', schema: RUN_RESULT })
   }))
   if (judged.every(r => !r || !r.ok)) throw new Error('Score: no judge produced a usable answer')
 
@@ -272,7 +278,7 @@ Step 4 prints one line of JSON {folder, judges:[{A,B},...]}. Return ok true with
   const gapList = await agent(`Run exactly: ${SCORE} gaps ${q(runDir)} ${q(RUBRIC)} . It prints a JSON list. Return ok true and gaps as that list (each entry copied exactly, as a JSON string in "json"), or ok false with the error as detail. Change nothing else.`,
     { ...CHEAP, label: 'score-gaps', phase: 'Score', schema: { type: 'object', required: ['ok'], properties: { ok: { type: 'boolean' }, detail: { type: 'string' }, gaps: { type: 'array', items: { type: 'object', required: ['id', 'json'], properties: { id: { type: 'string' }, json: { type: 'string' } } } } } } })
   mustRun(gapList, 'gaps')
-  await parallel((gapList.gaps || []).map(g => () => agent(`Read ${pluginRoot}/prompts/skeptic.md and follow it. The gap: ${g.json}. Its id is ${g.id}. Evidence: for ids starting with j<N>-, the judge's folder is ${folder}/judge-<N>/ (the label map is in ${SC}/.labels.json); for ids starting with m-, see ${SC}/original.json, ${SC}/rebuild.json, ${runDir}/golden and ${runDir}/golden-rebuild. Write your answer to ${SC}/skeptic/${g.id}.json (mkdir -p the folder).`, { ...SCORE_AGENT, label: `skeptic-${g.id}`, phase: 'Score' })))
+  await parallel((gapList.gaps || []).map(g => () => agent(`Read ${pluginRoot}/prompts/skeptic.md and follow it. The gap: ${g.json}. Its id is ${g.id}. Evidence: for ids of the form j<N>-<k> or <area>.j<N>-<k>, the judge's folder is ${folder}/judge-<N>/ (the label map is in ${SC}/.labels.json; an area id means the judge answered only for that area, see ${SC}/areas/<area>/judge-<N>.json); for ids starting with m-, see ${SC}/original.json, ${SC}/rebuild.json, ${runDir}/golden and ${runDir}/golden-rebuild. Write your answer to ${SC}/skeptic/${g.id}.json (mkdir -p the folder).`, { ...SCORE_AGENT, label: `skeptic-${g.id}`, phase: 'Score' })))
 
   // 4. The arithmetic is code.
   mustRun(await agent(`Run exactly: ${SCORE} collate ${q(runDir)} ${q(RUBRIC)} . Return ok true with its output as detail if it exited 0, otherwise ok false with the error. Change nothing else.`, { ...CHEAP, label: 'collate', phase: 'Score', schema: RUN_RESULT }), 'collate')
@@ -290,6 +296,8 @@ const REPORT = `node ${q(`${pluginRoot}/scripts/report.mjs`)}`
 const reportStep = (cmd, label) => agent(`Run exactly: ${cmd} . Return ok true with its output as detail if it exited 0, otherwise ok false with the error. Change nothing else.`, { ...CHEAP, label, phase: 'Report', schema: RUN_RESULT })
 
 async function runReport() {
+  const cv = await reportStep(`node ${q(`${pluginRoot}/scripts/areas.mjs`)} coverage ${q(runDir)}`, 'coverage')
+  if (!cv || !cv.ok) throw new Error(`Report: coverage failed: ${(cv && cv.detail) || 'agent died'}`)
   const v = await reportStep(`${REPORT} verdict ${q(runDir)}`, 'verdict')
   if (!v || !v.ok) throw new Error(`Report: verdict failed: ${(v && v.detail) || 'agent died'}`)
   await agent(`Read ${pluginRoot}/prompts/actions.md and follow it. The run folder is ${runDir}; write ${runDir}/report/actions.proposed.json (mkdir -p the folder). The verdict, decided by code, is: ${v.detail}. If score/score.json does not exist, write an empty list [].`, { model: 'sonnet', effort: 'medium', label: 'actions', phase: 'Report' })

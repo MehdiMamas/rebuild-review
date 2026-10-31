@@ -31,3 +31,8 @@ With it come:
 ## Cost and size
 
 A run always covers the whole app. Before spending, the skill measures the source (`scripts/size.mjs`) and prints an estimated cost range; the run needs `maxUsd` at or above the high end, otherwise nothing is spent. Budgets scale with size (`scale.json`), and actual spend per phase is written to `cost.json` in the run folder.
+
+### Big apps
+
+A big app is split into areas inside the run; the run still covers the whole app. Each area is inventoried, tested, rebuilt and judged on its own, and the scores are weighed by lines of code. The report has a Coverage section: features found, tested and rebuilt per area, screens reached, what was not reached and what was excluded (with the reason).
+

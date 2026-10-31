@@ -109,3 +109,11 @@ what it renders, then scores the rebuild against the original. See README.md.
 - `room.mjs build` then runs one builder child per area, in that order, in the same room and its one git repo. Each child gets its area's features (the `[area: id]` tags in `features.md`), the stack and the contracts. The wall is proven once before the first child; the transcript check runs after every child. The pool is the build budget (`buildUsd`); each child may use what is left of it.
 - A finished area is committed, cloned into `project/` and recorded in `rebuild/areas-done.json`; a rerun builds only the areas not done (the room starts from the committed `project/`). A budget that runs out before an area fails with `budget`.
 - Parity loop rounds (`--failures`) go only to the areas that have failing features (feature IDs from `failures.md`). One area behaves as before.
+
+## Score per area and coverage (#35 step 5)
+
+- With more than one area, every blind judge answers once per area (the task names the area; its features are the `[area: id]` entries of `features.md`). Answers are checked into `score/areas/<id>/judge-<j>.json`; skeptic ids carry the area (`<area>.j0-3`). Measured numbers (`lines`, `lcp`, ...) are whole-app and listed once.
+- `score.mjs collate` weighs the per-area totals by counted lines of the original (`areaWeights`, from `areas.json` and `work/`), writes `areas` (id, lines, weight, overall, value deltas) into `score.json` and the weighted `values` and `overall`. The gate is still the whole rebuild's test pass rate. One area (no `areas.json`, or one area): the old code path runs, so the arithmetic is exactly today's.
+- `areas.mjs coverage <runDir>` (first step of Report) writes `coverage.json`: per area files, lines, features, tested, run on rebuild, passing, whether it was built; the excluded list; screens reached or cut (`golden/coverage.json`); and `notReached` (areas not rebuilt, features with no test, screens cut, buttons skipped, HAR entries dropped). `report.mjs render` shows it as the Coverage section. This feeds #36 (confidence).
+- Tests: `scripts/areas.test.mjs` (a generated 450,000-line fixture through areas, parity, score and the report page; no model calls).
+
