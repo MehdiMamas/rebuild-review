@@ -91,3 +91,8 @@ what it renders, then scores the rebuild against the original. See README.md.
 ## Size and scale (#35 step 1)
 - `node scripts/size.mjs <workDir> <runDir>` counts source lines of git-tracked files (skipping lock, vendored, generated and non-source files, all listed) and writes `<runDir>/size.json` with the budgets from `scale.json` (one unit = 20,000 lines; floors equal the old fixed limits; per-unit values are first guesses). Not yet used by the workflow. Test: `node --test scripts/size.test.mjs`.
 - `capture.mjs` takes `--max-screens` (30), `--max-buttons` (10) and `--max-har-bytes` (50 MB) and writes `golden/coverage.json`: screens reached, screens cut, buttons skipped, HAR entries dropped. `cd adapters/web && npm test` check 8 covers it.
+
+## Per-change check (#38)
+- `node adapters/web/check.mjs --base-url <url> --routes /a,/b [--out dir] [--budget-seconds 110] [--storage-state f] [--allow-origin o,...]`; contract in `adapters/CONTRACT.md`. Files: `check.mjs`, `check-result.mjs` (status and exit code), `loadProbes`/`clickProbes` in `probes.mjs` (`runProbes` still calls both for capture, same rows).
+- Tests: `node --test adapters/web/test/check.test.mjs`; `cd adapters/web && npm test` check 9 runs it on the benchmark (exit 1, D2 D3 D5 D6 D7 flagged, under 120 s), a 5 s budget, a dead port, a redirect, a field that cannot be clicked, a hanging route, an icon-only Delete button and the screenshots. A thrown error in a probe group becomes `notChecked` (never a fail); uncaught errors exit 3.
+- Gotcha: a test that serves from the test process cannot use `spawnSync` on the command; the server blocks with it. Run the server as a child process.

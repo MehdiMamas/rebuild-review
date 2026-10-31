@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync, spawn } from 'node:child_process';
 import { startApp } from '../app.mjs';
 
 const here = path.dirname(new URL(import.meta.url).pathname);
@@ -148,6 +148,65 @@ check('6 target git status is clean after the runs', status === '', status || 'c
   const cc = json(path.join(capRun, 'golden/coverage.json'));
   check('8 coverage.json: full run reaches every screen; --max-screens 2 lists the cut ones', reachedOk && JSON.stringify(cc.screensReached) === JSON.stringify(['/', '/a']) && JSON.stringify(cc.screensCut) === JSON.stringify(['/b']) && cc.caps.maxScreens === 2,
     `fixture reached ${cov.screensReached.length}, cut ${cov.screensCut.length}; capped site reached ${cc.screensReached.join(' ')}, cut ${cc.screensCut.join(' ')}`);
+}
+
+// Test 9: check.mjs, the per-change run of the probes, on the same fixture.
+{
+  const checkMjs = path.join(here, '..', 'check.mjs');
+  const runCheck = (args) => { const t = Date.now(); const r = spawnSync('node', [checkMjs, ...args], { encoding: 'utf8' }); return { ...r, sec: (Date.now() - t) / 1000 }; };
+  const chk = setupRun('chk', 4238);
+  const app = await startApp(JSON.parse(read(path.join(chk, 'run.json'))), path.join(chk, 'run.json'));
+  const outDir = path.join(tmp, 'check-out'), outFile = path.join(outDir, 'result.json');
+  const full = runCheck(['--base-url', app.origin, '--routes', '/', '--out', outDir]);
+  const res = fs.existsSync(outFile) ? json(outFile) : { failed: [], notChecked: [] };
+  console.log(full.stdout.trim());
+  const flagged = (id) => res.failed.some((f) => f.probe === probeOf[id]);
+  check('9a check.mjs on the benchmark: exit 1, D2 D3 D5 D6 D7 flagged, under 120 s', full.status === 1 && must.every(flagged) && full.sec < 120 && res.elapsedMs < 120000,
+    `exit ${full.status}; ${full.sec.toFixed(1)} s; flagged ${must.filter(flagged).join(' ')}; not checked ${res.notChecked.length}`);
+  const shotsOk = ['1440', '390'].every((w) => (res.screenshots || []).some((x) => x.route === '/' && x.width === Number(w) && x.file === `root-${w}.png` && fs.statSync(path.join(outDir, x.file)).size > 0));
+  check('9a1 failed[].route holds the route, the click detail is in the evidence', res.failed.length > 0 && res.failed.every((f) => f.route === '/') && res.failed.some((f) => /^click "Save": /.test(f.evidence)), res.failed.slice(0, 3).map((f) => `${f.route} ${f.evidence.slice(0, 50)}`).join(' | '));
+  check('9a2 screenshots at 390 and 1440 exist for every route and are listed in result.json', shotsOk, (res.screenshots || []).map((x) => x.file).join(' ') || 'none');
+  const small = runCheck(['--base-url', app.origin, '--routes', '/', '--budget-seconds', '5', '--out', outDir]);
+  const rs5 = json(outFile);
+  check('9b a 5 second budget gives notChecked rows and exit 2 or 1, never 0', [1, 2].includes(small.status) && rs5.notChecked.length > 0 && rs5.status !== 'pass',
+    `exit ${small.status}; ${small.sec.toFixed(1)} s; ${rs5.notChecked.length} not checked, e.g. ${rs5.notChecked[0] ? rs5.notChecked[0].probe + ': ' + rs5.notChecked[0].reason : 'none'}`);
+  app.stop();
+  const dead = runCheck(['--base-url', 'http://127.0.0.1:4240', '--routes', '/']);
+  check('9c a dead port exits 3', dead.status === 3 && /does not answer/.test(dead.stderr), `exit ${dead.status}; ${dead.stderr.trim()}`);
+  const bad = runCheck(['--routes', '/']);
+  check('9d missing --base-url exits 3', bad.status === 3, `exit ${bad.status}`);
+  // A route that redirects is not checked: exit 2, never a pass.
+  // The server runs in a child process: spawnSync blocks this process's own event loop.
+  // /old redirects, /hang never answers, /stuck has a field that cannot be clicked, /icon has an icon-only Delete button.
+  const pages = {
+    '/': '<title>x</title><p>hi</p>',
+    '/stuck': '<title>x</title><input disabled placeholder="stuck">',
+    '/icon': '<title>x</title><button aria-label="Delete" style="width:20px;height:20px" onclick="fetch(\'/api/x\',{method:\'DELETE\'})"></button>',
+  };
+  const serverJs = `require('http').createServer((q,s)=>{const pages=${JSON.stringify(pages)};
+    if(q.url==='/old'){s.writeHead(302,{location:'/login'});s.end()}
+    else if(q.url==='/hang'){}
+    else if(q.url.startsWith('/api/')){console.error('API '+q.method+' '+q.url);s.end('{}')}
+    else{s.writeHead(200,{'content-type':'text/html'});s.end(pages[q.url]||pages['/'])}}).listen(4241)`;
+  const redir = spawn('node', ['-e', serverJs], { stdio: ['ignore', 'ignore', 'pipe'] });
+  let apiHits = '';
+  redir.stderr.on('data', (d) => { apiHits += d; });
+  for (let i = 0; i < 50 && !(await fetch('http://127.0.0.1:4241').then(() => true, () => false)); i++) await new Promise((r) => setTimeout(r, 100));
+  const ok = { b: 'http://127.0.0.1:4241' };
+  const stuck = runCheck(['--base-url', ok.b, '--routes', '/stuck', '--out', outDir]);
+  const stuckR = json(outFile);
+  check('9f a field that cannot be clicked gives notChecked and exit 2, no crash', stuck.status === 2 && stuckR.notChecked.some((n) => n.route === '/stuck' && n.probe === 'script-cost-per-key'), `exit ${stuck.status}; ${stuck.sec.toFixed(1)} s; ${stuckR.notChecked.map((n) => n.probe).join(' ')}`);
+  const hang = runCheck(['--base-url', ok.b, '--routes', '/hang', '--out', outDir]);
+  const hangR = json(outFile);
+  check('9g a route that hangs gives notChecked and exit 2, no crash', hang.status === 2 && hangR.notChecked.some((n) => n.route === '/hang'), `exit ${hang.status}; ${hang.sec.toFixed(1)} s; ${hangR.notChecked.map((n) => n.reason).join(' | ').slice(0, 120)}`);
+  const icon = runCheck(['--base-url', ok.b, '--routes', '/icon', '--out', outDir]);
+  const iconR = json(outFile);
+  await new Promise((r) => setTimeout(r, 300)); // let the server's stderr reach this process
+  check('9h an icon-only button with aria-label Delete is skipped, listed, and never clicked', icon.status === 2 && iconR.notChecked.some((n) => n.probe === 'click' && /skipped/.test(n.reason)) && !/DELETE/.test(apiHits), `exit ${icon.status}; ${iconR.notChecked.map((n) => n.reason).join(' | ')}; DELETE requests seen: ${/DELETE/.test(apiHits)}`);
+  const rd = runCheck(['--base-url', ok.b, '--routes', '/old', '--out', outDir]);
+  const rdr = json(outFile);
+  redir.kill();
+  check('9e a redirecting route is notChecked, exit 2', rd.status === 2 && rdr.notChecked.some((n) => n.route === '/old' && /\/login/.test(n.reason)), `exit ${rd.status}; ${rdr.notChecked.map((n) => n.reason).join(' | ')}`);
 }
 
 fs.rmSync(tmp, { recursive: true, force: true });
