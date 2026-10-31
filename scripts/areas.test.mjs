@@ -4,7 +4,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { validate, renumber, featureAreas, SINGLE } from './areas.mjs';
+import { validate, renumber, featureAreas, buildOrder, failureIds, SINGLE } from './areas.mjs';
+import { areaStackNote, areaBuildNote } from './room.mjs';
 
 const CLI = new URL('./areas.mjs', import.meta.url).pathname;
 const SIZE = new URL('./size.mjs', import.meta.url).pathname;
@@ -95,4 +96,20 @@ test('a small repo gets the single area without a proposal', () => {
   const run = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-areas-small-'));
   assert.equal(cli('init', run).stdout.trim(), 'single');
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(run, 'areas.json'), 'utf8')), SINGLE);
+});
+
+test('buildOrder reads the Build order list, one item per area, each exactly once', () => {
+  const md = '# Stack\nx\n## Build order\n1. admin - first, others use it\n2. cart (needs admin)\n- search\n## Shared contracts\n- cart and search share the price shape\n';
+  assert.deepEqual(buildOrder(md, ['cart', 'search', 'admin']), ['admin', 'cart', 'search']);
+  assert.throws(() => buildOrder('# Stack\n', ['cart']), /no "Build order"/);
+  assert.throws(() => buildOrder('## Build order\n- cart\n', ['cart', 'search']), /does not list: search/);
+  assert.throws(() => buildOrder('## Build order\n- cart\n- cart again\n- search\n', ['cart', 'search']), /twice: cart/);
+});
+
+test('failureIds reads the feature IDs of failures.md; the notes name the area and its features', () => {
+  assert.deepEqual(failureIds('## F-002 (defect)\nx\n## f-010 (keep)\ny\n'), ['F-002', 'F-010']);
+  assert.match(areaStackNote(['cart', 'search'], { cart: 3, search: 4 }), /cart \(3 features.*Build order.*Shared contracts/s);
+  const n = areaBuildNote('cart', ['F-001', 'F-003'], ['cart', 'search'], true, new Set(['F-003']));
+  assert.match(n, /only the area "cart".*F-001, F-003/s);
+  assert.match(n, /Fix only failures listed for these features: F-003\./);
 });

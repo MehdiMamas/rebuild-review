@@ -94,6 +94,27 @@ export function featureAreas(featuresMd, spec) {
   return out;
 }
 
+// Area IDs in the order of the "Build order" section of stack.md (list items; the first area ID in each item). Every area exactly once, or it throws.
+export function buildOrder(stackMd, ids) {
+  const lines = stackMd.split('\n');
+  const at = lines.findIndex((l) => /^#{1,6}\s*build order\b/i.test(l.trim()));
+  if (at < 0) throw new Error('stack.md has no "Build order" section');
+  const order = [];
+  for (const l of lines.slice(at + 1)) {
+    if (/^#{1,6}\s/.test(l.trim())) break;
+    if (!/^\s*([-*]|\d+[.)])\s/.test(l)) continue;
+    const found = ids.find((id) => new RegExp(`(^|[^a-z0-9-])${id}($|[^a-z0-9-])`).test(l));
+    if (found) order.push(found);
+  }
+  const missing = ids.filter((id) => !order.includes(id)), twice = order.filter((id, i) => order.indexOf(id) !== i);
+  if (missing.length) throw new Error(`the Build order section does not list: ${missing.join(', ')}`);
+  if (twice.length) throw new Error(`the Build order section lists twice: ${[...new Set(twice)].join(', ')}`);
+  return order;
+}
+
+// Feature IDs under "## F-xxx (keep|defect)" headings of failures.md.
+export const failureIds = (failuresMd) => [...failuresMd.matchAll(/^##\s+(F-\d+)\b/gim)].map((m) => m[1].toUpperCase());
+
 function main(argv) {
   const [cmd, a, b] = argv;
   if (cmd === 'tree') {
