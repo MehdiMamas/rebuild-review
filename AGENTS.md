@@ -50,6 +50,31 @@ what it renders, then scores the rebuild against the original. See README.md.
 - Every run first proves the wall: a canary in `<runDir>/.canary`, a haiku child tries to read it; a hit, a sandbox that cannot start, or a child that never tried a `cat` and a Read refuses the build. After the run, any target or run folder path in the child's transcript fails it.
 - Tests: `node --test scripts/room.test.mjs` (CI, no `claude`); `node --test scripts/room.live.test.mjs` (local, calls `claude`, costs money).
 
+## Score phase (phase 1: measure, judge, compare)
+
+- Needs `project/rebuild-run.json` and `parity/parity.json`; otherwise the phase stops with a plain reason. Files: `rubric.json` (gate and weights), `scripts/score.mjs`, `prompts/{judge,skeptic,compare}.md`, `adapters/web/metrics.mjs` (LCP, CLS, bytes, heap, narrow overflow, axe-core; written by `capture.mjs` into `timings.json` and `a11y-violations.json`).
+- Every score is a comparison: a metric delta is `(original - rebuild) / max(original, rebuild)` for lower-is-better (flipped for higher), from -1 to +1, positive means the rebuild is better; a difference under the metric's `floor` (absolute, or `"10%"` of the larger side) counts as 0; a metric missing on either side is "not measured", never 0. A value is the mean of its measured deltas and its judged delta (judges' `(rebuild - original) / 10`), half each. Overall is the weighted sum, -100 to +100. Functionality is a gate (`minPassRate` 0.95 on the rebuild's parity run), reported beside the scores, never blended in.
+- Code does the arithmetic. Three blind judges (sonnet) each get `judge-<i>/A` and `/B` in a temp folder with shuffled labels (no `.git`, `README*`, `run.json`, `rebuild-run.json`, `stack.md`); the label map is written to `score/.labels.json` only after judging. Each judge writes `answer.json` in its own folder; `score.mjs check <answer.json> <judgeDir> <score/judge-N.json>` writes only the kept items to `score/judge-N.json` (dropped ones beside it as `.dropped.json`), so a judge with no checked file counts for nothing, and the first prep step clears `score/`. It drops any score whose citation is not a real file, `file:line`, or metric name for that side. Skeptics look at each judged gap of 3+ points and each metric delta of 0.5+; a refuted judged gap is removed and listed, a measured number is only annotated. `score.mjs collate` writes `score/score.json`; a compare agent writes `score/compare.md`.
+- Change weights or floors in `rubric.json` only; no code reads them as constants. Never tune them to make a fixture pass.
+- Compatibility is narrow: accessibility violations and horizontal overflow at 390 px, Chromium only. The output says "other browsers: not checked".
+- Tests: `node --test scripts/score.test.mjs`; `cd adapters/web && npm test` (check 3c prints the new timings).
+
+## Report phase
+
+- Files: `scripts/report.mjs` (`verdict`, `check-actions`, `render`), `prompts/{compare,actions}.md`, `rubric.json` key `verdict` (`adoptOverall` 15, `worseValue` -0.15, `betterValue` 0.15, from phase 1's same-against-same noise limits; never tune them to a fixture). Writes `report/index.html` and `Report.done`.
+- Code decides the verdict: `adopt` (gate passed, overall >= adoptOverall, no value delta <= worseValue), `port` (not adopt, some value delta > 0.15), else `leave`; no score is `leave`. A sonnet agent only proposes `report/actions.proposed.json` (`evidence: [{kind: metric|file|shot|feature, ref}]`); `check-actions` drops any action with a false citation (listed in `actions.dropped.json`).
+- The page is one file: no script, strict CSP, images embedded (at most 6 pairs and 8 MB, the rest counted), every string escaped. `compare.md` must use `## <value>` with `### was`, `### now`, `### should`. `parity/rounds.json` and `parity/loop-stop.txt` are optional.
+- The report is private: the skill publishes it with the Artifact tool when present and the target is not sensitive; otherwise only a `file://` link.
+- Tests: `node --test scripts/report.test.mjs`.
+
+## Score phase (phase 2: the rebuild beats the original)
+
+- Checker: `node benchmark/score-rebuild.mjs <runDir> [--out file] [--control]`. It starts the original (`run.json`) and the rebuild (`project/rebuild-run.json`) one after the other with `startApp`, runs every planted-problem check on both and prints a table: item, original, rebuild, evidence. Exit 0 only if the original has every item and the rebuild has beaten every one. `--control` checks only the original (every D, H and B item must read `present`).
+- Written from `answers.json` but black-box: controls are found by role and label, slow and failed requests are made with `page.route`; bloat (B1 to B4) is read from the source files; D1 multiplies the list response to 2000 rows with `page.route`, types 5 keystrokes into the search box at 4x CPU slowdown and compares script ms per key (present above 16 ms; gone at or under 16 ms or 50% lower than the original). If the original does not read above 16 ms under that load, D1 is `could not check` on both sides.
+- Results are `present`, `gone` or `could not check`; the last never counts as beaten. Beaten means `gone` for D and B items, `present` for H items (features that must survive).
+- Never tune the checker, `rubric.json`, tests or prompts to get a pass; an item the rebuild does not beat is reported with its cause.
+- `score.mjs blind` flips the label order for each judge after the first, so both orders occur in every run. Test: `node --test scripts/score.test.mjs`.
+
 ## Conventions
 
 - Any kind of project, not only web. Nothing outside a platform adapter may assume HTML,
@@ -63,3 +88,7 @@ what it renders, then scores the rebuild against the original. See README.md.
   the model nicely. The main one: the rebuild agent cannot read the target's source.
 - A target project is never modified. Every run writes to its own output folder.
 - No Claude or AI attribution in commits, PRs or release notes.
+
+## Size and scale (#35 step 1)
+- `node scripts/size.mjs <workDir> <runDir>` counts source lines of git-tracked files (skipping lock, vendored, generated and non-source files, all listed) and writes `<runDir>/size.json` with the budgets from `scale.json` (one unit = 20,000 lines; floors equal the old fixed limits; per-unit values are first guesses). Not yet used by the workflow. Test: `node --test scripts/size.test.mjs`.
+- `capture.mjs` takes `--max-screens` (30), `--max-buttons` (10) and `--max-har-bytes` (50 MB) and writes `golden/coverage.json`: screens reached, screens cut, buttons skipped, HAR entries dropped. `cd adapters/web && npm test` check 8 covers it.

@@ -1,6 +1,6 @@
 export const meta = {
   name: 'rebuild-review-run',
-  description: 'Rebuild a project from its behaviour and rendered output, then score the rebuild. Stub phases for now.',
+  description: 'Rebuild a project from its behaviour and rendered output, then score the rebuild.',
   whenToUse: 'Started by the rebuild-review skill. Requires args {target, runDir, pluginRoot}.',
   phases: [
     { title: 'Capture' }, { title: 'Inventory' }, { title: 'Stack' }, { title: 'Rebuild' },
@@ -160,6 +160,77 @@ A feature marked "keep" gets a test asserting the behaviour. A feature marked "d
   mustRun(merged, 'merge')
 }
 
+// ---- Score ----
+const JUDGES = 3
+const SCORE_AGENT = { model: 'sonnet', effort: 'medium' }
+
+async function runScore() {
+  const SC = `${runDir}/score`
+  const SCORE = `node ${q(`${pluginRoot}/scripts/score.mjs`)}`
+  const RUBRIC = `${pluginRoot}/rubric.json`
+  const has = await agent(`Check that both ${runDir}/project/rebuild-run.json and ${runDir}/parity/parity.json exist. Return ok true if both do, otherwise ok false with detail naming the missing file(s). Change nothing.`, { ...CHEAP, label: 'score-inputs', phase: 'Score', schema: RUN_RESULT })
+  if (!has || !has.ok) return { stopped: 'Score', reason: (has && has.detail) || 'there is no rebuild or parity result to score yet' }
+  const mustRun = (r, what) => { if (!r || !r.ok) throw new Error(`Score: ${what} failed: ${(r && r.detail) || 'agent died'}`) }
+
+  // 1. Measure both sides, then make the blind copies. Labels stay in this script's memory until judging ends.
+  const prep = await agent(`Run these in order, stopping at the first error:
+(1) rm -rf ${q(SC)} && mkdir -p ${q(SC)}
+(2) ${SCORE} measure "$(${SCORE} source ${q(runDir)} original)" ${q(`${runDir}/golden`)} ${q(`${SC}/original.json`)} --run ${q(`${runDir}/run.json`)}
+(3) ${SCORE} measure "$(${SCORE} source ${q(runDir)} rebuild)" ${q(`${runDir}/golden-rebuild`)} ${q(`${SC}/rebuild.json`)} --run ${q(`${runDir}/project/rebuild-run.json`)}
+(4) ${SCORE} blind ${q(runDir)} ${JUDGES}
+Step 4 prints one line of JSON {folder, judges:[{A,B},...]}. Return ok true with folder and judges copied exactly from it. If a step failed return ok false with the error as detail. Do not write the label map to any file.`,
+  { ...CHEAP, label: 'score-measure-blind', phase: 'Score', schema: { type: 'object', required: ['ok'], properties: { ok: { type: 'boolean' }, detail: { type: 'string' }, folder: { type: 'string' }, judges: { type: 'array', items: { type: 'object', required: ['A', 'B'], properties: { A: { type: 'string' }, B: { type: 'string' } } } } } } })
+  mustRun(prep, 'measure and blind')
+  const { folder, judges } = prep
+
+  // 2. Blind judges in parallel, each followed by the citation check.
+  const judged = await parallel(judges.map((_, i) => async () => {
+    const dir = `${folder}/judge-${i}`
+    const out = `${SC}/judge-${i}.json`
+    const j = await agent(`Read ${pluginRoot}/prompts/judge.md and follow it. Your folder is ${dir} (read nothing outside it, except ${RUBRIC} for the questions). Write your answer to ${dir}/answer.json.`, { ...SCORE_AGENT, label: `judge-${i}`, phase: 'Score' })
+    if (j === null) return null
+    return agent(`Run exactly: ${SCORE} check ${q(`${dir}/answer.json`)} ${q(dir)} ${q(out)} . Return ok true with its output as detail if it exited 0, otherwise ok false with the error. Change nothing else.`, { ...CHEAP, label: `check-${i}`, phase: 'Score', schema: RUN_RESULT })
+  }))
+  if (judged.every(r => !r || !r.ok)) throw new Error('Score: no judge produced a usable answer')
+
+  // 3. Judging is over: write the label map, then the skeptics look at each large gap.
+  mustRun(await agent(`Run exactly this one command (the JSON is single-quoted, copy it character for character): ${SCORE} labels ${q(runDir)} ${q(folder)} '${JSON.stringify({ judges })}' . Return ok true with its output as detail if it exited 0, otherwise ok false with the error. Change nothing else.`, { ...CHEAP, label: 'write-labels', phase: 'Score', schema: RUN_RESULT }), 'writing the label map')
+  const gapList = await agent(`Run exactly: ${SCORE} gaps ${q(runDir)} ${q(RUBRIC)} . It prints a JSON list. Return ok true and gaps as that list (each entry copied exactly, as a JSON string in "json"), or ok false with the error as detail. Change nothing else.`,
+    { ...CHEAP, label: 'score-gaps', phase: 'Score', schema: { type: 'object', required: ['ok'], properties: { ok: { type: 'boolean' }, detail: { type: 'string' }, gaps: { type: 'array', items: { type: 'object', required: ['id', 'json'], properties: { id: { type: 'string' }, json: { type: 'string' } } } } } } })
+  mustRun(gapList, 'gaps')
+  await parallel((gapList.gaps || []).map(g => () => agent(`Read ${pluginRoot}/prompts/skeptic.md and follow it. The gap: ${g.json}. Its id is ${g.id}. Evidence: for ids starting with j<N>-, the judge's folder is ${folder}/judge-<N>/ (the label map is in ${SC}/.labels.json); for ids starting with m-, see ${SC}/original.json, ${SC}/rebuild.json, ${runDir}/golden and ${runDir}/golden-rebuild. Write your answer to ${SC}/skeptic/${g.id}.json (mkdir -p the folder).`, { ...SCORE_AGENT, label: `skeptic-${g.id}`, phase: 'Score' })))
+
+  // 4. The arithmetic is code.
+  mustRun(await agent(`Run exactly: ${SCORE} collate ${q(runDir)} ${q(RUBRIC)} . Return ok true with its output as detail if it exited 0, otherwise ok false with the error. Change nothing else.`, { ...CHEAP, label: 'collate', phase: 'Score', schema: RUN_RESULT }), 'collate')
+
+  // 5. Three-way compare.
+  const cmp = await agent(`Read ${pluginRoot}/prompts/compare.md and follow it. The run folder is ${runDir}; write ${SC}/compare.md.`, { ...SCORE_AGENT, label: 'compare', phase: 'Score' })
+  if (!cmp) throw new Error('Score: the compare agent died')
+
+  // 6. The judges' folder names no version once the map is known, but it is temporary: delete it.
+  await agent(`Delete the folder ${folder} (rm -rf, only if its name contains rr-judges-). Then write ${runDir}/Score.done containing the word done. Touch nothing else.`, { ...CHEAP, label: 'Score.done', phase: 'Score' })
+}
+
+// ---- Report ----
+const REPORT = `node ${q(`${pluginRoot}/scripts/report.mjs`)}`
+const reportStep = (cmd, label) => agent(`Run exactly: ${cmd} . Return ok true with its output as detail if it exited 0, otherwise ok false with the error. Change nothing else.`, { ...CHEAP, label, phase: 'Report', schema: RUN_RESULT })
+
+async function runReport() {
+  const v = await reportStep(`${REPORT} verdict ${q(runDir)}`, 'verdict')
+  if (!v || !v.ok) throw new Error(`Report: verdict failed: ${(v && v.detail) || 'agent died'}`)
+  await agent(`Read ${pluginRoot}/prompts/actions.md and follow it. The run folder is ${runDir}; write ${runDir}/report/actions.proposed.json (mkdir -p the folder). The verdict, decided by code, is: ${v.detail}. If score/score.json does not exist, write an empty list [].`, { model: 'sonnet', effort: 'medium', label: 'actions', phase: 'Report' })
+  const chk = await reportStep(`${REPORT} check-actions ${q(runDir)}`, 'check-actions')
+  if (!chk || !chk.ok) throw new Error(`Report: check-actions failed: ${(chk && chk.detail) || 'agent died'}`)
+  const r = await reportStep(`${REPORT} render ${q(runDir)}`, 'render')
+  if (!r || !r.ok) throw new Error(`Report: render failed: ${(r && r.detail) || 'agent died'}`)
+  await agent(`If ${runDir}/report/index.html exists, write ${runDir}/Report.done containing the word done. Otherwise write nothing. Touch nothing else.`, { ...CHEAP, label: 'Report.done', phase: 'Report' })
+}
+
+// A stopped run still gets the leave page. No actions agent and no Report.done, so a rerun continues; a failure here never hides the stop reason.
+async function stoppedReport(phase, reason) {
+  try { await reportStep(`${REPORT} render ${q(runDir)} --stopped ${q(`${phase}: ${reason}`)}`, 'render-stopped') } catch (e) {}
+}
+
 const ran = []
 for (const phase of PHASES) {
   if (done.has(`${phase}.done`)) continue
@@ -180,7 +251,7 @@ for (const phase of PHASES) {
   if (phase === 'Inventory') { await runInventory(); ran.push(phase); continue }
   if (phase === 'Parity') {
     const p = await runParity()
-    if (p && p.stopped) return { ran, stopped: p.stopped, reason: p.reason }
+    if (p && p.stopped) { await stoppedReport(p.stopped, p.reason); return { ran, stopped: p.stopped, reason: p.reason } }
     ran.push(phase)
     continue
   }
@@ -191,11 +262,18 @@ for (const phase of PHASES) {
       `Run this command with the Bash tool and run_in_background true, then wait until it exits (do not poll in a loop; check once it has finished): node ${JSON.stringify(pluginRoot + '/scripts/room.mjs')} ${mode} --target ${JSON.stringify(target)} --run-dir ${JSON.stringify(runDir)}\nWhen it exits, its last lines are "RESULT <file>" and a JSON line. Read that result file and return ok and reason from it. Change nothing else, and never read anything under ${target} or ${runDir}/work.`,
       { model: 'sonnet', effort: 'low', label: phase, phase, schema: { type: 'object', required: ['ok'], properties: { ok: { type: 'boolean' }, reason: { type: 'string' } } } },
     )
-    if (!r || !r.ok) return { ran, stopped: phase, reason: (r && r.reason) || 'room agent died' }
+    if (!r || !r.ok) { const reason = (r && r.reason) || 'room agent died'; await stoppedReport(phase, reason); return { ran, stopped: phase, reason } }
     await agent(`Write the file ${runDir}/${phase}.done containing the word done. Touch nothing else.`, { ...CHEAP, label: `${phase}.done`, phase })
     ran.push(phase)
     continue
   }
+  if (phase === 'Score') {
+    const sc = await runScore()
+    if (sc && sc.stopped) { await stoppedReport(sc.stopped, sc.reason); return { ran, stopped: sc.stopped, reason: sc.reason } }
+    ran.push(phase)
+    continue
+  }
+  if (phase === 'Report') { await runReport(); ran.push(phase); continue }
   await agent(
     `Stub for the ${phase} phase. Write a file at ${runDir}/${phase}.done containing the word done. Touch nothing else. The target ${target} must not be modified.`,
     { ...CHEAP, label: phase, phase },

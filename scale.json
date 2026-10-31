@@ -1,0 +1,6 @@
+{
+  "note": "First guesses. Floors equal the fixed limits before scaling, so a small app gets the same limits. Per-unit values are placeholders until proof runs on real apps replace them (#35 step 6).",
+  "unitLines": 20000,
+  "floors": { "buildUsd": 25, "stackUsd": 3, "loopUsd": 50, "screens": 30, "buttons": 10 },
+  "perUnit": { "buildUsd": 10, "loopUsd": 10, "screens": 10, "buttons": 2, "costLowUsd": 5, "costHighUsd": 20 }
+}
