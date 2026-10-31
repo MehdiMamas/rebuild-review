@@ -55,7 +55,7 @@ async function open(c, s, opts = {}) {
     const t = await c.openScreen(s, vp ? { width: vp.width, height: vp.height } : {});
     page = t.page; rec = t.rec; faults = t.faults; go = async () => { await t.go(); await page.evaluate(WATCH); };
     // The probes watch requests on the whole context, so they also see a screen that lives in another window.
-    context = { newCDPSession: (p) => page.context().newCDPSession(p), close: t.close };
+    context = { newCDPSession: () => t.page.context().newCDPSession(t.page), close: t.close };
     opts.track?.add(context);
     page = new Proxy({}, { get: (_, k) => { const cur = t.page; const v = cur[k]; return typeof v === 'function' ? v.bind(cur) : v; } });
     ctxEvents = t.page.context();
