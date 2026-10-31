@@ -90,6 +90,7 @@ what it renders, then scores the rebuild against the original. See README.md.
 ## Workflow syntax
 
 - `workflows/rebuild-review.js` is one script of long template literals, so a plain backtick in a prompt breaks every run. `node --test scripts/workflow-parse.test.mjs` compiles it; CI runs that.
+- Every `run_in_background true` in a prompt also says `timeout 7200000`: the Bash default of 10 minutes kills a build. The same test checks it.
 
 ## Conventions
 

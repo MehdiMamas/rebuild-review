@@ -11,3 +11,11 @@ test('the workflow compiles', () => {
   const body = readFileSync(file, 'utf8').replace(/^export const meta/m, 'const meta')
   assert.doesNotThrow(() => new AsyncFunction(body))
 })
+
+test('every background command asks for the longest time limit', () => {
+  // The Bash tool stops a background command after 10 minutes unless told otherwise; a build takes longer.
+  const src = readFileSync(file, 'utf8')
+  const uses = src.split('run_in_background true').length - 1
+  assert.ok(uses > 0)
+  assert.equal(src.split('run_in_background true and timeout 7200000').length - 1, uses)
+})
