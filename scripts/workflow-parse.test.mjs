@@ -19,3 +19,10 @@ test('every background command asks for the longest time limit', () => {
   assert.ok(uses > 0)
   assert.equal(src.split('run_in_background true and timeout 7200000').length - 1, uses)
 })
+
+test('every prompt that runs capture or parity asks for the longest time limit', () => {
+  // A capture on a real app takes far more than the 10 minutes a background command gets by default.
+  const lines = readFileSync(file, 'utf8').split('\n').filter((l) => /capture\.mjs|node <adapter> --app|parity\.mjs --app/.test(l))
+  assert.ok(lines.length >= 3)
+  for (const l of lines) assert.ok(l.includes('${LONG}'), l.slice(0, 120))
+})
