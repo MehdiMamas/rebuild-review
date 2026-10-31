@@ -24,3 +24,15 @@ for (const [name, args] of [
   ['bad budget', ['--base-url', 'http://127.0.0.1:1', '--routes', '/', '--budget-seconds', 'x']],
   ['missing storage state', ['--base-url', 'http://127.0.0.1:1', '--routes', '/', '--storage-state', '/nonexistent.json']],
 ]) test(`argument error exits 3: ${name}`, () => { const r = run(...args); assert.strictEqual(r.status, 3); assert.match(r.stderr, /^error:/); });
+
+import { isDataRequest } from '../context.mjs';
+const fakeReq = (headers = {}, url = 'http://localhost:3000/api/x', type = 'fetch') => ({ resourceType: () => type, headers: () => headers, url: () => url });
+test('a plain fetch is a data request', () => assert.strictEqual(isDataRequest(fakeReq()), true));
+test('an xhr is a data request', () => assert.strictEqual(isDataRequest(fakeReq({}, undefined, 'xhr')), true));
+test('a document is not a data request', () => assert.strictEqual(isDataRequest(fakeReq({}, undefined, 'document')), false));
+test('sec-purpose prefetch is not data', () => assert.strictEqual(isDataRequest(fakeReq({ 'sec-purpose': 'prefetch' })), false));
+test('purpose prefetch is not data', () => assert.strictEqual(isDataRequest(fakeReq({ purpose: 'prefetch' })), false));
+test('next-router-prefetch is not data', () => assert.strictEqual(isDataRequest(fakeReq({ 'next-router-prefetch': '1' })), false));
+test('rsc without next-action is not data', () => assert.strictEqual(isDataRequest(fakeReq({ rsc: '1' })), false));
+test('rsc with next-action stays data', () => assert.strictEqual(isDataRequest(fakeReq({ rsc: '1', 'next-action': 'abc' })), true));
+test('/_next/data/ path is not data', () => assert.strictEqual(isDataRequest(fakeReq({}, 'http://localhost:3000/_next/data/x/a.json')), false));
