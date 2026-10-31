@@ -11,6 +11,6 @@ Run a rebuild review of the target path in `$ARGUMENTS`.
 3. Make the run folder `<target>-rebuild-review/<run-id>/` next to the target (not inside it): `mkdir -p`. Use absolute paths.
 4. Call the Workflow tool: `Workflow({ name: "rebuild-review:rebuild-review-run", args: { target, runDir, pluginRoot: "${CLAUDE_PLUGIN_ROOT}" } })` (args must be an object, never a string), with `target` and `runDir` as absolute paths. To resume an earlier run, pass that run's folder as `runDir`.
 5. When the workflow finishes, `<runDir>/report/index.html` is the report. If the Artifact tool exists and the user did not call the target sensitive, publish that file privately with it. Otherwise (no Artifact tool, or the target is sensitive because screenshots can show its data) never publish: give the `file://` link to the file.
-6. Reply with the verdict first (adopt, port or leave, and its one-line why), then the link, then the workflow result.
+6. Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/confidence.mjs" <runDir>`; it prints the confidence percentage and the part that limits it. Reply with the verdict and the percentage on the first line (for example `adopt, 54% confident, limited by track record`), then the verdict's one-line why, then the link, then the workflow result. If it prints `not measured`, say so instead of a number.
 
 Never modify the target.

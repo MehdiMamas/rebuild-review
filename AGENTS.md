@@ -74,6 +74,13 @@ what it renders, then scores the rebuild against the original. See README.md.
 - Never tune the checker, `rubric.json`, tests or prompts to get a pass; an item the rebuild does not beat is reported with its cause.
 - `score.mjs blind` flips the label order for each judge after the first, so both orders occur in every run. Test: `node --test scripts/score.test.mjs`.
 
+## Confidence
+
+- `node scripts/confidence.mjs <runDir>` writes `score/confidence.json`; `report.mjs render` computes the same and shows it in the verdict section, with a table of the parts and each part's inputs, and a percentage for each value. Settings are in `rubric.json` key `confidence` (first guesses, never tune them to a fixture).
+- The number is the weakest of four parts, each 0 to 100: **coverage** (features compared out of found, metrics measured out of expected, screens reached out of seen when `golden/coverage.json` exists, multiplied), **agreement** (spread of the judges' per-judge mean deltas in `values.<name>.judges`, share of judged gaps refuted, share of judge items dropped), **margin** (distance of overall and each value from the verdict thresholds in units of noise; on a threshold reads about 50), **track record** (Wilson lower bound of the share of right verdicts in `benchmark/calibration.json`, so few runs give a low number). The report names the part that set it. No score reads "not measured". A target with more source lines than the biggest calibrated run is capped and the page says so.
+- Record a known-answer run: after Score, `node benchmark/calibrate.mjs <runDir> --expect adopt|port|leave --kind same|worse|fixed`. Write the expected verdict on the issue first. A wrong verdict stays in the file; never change thresholds, prompts, weights, tests or the fixture to fix it.
+- It is not a calibrated probability. Reading it: a low number with "track record" as the limit means the tool has few checked runs, not that this verdict looks bad. Tests: `node --test scripts/confidence.test.mjs`.
+
 ## Conventions
 
 - Any kind of project, not only web. Nothing outside a platform adapter may assume HTML,
