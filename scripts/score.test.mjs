@@ -200,3 +200,25 @@ test('a judge with no checked file contributes nothing, and check writes only to
   assert.equal(JSON.parse(fs.readFileSync(path.join(d, 'score/judge-0.dropped.json'), 'utf8')).length, 1);
   assert.equal(JSON.parse(fs.readFileSync(path.join(j, 'answer.json'), 'utf8')).length, 1);
 });
+
+test('collate over two areas keeps the per-judge deltas, and confidence agreement is not 0 on it', async () => {
+  const { agreement } = await import('./confidence.mjs');
+  const d = tmp();
+  put(path.join(d, 'work/a/x.js'), 'one\ntwo\nthree\n');
+  put(path.join(d, 'work/b/y.js'), 'one\n');
+  execFileSync('git', ['init', '-q'], { cwd: path.join(d, 'work') });
+  execFileSync('git', ['add', '.'], { cwd: path.join(d, 'work') });
+  put(path.join(d, 'areas.json'), { areas: [{ id: 'a', paths: ['a'] }, { id: 'b', paths: ['b'] }] });
+  put(path.join(d, 'score/original.json'), { lcp: 1000 });
+  put(path.join(d, 'score/rebuild.json'), { lcp: 1000 });
+  put(path.join(d, 'score/.labels.json'), { judges: [{ A: 'original', B: 'rebuild' }, { A: 'original', B: 'rebuild' }] });
+  const item = (b) => [{ value: 'ux', question: 'q', A: { score: 5, cite: 'x' }, B: { score: b, cite: 'x' } }];
+  for (const [area, scores] of [['a', [7, 8]], ['b', [6, 9]]]) scores.forEach((s, j) => put(path.join(d, `score/areas/${area}/judge-${j}.json`), item(s)));
+  const r = collate(d, rubricFile);
+  assert.equal(r.areas.length, 2);
+  // judge 0: a 0.2 (weight 0.75), b 0.1 (weight 0.25) -> 0.175; judge 1: a 0.3, b 0.4 -> 0.325
+  assert.deepEqual(r.values.ux.judges, [0.175, 0.325]);
+  const a = agreement(d, rubric);
+  assert.ok(a.inputs.judgeSpread && 'ux' in a.inputs.judgeSpread, JSON.stringify(a.inputs));
+  assert.ok(a.percent > 0, `agreement was ${a.percent}`);
+});

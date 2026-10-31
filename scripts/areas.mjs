@@ -5,6 +5,7 @@
 //   node areas.mjs renumber <runDir>               joins inventory-areas/<id>/features.md into features.md with global F-xxx and [area: id] tags
 //   node areas.mjs states <runDir>                 joins inventory-areas/<id>/states.json into inventory/states.json
 //   node areas.mjs ids <runDir> <id>               prints the feature IDs of one area
+//   node areas.mjs coverage <runDir>              writes <runDir>/coverage.json: what the run covered per area, and what it did not reach
 //   node areas.mjs untested <runDir>               joins parity/untested-<id>.md into parity/untested.md
 import fs from 'node:fs';
 import path from 'node:path';
@@ -115,6 +116,48 @@ export function buildOrder(stackMd, ids) {
 // Feature IDs under "## F-xxx (keep|defect)" headings of failures.md.
 export const failureIds = (failuresMd) => [...failuresMd.matchAll(/^##\s+(F-\d+)\b/gim)].map((m) => m[1].toUpperCase());
 
+const tryJson = (f) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
+
+// What the run covered, per area, and everything it did not reach. Counts only; the reasons are the files the run already wrote.
+export function coverage(runDir) {
+  const spec = tryJson(path.join(runDir, 'areas.json')) || SINGLE;
+  const v = validate(spec, scan(path.join(runDir, 'work')).counted);
+  const featuresMd = (() => { try { return fs.readFileSync(path.join(runDir, 'features.md'), 'utf8'); } catch { return ''; } })();
+  const of = featuresMd ? featureAreas(featuresMd, spec) : {};
+  const parity = tryJson(path.join(runDir, 'parity', 'parity.json')) || [];
+  const byId = Object.fromEntries(parity.map((p) => [String(p.feature).toUpperCase(), p]));
+  const done = tryJson(path.join(runDir, 'rebuild', 'areas-done.json'));
+  const built = spec.areas.length > 1 ? !!(done) : fs.existsSync(path.join(runDir, 'project'));
+  const areas = v.areas.map((a) => {
+    const ids = Object.keys(of).filter((f) => of[f] === a.id);
+    const rows = ids.map((f) => byId[f]).filter(Boolean);
+    return {
+      id: a.id, files: a.files, lines: a.lines,
+      features: ids.length,
+      tested: rows.filter((r) => r.original !== 'not run').length,
+      rebuilt: rows.filter((r) => r.rebuild !== 'not run').length,
+      passing: rows.filter((r) => r.rebuild === 'pass').length,
+      builtArea: spec.areas.length > 1 ? !!(done && done[a.id]) : built,
+    };
+  });
+  const cov = tryJson(path.join(runDir, 'golden', 'coverage.json')) || {};
+  const notReached = [
+    ...areas.filter((a) => !a.builtArea).map((a) => `area ${a.id} was not rebuilt`),
+    ...areas.filter((a) => a.features && a.tested < a.features).map((a) => `area ${a.id}: ${a.features - a.tested} of ${a.features} features have no test`),
+    ...(cov.screensCut || []).map((x) => `screen not captured: ${typeof x === 'string' ? x : JSON.stringify(x)}`),
+    ...(cov.buttonsSkipped && cov.buttonsSkipped.length ? [`${cov.buttonsSkipped.length} buttons not pressed`] : []),
+    ...(cov.harEntriesSkipped ? [`${cov.harEntriesSkipped} network entries dropped`] : []),
+  ];
+  const out = {
+    areas, excluded: v.excluded,
+    totals: Object.fromEntries(['files', 'lines', 'features', 'tested', 'rebuilt', 'passing'].map((k) => [k, areas.reduce((n, a) => n + a[k], 0)])),
+    screens: { reached: (cov.screensReached || []).length, cut: (cov.screensCut || []).length },
+    notReached,
+  };
+  fs.writeFileSync(path.join(runDir, 'coverage.json'), JSON.stringify(out, null, 2));
+  return out;
+}
+
 function main(argv) {
   const [cmd, a, b] = argv;
   if (cmd === 'tree') {
@@ -162,7 +205,12 @@ function main(argv) {
     console.log(`${parts.length} files`);
     return 0;
   }
-  console.error('usage: areas.mjs tree|init|check|renumber|states|ids|untested ...');
+  if (cmd === 'coverage') {
+    const c = coverage(a);
+    console.log(`${c.areas.length} areas, ${c.totals.features} features, ${c.totals.tested} tested, ${c.notReached.length} not reached`);
+    return 0;
+  }
+  console.error('usage: areas.mjs tree|init|check|renumber|states|ids|untested|coverage ...');
   return 2;
 }
 

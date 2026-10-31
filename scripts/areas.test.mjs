@@ -4,7 +4,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { validate, renumber, featureAreas, buildOrder, failureIds, SINGLE } from './areas.mjs';
+import { coverage, validate, renumber, featureAreas, buildOrder, failureIds, SINGLE } from './areas.mjs';
+import { weigh, collate, gaps, areaWeights } from './score.mjs';
 import { areaStackNote, areaBuildNote } from './room.mjs';
 
 const CLI = new URL('./areas.mjs', import.meta.url).pathname;
@@ -112,4 +113,69 @@ test('failureIds reads the feature IDs of failures.md; the notes name the area a
   const n = areaBuildNote('cart', ['F-001', 'F-003'], ['cart', 'search'], true, new Set(['F-003']));
   assert.match(n, /only the area "cart".*F-001, F-003/s);
   assert.match(n, /Fix only failures listed for these features: F-003\./);
+});
+
+// Fixture for step 5: the 450,000-line app through size, areas, parity and score; every area must show up in coverage and in the score.
+function scoredRun() {
+  const run = bigRun();
+  const w = (f, v) => { fs.mkdirSync(path.dirname(path.join(run, f)), { recursive: true }); fs.writeFileSync(path.join(run, f), typeof v === 'string' ? v : JSON.stringify(v)); };
+  w('areas.json', { areas: [{ id: 'cart', paths: ['cart'] }, { id: 'search', paths: ['search'] }, { id: 'admin', paths: ['admin'] }], exclusions: [{ path: 'tools', reason: 'build helper' }, { path: 'README.md', reason: 'docs' }] });
+  w('features.md', 'F-001 keep. [area: cart] a\nF-002 defect. [area: cart] b\nF-003 keep. [area: search] c\nF-004 keep. [area: admin] d\n');
+  w('parity/parity.json', [
+    { feature: 'F-001', kind: 'keep', original: 'pass', rebuild: 'pass', note: '' },
+    { feature: 'F-002', kind: 'defect', original: 'fail', rebuild: 'pass', note: '' },
+    { feature: 'F-003', kind: 'keep', original: 'pass', rebuild: 'fail', note: '' },
+    { feature: 'F-004', kind: 'keep', original: 'not run', rebuild: 'not run', note: 'hidden' },
+  ]);
+  w('golden/coverage.json', { screensReached: ['/a', '/b'], screensCut: ['/c'], buttonsSkipped: [], harEntriesSkipped: 0 });
+  w('rebuild/areas-done.json', { cart: { costUsd: 1 }, search: { costUsd: 1 } });
+  return run;
+}
+
+test('coverage shows every area, the excluded list and what was not reached', () => {
+  const run = scoredRun();
+  const c = coverage(run);
+  assert.deepEqual(c.areas.map((a) => a.id), ['cart', 'search', 'admin']);
+  assert.deepEqual(c.areas.map((a) => [a.features, a.tested, a.rebuilt, a.passing]), [[2, 2, 2, 2], [1, 1, 1, 0], [1, 0, 0, 0]]);
+  assert.deepEqual(c.excluded.map((x) => x.path), ['tools', 'README.md']);
+  assert.equal(c.screens.cut, 1);
+  assert.ok(c.notReached.includes('area admin was not rebuilt'));
+  assert.ok(c.notReached.includes('area admin: 1 of 1 features have no test'));
+  assert.ok(fs.existsSync(path.join(run, 'coverage.json')));
+  assert.equal(cli('coverage', run).status, 0);
+});
+
+test('weigh: one area is unchanged; several are weighted by counted lines; collate weighs the areas', () => {
+  const part = (delta, overall, count) => ({ overall, values: { ux: { delta, measured: [], judged: { delta, count }, notMeasured: [] } } });
+  const one = part(0.2, 20, 3);
+  assert.deepEqual(weigh([{ weight: 1, ...one }]), { values: one.values, overall: 20 });
+  const two = weigh([{ weight: 0.75, ...part(0.4, 40, 2) }, { weight: 0.25, ...part(-0.2, -20, 2) }]);
+  assert.equal(two.overall, 25);
+  assert.equal(two.values.ux.delta, 0.25);
+  assert.equal(two.values.ux.judged.count, 4);
+
+  const run = scoredRun();
+  const w = areaWeights(run, ['cart', 'search', 'admin']);
+  assert.ok(Math.abs(w.cart.weight - 1 / 3) < 1e-6 && w.cart.lines === 150000);
+  const put = (f, v) => { fs.mkdirSync(path.dirname(path.join(run, f)), { recursive: true }); fs.writeFileSync(path.join(run, f), JSON.stringify(v)); };
+  put('score/original.json', { lines: 450000 }); put('score/rebuild.json', { lines: 450000 });
+  put('score/.labels.json', { judges: [{ A: 'original', B: 'rebuild' }] });
+  const item = (b) => [{ value: 'ux', question: 'q', A: { score: 5, cite: 'x' }, B: { score: b, cite: 'x' } }];
+  put('score/areas/cart/judge-0.json', item(9)); put('score/areas/search/judge-0.json', item(5)); put('score/areas/admin/judge-0.json', item(1));
+  const r = collate(run, new URL('../rubric.json', import.meta.url).pathname);
+  assert.deepEqual(r.areas.map((a) => a.id), ['cart', 'search', 'admin']);
+  assert.deepEqual(r.areas.map((a) => a.values.ux), [0.4, 0, -0.4]);
+  assert.equal(r.values.ux.delta, 0);
+  assert.ok(gaps(run, new URL('../rubric.json', import.meta.url).pathname).some((g) => g.id === 'cart.j0-0'));
+});
+
+test('the report page has a Coverage section listing every area and the excluded paths', async () => {
+  const { render } = await import('./report.mjs');
+  const run = scoredRun();
+  coverage(run);
+  const html = render(run);
+  assert.match(html, /<h2>Coverage<\/h2>/);
+  for (const id of ['cart', 'search', 'admin']) assert.ok(html.includes(`<td>${id}</td>`));
+  assert.match(html, /build helper/);
+  assert.match(html, /area admin was not rebuilt/);
 });
