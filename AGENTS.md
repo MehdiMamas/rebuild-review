@@ -87,6 +87,10 @@ what it renders, then scores the rebuild against the original. See README.md.
 - `run.json` may hold `env` (object of stand-in settings, never real secrets). `startApp` starts the app with `{...process.env, ...run.env, PORT}`. `scripts/room.mjs` copies `env` into `project/rebuild-run.json` right after the build is delivered (`copyEnv`; nothing is added when `run.json` has none) and removes it from the copy the builder gets on a `--failures` run, so the builder never sees it. Values are never printed or put in the report. Tests: `node --test scripts/app-env.test.mjs scripts/room.test.mjs`.
 - Prompt rules in `workflows/rebuild-review.js` (asked, not enforced): the merge step lists docs-only items under `## Not built (from the docs)` as bullets without an F-id (no new kind; `kinds()` ignores them); a defect about what the running app does must record what was done and seen, and the critic repeats it once; the parity test writer asserts meaning not wording, does not assert browser behaviour, and stays inside the feature's text.
 
+## Workflow syntax
+
+- `workflows/rebuild-review.js` is one script of long template literals, so a plain backtick in a prompt breaks every run. `node --test scripts/workflow-parse.test.mjs` compiles it; CI runs that.
+
 ## Conventions
 
 - Any kind of project, not only web. Nothing outside a platform adapter may assume HTML,
