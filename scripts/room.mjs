@@ -216,6 +216,16 @@ export async function fixStack({ check, ask, tries = 2 }) {
   return problems;
 }
 
+// The child is inside the wall: a "copied from" problem names a source file and quotes it, so only the line problems reach it.
+export function stackFixPrompt(problems) {
+  const lines = problems.filter((p) => p.startsWith('line ')).slice(0, 10);
+  const copied = problems.some((p) => !p.startsWith('line '));
+  return 'stack.md in this folder was not accepted. Rewrite that file and nothing else.\n'
+    + (lines.length ? 'These lines failed the check:\n- ' + lines.join('\n- ') + '\n' : '')
+    + (copied ? 'Some of its wording matches the original project too closely: use your own words throughout.\n' : '')
+    + '\nName libraries without a file ending (write Day, not Day.js) and use no file names.';
+}
+
 // ---- CLI ----
 // run.json's optional "env" (stand-in settings) is copied into the delivered rebuild-run.json so the rebuild starts like the original. Values are never printed.
 export function copyEnv(runDir) {
@@ -286,10 +296,7 @@ export async function main(argv) {
         check: () => checkText(fs.readFileSync(path.join(room, 'stack.md'), 'utf8'), srcTexts),
         ask: async (problems, i) => {
           const tr = path.join(dir, `${mode}-${n}.fix-${i}.jsonl`);
-          const fixPrompt = 'input/stack.md was not accepted. Rewrite stack.md in the room folder. These lines failed the check:\n- '
-            + problems.slice(0, 10).join('\n- ')
-            + '\n\nName libraries without a file ending (write Day, not Day.js) and use no file names.';
-          const fr = await runChild({ room, prompt: fixPrompt, model: MODEL.stack, maxBudgetUsd: BUDGET_USD.stack, transcriptPath: tr });
+          const fr = await runChild({ room, prompt: stackFixPrompt(problems), model: MODEL.stack, maxBudgetUsd: BUDGET_USD.stack, transcriptPath: tr });
           result.costUsd += fr.costUsd;
           const h = scanTranscript(tr, scanPaths(runDir, target));
           if (h.length) throw new Error(`transcript names a forbidden path (${h[0].forbidden})`);

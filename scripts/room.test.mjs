@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { filterGolden, prepareRoom, scanTranscript, wallTried, cloneProject, copyEnv, denyList, writeSettings, fixStack } from './room.mjs';
+import { filterGolden, prepareRoom, scanTranscript, wallTried, cloneProject, copyEnv, denyList, writeSettings, fixStack, stackFixPrompt } from './room.mjs';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'room-test-'));
 
@@ -198,4 +198,11 @@ test('fixStack fails after two tries with the problems returned', async () => {
   const left = await fixStack({ check: () => ['Day.js'], ask: async () => { asked++; } });
   assert.deepEqual(left, ['Day.js']);
   assert.equal(asked, 2);
+});
+
+test('stackFixPrompt never passes a source file name or quote to the child', () => {
+  const prompt = stackFixPrompt(['line 47: source file path', 'copied from src/secret.ts: "a run of forty characters from the source"']);
+  assert.match(prompt, /line 47: source file path/);
+  assert.match(prompt, /own words/);
+  assert.doesNotMatch(prompt, /secret|forty characters/);
 });
