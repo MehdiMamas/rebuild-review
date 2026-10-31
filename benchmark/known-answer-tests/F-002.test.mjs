@@ -1,4 +1,4 @@
-// Known-answer test H2: task titles are trimmed before they are stored. Run by adapters/web/parity.mjs with APP_URL set.
+// Known-answer test F-002 (D2): a settings field keeps focus while typing. Run by adapters/web/parity.mjs with APP_URL set.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -16,13 +16,11 @@ async function withPage(fn, query = '') {
 }
 const rows = (page) => page.waitForSelector('[data-testid=row]');
 
-test("F-H2 task titles are trimmed before they are stored", async () => {
+test("F-002 D2 a settings field keeps focus while typing", async () => {
  await withPage(async (page) => {
-  await rows(page);
-  await page.fill('#new-task', '  padded  ');
-  await page.press('#new-task', 'Enter');
-  await sleep(500);
-  const res = await (await fetch(new URL('/api/tasks?q=padded', APP))).json();
-  assert.ok(res.items.length > 0 && res.items.at(-1).title === 'padded', JSON.stringify(res.items.at(-1)));
+  await page.locator('#field-name').first().click();
+  await page.keyboard.type('xyz');
+  const active = await page.evaluate(() => document.activeElement.id);
+  assert.equal(active, 'field-name', 'focus after typing');
  });
 });

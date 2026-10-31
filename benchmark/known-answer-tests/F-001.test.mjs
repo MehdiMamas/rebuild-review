@@ -1,4 +1,4 @@
-// Known-answer test D2: a settings field keeps focus while typing. Run by adapters/web/parity.mjs with APP_URL set.
+// Known-answer test F-001 (D1): typing in the search box does not redraw every row. Run by adapters/web/parity.mjs with APP_URL set.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -16,11 +16,12 @@ async function withPage(fn, query = '') {
 }
 const rows = (page) => page.waitForSelector('[data-testid=row]');
 
-test("F-D2 a settings field keeps focus while typing", async () => {
+test("F-001 D1 typing in the search box does not redraw every row", async () => {
  await withPage(async (page) => {
-  await page.locator('#field-name').first().click();
-  await page.keyboard.type('xyz');
-  const active = await page.evaluate(() => document.activeElement.id);
-  assert.equal(active, 'field-name', 'focus after typing');
+  await rows(page);
+  const before = await page.evaluate(() => window.__renders);
+  await page.type('#search', 'z');
+  const after = await page.evaluate(() => window.__renders);
+  assert.ok(after - before < 10, `rows redrawn by one keystroke: ${after - before}`);
  });
 });

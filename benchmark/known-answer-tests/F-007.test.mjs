@@ -1,4 +1,4 @@
-// Known-answer test D7: a failed save shows an error. Run by adapters/web/parity.mjs with APP_URL set.
+// Known-answer test F-007 (D7): a failed save shows an error. Run by adapters/web/parity.mjs with APP_URL set.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -16,7 +16,7 @@ async function withPage(fn, query = '') {
 }
 const rows = (page) => page.waitForSelector('[data-testid=row]');
 
-test("F-D7 a failed save shows an error", async () => {
+test("F-007 D7 a failed save shows an error", async () => {
  await withPage(async (page) => {
   await page.locator('#save-settings').first().click();
   await sleep(800);

@@ -1,4 +1,4 @@
-// Known-answer test D3: the list does not move when results load. Run by adapters/web/parity.mjs with APP_URL set.
+// Known-answer test F-005 (D5): selecting a task asks for it once, not repeatedly. Run by adapters/web/parity.mjs with APP_URL set.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -16,12 +16,13 @@ async function withPage(fn, query = '') {
 }
 const rows = (page) => page.waitForSelector('[data-testid=row]');
 
-test("F-D3 the list does not move when results load", async () => {
+test("F-005 D5 selecting a task asks for it once, not repeatedly", async () => {
  await withPage(async (page) => {
-  await sleep(300);
-  const top1 = await page.evaluate(() => document.querySelector('.list').getBoundingClientRect().top);
   await rows(page);
-  const top2 = await page.evaluate(() => document.querySelector('.list').getBoundingClientRect().top);
-  assert.ok(top2 <= top1 + 1, `list top moved from ${top1} to ${top2}`);
- }, "?slow=1");
+  let n = 0;
+  page.on('request', (r) => { if (/\/api\/tasks\/1\?/.test(r.url())) n++; });
+  await page.locator('[data-testid=row]').first().click();
+  await sleep(1500);
+  assert.ok(n >= 1 && n <= 2, `detail requests: ${n}`);
+ });
 });

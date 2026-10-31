@@ -1,4 +1,4 @@
-// Known-answer test H1: the c key focuses the new-task input. Run by adapters/web/parity.mjs with APP_URL set.
+// Known-answer test F-009 (H2): task titles are trimmed before they are stored. Run by adapters/web/parity.mjs with APP_URL set.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -16,9 +16,13 @@ async function withPage(fn, query = '') {
 }
 const rows = (page) => page.waitForSelector('[data-testid=row]');
 
-test("F-H1 the c key focuses the new-task input", async () => {
+test("F-009 H2 task titles are trimmed before they are stored", async () => {
  await withPage(async (page) => {
-  await page.keyboard.press('c');
-  assert.equal(await page.evaluate(() => document.activeElement.id), 'new-task');
+  await rows(page);
+  await page.fill('#new-task', '  padded  ');
+  await page.press('#new-task', 'Enter');
+  await sleep(500);
+  const res = await (await fetch(new URL('/api/tasks?q=padded', APP))).json();
+  assert.ok(res.items.length > 0 && res.items.at(-1).title === 'padded', JSON.stringify(res.items.at(-1)));
  });
 });

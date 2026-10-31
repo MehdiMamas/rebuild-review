@@ -1,4 +1,4 @@
-// Known-answer test H3: a failed list load shows a retry button. Run by adapters/web/parity.mjs with APP_URL set.
+// Known-answer test F-003 (D3): the list does not move when results load. Run by adapters/web/parity.mjs with APP_URL set.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -16,9 +16,12 @@ async function withPage(fn, query = '') {
 }
 const rows = (page) => page.waitForSelector('[data-testid=row]');
 
-test("F-H3 a failed list load shows a retry button", async () => {
+test("F-003 D3 the list does not move when results load", async () => {
  await withPage(async (page) => {
-  await page.waitForSelector('[data-testid=retry-banner]');
-  assert.ok((await page.innerText('[data-testid=retry-banner]')).includes('Retry'));
- }, "?fail=list");
+  await sleep(300);
+  const top1 = await page.evaluate(() => document.querySelector('.list').getBoundingClientRect().top);
+  await rows(page);
+  const top2 = await page.evaluate(() => document.querySelector('.list').getBoundingClientRect().top);
+  assert.ok(top2 <= top1 + 1, `list top moved from ${top1} to ${top2}`);
+ }, "?slow=1");
 });

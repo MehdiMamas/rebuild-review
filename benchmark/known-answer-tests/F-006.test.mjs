@@ -1,4 +1,4 @@
-// Known-answer test D6: a loading state shows while the list loads. Run by adapters/web/parity.mjs with APP_URL set.
+// Known-answer test F-006 (D6): a loading state shows while the list loads. Run by adapters/web/parity.mjs with APP_URL set.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -16,7 +16,7 @@ async function withPage(fn, query = '') {
 }
 const rows = (page) => page.waitForSelector('[data-testid=row]');
 
-test("F-D6 a loading state shows while the list loads", async () => {
+test("F-006 D6 a loading state shows while the list loads", async () => {
  await withPage(async (page) => {
   await sleep(500);
   const shown = await page.evaluate(() => !!document.querySelector('[data-testid=row]') || /loading|spinner/i.test(document.body.innerText) || !!document.querySelector('[aria-busy]'));

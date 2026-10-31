@@ -1,4 +1,4 @@
-// Known-answer test D5: selecting a task asks for it once, not repeatedly. Run by adapters/web/parity.mjs with APP_URL set.
+// Known-answer test F-011 (H4): ?density=compact gives the root the compact class. Run by adapters/web/parity.mjs with APP_URL set.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -16,13 +16,8 @@ async function withPage(fn, query = '') {
 }
 const rows = (page) => page.waitForSelector('[data-testid=row]');
 
-test("F-D5 selecting a task asks for it once, not repeatedly", async () => {
+test("F-011 H4 ?density=compact gives the root the compact class", async () => {
  await withPage(async (page) => {
-  await rows(page);
-  let n = 0;
-  page.on('request', (r) => { if (/\/api\/tasks\/1\?/.test(r.url())) n++; });
-  await page.locator('[data-testid=row]').first().click();
-  await sleep(1500);
-  assert.ok(n >= 1 && n <= 2, `detail requests: ${n}`);
- });
+  assert.ok(await page.evaluate(() => document.querySelector('.app').classList.contains('compact')));
+ }, "?density=compact");
 });

@@ -1,4 +1,4 @@
-// Known-answer test H4: ?density=compact gives the root the compact class. Run by adapters/web/parity.mjs with APP_URL set.
+// Known-answer test F-010 (H3): a failed list load shows a retry button. Run by adapters/web/parity.mjs with APP_URL set.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -16,8 +16,9 @@ async function withPage(fn, query = '') {
 }
 const rows = (page) => page.waitForSelector('[data-testid=row]');
 
-test("F-H4 ?density=compact gives the root the compact class", async () => {
+test("F-010 H3 a failed list load shows a retry button", async () => {
  await withPage(async (page) => {
-  assert.ok(await page.evaluate(() => document.querySelector('.app').classList.contains('compact')));
- }, "?density=compact");
+  await page.waitForSelector('[data-testid=retry-banner]');
+  assert.ok((await page.innerText('[data-testid=retry-banner]')).includes('Retry'));
+ }, "?fail=list");
 });

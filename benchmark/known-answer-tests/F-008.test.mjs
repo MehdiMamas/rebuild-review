@@ -1,4 +1,4 @@
-// Known-answer test D1: typing in the search box does not redraw every row. Run by adapters/web/parity.mjs with APP_URL set.
+// Known-answer test F-008 (H1): the c key focuses the new-task input. Run by adapters/web/parity.mjs with APP_URL set.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -16,12 +16,9 @@ async function withPage(fn, query = '') {
 }
 const rows = (page) => page.waitForSelector('[data-testid=row]');
 
-test("F-D1 typing in the search box does not redraw every row", async () => {
+test("F-008 H1 the c key focuses the new-task input", async () => {
  await withPage(async (page) => {
-  await rows(page);
-  const before = await page.evaluate(() => window.__renders);
-  await page.type('#search', 'z');
-  const after = await page.evaluate(() => window.__renders);
-  assert.ok(after - before < 10, `rows redrawn by one keystroke: ${after - before}`);
+  await page.keyboard.press('c');
+  assert.equal(await page.evaluate(() => document.activeElement.id), 'new-task');
  });
 });
