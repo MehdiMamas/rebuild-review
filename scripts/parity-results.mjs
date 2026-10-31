@@ -5,6 +5,7 @@
 //   node parity-results.mjs loop   <parDir> <features.md> <runDir> records the round, writes failures.md, prints {action, reason, failing}
 import fs from 'node:fs';
 import path from 'node:path';
+import { readPlan } from './size.mjs';
 
 // Map of feature ID to keep or defect, from lines that start with "F-xxx keep" or "F-xxx defect".
 export function kinds(featuresMd) {
@@ -24,7 +25,7 @@ export function wrongTests(results, kindMap) {
 }
 
 export const MAX_ROUNDS = 5;
-export const LOOP_USD = 50;
+export const LOOP_USD = 50; // the floor; a big app gets more from size.json (plan.loopUsd)
 
 const readJson = (f) => JSON.parse(fs.readFileSync(f, 'utf8'));
 
@@ -129,7 +130,7 @@ export function loop(parDir, featuresMd, runDir) {
   let out;
   if (!fails.length) out = { action: 'done', reason: 'all tested features pass' };
   else if (counts.length - 1 - counts.indexOf(low) >= 2) out = { action: 'stop', reason: 'no progress' };
-  else if (spent >= LOOP_USD) out = { action: 'stop', reason: 'budget' };
+  else if (spent >= readPlan(runDir).loopUsd) out = { action: 'stop', reason: 'budget' };
   else if (rounds.length >= MAX_ROUNDS) out = { action: 'stop', reason: 'rounds' };
   else out = { action: 'build', reason: 'failures go back to the builder' };
   out.failing = fails.map((f) => f.feature);

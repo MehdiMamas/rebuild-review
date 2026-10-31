@@ -7,9 +7,10 @@ import crypto from 'node:crypto';
 import { spawnSync, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { checkText, trackedTexts } from './check-features.mjs';
-import { LOOP_USD, readCost } from './parity-results.mjs';
+import { readCost } from './parity-results.mjs';
+import { readPlan, addCost } from './size.mjs';
 
-export const BUDGET_USD = { stack: 3, build: 25, wall: 0.5 };
+export const BUDGET_USD = { wall: 0.5 }; // stack and build budgets come from <runDir>/size.json (floors 3 and 25 when there is none)
 export const MODEL = { stack: 'sonnet', build: 'opus', wall: 'haiku' };
 export const PERMISSION_MODE = 'bypassPermissions';
 export const REGISTRIES = [
@@ -261,9 +262,10 @@ export async function main(argv) {
   const result = { ok: false, reason: '', costUsd: 0, transcript };
   let room;
   try {
-    let budget = BUDGET_USD.build;
+    const sized = readPlan(runDir);
+    let budget = sized.buildUsd;
     if (mode === 'build' && failures) {
-      const left = LOOP_USD - readCost(runDir).spent;
+      const left = sized.loopUsd - readCost(runDir).spent;
       if (left <= 0) throw new Error('budget');
       budget = Math.min(budget, left);
     }
@@ -278,7 +280,7 @@ export async function main(argv) {
     writeSettings(room, { denyPaths: deny, noWrite: scanPaths(runDir, target) });
     result.costUsd += await provewall({ runDir, room, target, transcriptPath: path.join(dir, `${mode}-${n}.wall.jsonl`) });
     const prompt = fs.readFileSync(path.join(HERE, '..', 'prompts', mode + '.md'), 'utf8') + (failures ? '\n\nproject/ already holds the last round. Change it, do not start over. Fix the failures in input/failures.md without breaking any other feature in input/features.md. Commit when done.' : '');
-    const r = await runChild({ room, prompt, model: MODEL[mode], maxBudgetUsd: mode === 'build' ? budget : BUDGET_USD[mode], transcriptPath: transcript });
+    const r = await runChild({ room, prompt, model: MODEL[mode], maxBudgetUsd: mode === 'build' ? budget : sized.stackUsd, transcriptPath: transcript });
     result.costUsd += r.costUsd;
     const hits = scanTranscript(transcript, scanPaths(runDir, target));
     if (hits.length) throw new Error(`transcript names a forbidden path (${hits[0].forbidden})`);
@@ -299,6 +301,7 @@ export async function main(argv) {
     fs.rmSync(path.join(runDir, '.canary'), { force: true });
   }
   fs.writeFileSync(resultPath, JSON.stringify(result, null, 2));
+  addCost(runDir, mode === 'stack' ? 'Stack' : 'Rebuild', result.costUsd);
   console.log('RESULT ' + resultPath);
   console.log(JSON.stringify({ ok: result.ok, reason: result.reason }));
   return result.ok ? 0 : 1;

@@ -123,3 +123,11 @@ test('cleanDetail drops quoted test source, assertion fields and test-at lines f
   assert.equal(cleanDetail(eq), '\u2716 eq (0.1ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  3 !== 4\n  ');
   assert.equal(cleanDetail('failed in file:///Users/x/y/a.mjs:3 here'), 'failed in <path> here');
 });
+
+test('loop: the budget stop uses the loop budget from size.json, the floor without it', () => {
+  let f = runFixture({ rebuild: { 'F-001': false, 'F-002': true, 'F-003': true }, builds: [{ n: 1, cost: 60 }] });
+  assert.equal(loop(f.par, f.md, f.run).reason, 'budget');
+  f = runFixture({ rebuild: { 'F-001': false, 'F-002': true, 'F-003': true }, builds: [{ n: 1, cost: 60 }] });
+  fs.writeFileSync(path.join(f.run, 'size.json'), JSON.stringify({ plan: { loopUsd: 200 } }));
+  assert.equal(loop(f.par, f.md, f.run).action, 'build');
+});

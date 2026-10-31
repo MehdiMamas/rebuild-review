@@ -57,3 +57,41 @@ test('vendored, generated, lock and non-source files are skipped; every file is 
   assert.equal(why['yarn.lock'], 'lock file');
   assert.equal(why['logo.png'], 'not source');
 });
+
+// ---- step 2: estimate before spending ----
+import { readPlan, checkBudget, addCost } from './size.mjs';
+const SIZE_CLI = new URL('./size.mjs', import.meta.url).pathname;
+const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'rr-size-run-'));
+const runCli = (...a) => spawnSync('node', [SIZE_CLI, ...a], { encoding: 'utf8' });
+import { spawnSync } from 'node:child_process';
+
+test('readPlan gives the floors without size.json and the scaled plan with it', () => {
+  const run = tmp();
+  assert.equal(readPlan(run).buildUsd, 25);
+  const big = repo({ 'a.js': lines(450000) });
+  assert.equal(runCli(big, run).status, 0);
+  assert.ok(readPlan(run).buildUsd > 25 && readPlan(run).loopUsd > 50);
+});
+
+test('a maxUsd below the high estimate refuses with exit 3 and the estimate; at or above it passes', () => {
+  const run = tmp(), big = repo({ 'a.js': lines(450000) });
+  const high = plan(measure(big), scale).estimateUsd.high;
+  const no = runCli(big, run, '--max-usd', String(high - 1));
+  assert.equal(no.status, 3);
+  assert.match(no.stdout, /Nothing was spent/);
+  assert.match(no.stdout, new RegExp(`\\$${high}`));
+  assert.equal(runCli(big, run, '--max-usd', String(high)).status, 0);
+  assert.equal(runCli(big, run, '--max-usd', 'abc').status, 3);
+  assert.equal(runCli(big, run).status, 0); // no flag: only prints the estimate
+  assert.equal(checkBudget(plan({ lines: 10 }, scale), undefined).ok, false);
+});
+
+test('addCost sums spend per phase and the total', () => {
+  const run = tmp();
+  addCost(run, 'Stack', 1.5);
+  addCost(run, 'Rebuild', 4);
+  const c = addCost(run, 'Rebuild', 2);
+  assert.deepEqual(c.phases, { Stack: { usd: 1.5, runs: 1 }, Rebuild: { usd: 6, runs: 2 } });
+  assert.equal(c.totalUsd, 7.5);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(run, 'cost.json'), 'utf8')), c);
+});

@@ -1,7 +1,7 @@
 export const meta = {
   name: 'rebuild-review-run',
   description: 'Rebuild a project from its behaviour and rendered output, then score the rebuild.',
-  whenToUse: 'Started by the rebuild-review skill. Requires args {target, runDir, pluginRoot}.',
+  whenToUse: 'Started by the rebuild-review skill. Requires args {target, runDir, pluginRoot, maxUsd}.',
   phases: [
     { title: 'Capture' }, { title: 'Inventory' }, { title: 'Stack' }, { title: 'Rebuild' },
     { title: 'Parity' }, { title: 'Score' }, { title: 'Report' },
@@ -11,7 +11,7 @@ export const meta = {
 const q = JSON.stringify
 const ARGS = typeof args === 'string' ? (() => { try { return JSON.parse(args) } catch (e) { return args } })() : args
 if (!ARGS || !ARGS.target || !ARGS.runDir || !ARGS.pluginRoot) {
-  throw new Error('rebuild-review workflow requires args: {target, runDir, pluginRoot}')
+  throw new Error('rebuild-review workflow requires args: {target, runDir, pluginRoot, maxUsd}')
 }
 const { target, runDir } = ARGS
 const pluginRoot = ARGS.pluginRoot
@@ -26,6 +26,12 @@ const listed = await agent(
   { ...CHEAP, label: 'resume', schema: { type: 'object', required: ['done'], properties: { done: { type: 'array', items: { type: 'string' } } } } },
 )
 const done = new Set((listed && listed.done) || [])
+
+// ---- Estimate: measure the target and refuse before any other spending when maxUsd is below the high estimate ----
+{
+  const est = await agent(`Run exactly: node ${q(pluginRoot + '/scripts/size.mjs')} ${q(target)} ${q(runDir)} --max-usd ${q(String(ARGS.maxUsd === undefined ? 'none' : ARGS.maxUsd))} . Return ok true with its output as detail if it exited 0, otherwise ok false with its output as detail (exit 3 means maxUsd is too low). Change nothing else.`, { ...CHEAP, label: 'estimate', schema: { type: 'object', required: ['ok'], properties: { ok: { type: 'boolean' }, detail: { type: 'string' } } } })
+  if (!est || !est.ok) return { stopped: 'Estimate', reason: (est && est.detail) || 'estimate agent died' }
+}
 
 // ---- Inventory ----
 const INV = `${runDir}/inventory`
