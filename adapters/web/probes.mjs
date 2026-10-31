@@ -40,25 +40,42 @@ const MOVED = `(() => {
   return worst;
 })()`;
 const WATCH = `(() => {
+  if (window.__ls !== undefined) return;
   window.__ls = 0; window.__maxEvt = 0;
   new PerformanceObserver((l) => { for (const e of l.getEntries()) if (!e.hadRecentInput) window.__ls += e.value; }).observe({ type: 'layout-shift', buffered: true });
   new PerformanceObserver((l) => { for (const e of l.getEntries()) window.__maxEvt = Math.max(window.__maxEvt, e.duration); }).observe({ type: 'event', durationThreshold: 16, buffered: true });
 })()`;
 
-async function open(browser, origin, url, opts = {}) {
-  const faults = {};
-  const { context, rec } = await makeContext(browser, origin, { viewport: { width: 1440, height: 900 }, ...opts, faults });
-  opts.track?.add(context);
-  const page = await context.newPage();
-  await page.addInitScript(WATCH);
+// A screen of the web adapter is a URL in a fresh browser context. Another adapter passes openScreen(screen, { width, height })
+// instead, which returns { page, rec, faults, close, go }: go() reaches the screen (a window, a route, a page of the app).
+async function open(c, s, opts = {}) {
+  let faults = {}, context, rec, page, go, ctxEvents;
+  if (c.openScreen) {
+    const vp = opts.viewport;
+    const t = await c.openScreen(s, vp ? { width: vp.width, height: vp.height } : {});
+    page = t.page; rec = t.rec; faults = t.faults; go = async () => { await t.go(); await page.evaluate(WATCH); };
+    // The probes watch requests on the whole context, so they also see a screen that lives in another window.
+    context = { newCDPSession: (p) => page.context().newCDPSession(p), close: t.close };
+    opts.track?.add(context);
+    page = new Proxy({}, { get: (_, k) => { const cur = t.page; const v = cur[k]; return typeof v === 'function' ? v.bind(cur) : v; } });
+    ctxEvents = t.page.context();
+  } else {
+    const url = new URL(s.url, c.origin).toString();
+    ({ context, rec } = await makeContext(c.browser, c.origin, { viewport: { width: 1440, height: 900 }, ...opts, faults }));
+    opts.track?.add(context);
+    page = await context.newPage();
+    await page.addInitScript(WATCH);
+    go = () => page.goto(url, { waitUntil: 'load' });
+    ctxEvents = page;
+  }
   const api = { pending: 0, seen: [] };
-  page.on('request', (r) => {
+  ctxEvents.on('request', (r) => {
     if (isDataRequest(r)) { api.pending++; api.seen.push(`${r.method()} ${r.url()}`); }
   });
   const done = (r) => isDataRequest(r) && api.pending--;
-  page.on('requestfinished', done);
-  page.on('requestfailed', done);
-  return { context, rec, page, faults, api, go: () => page.goto(url, { waitUntil: 'load' }) };
+  ctxEvents.on('requestfinished', done);
+  ctxEvents.on('requestfailed', done);
+  return { context, rec, page, faults, api, go };
 }
 
 // Options shared by loadProbes, clickProbes and runProbes (all optional; the defaults are what capture uses):
@@ -95,12 +112,10 @@ const late = (c, s, probes, what = '') => {
 };
 
 async function loadScreen(c, s, add) {
-  const { browser, origin } = c;
-  const url = new URL(s.url, origin).toString();
 
   // Console errors, plain load; also focus-lost and input delay while typing into every text field.
   if (!late(c, s, ['console-errors', 'focus-lost', 'input-delay'])) await guard(c, s, ['console-errors', 'focus-lost', 'input-delay'], '', async (env) => {
-    const t = await open(browser, origin, url, env);
+    const t = await open(c, s, env);
     const cdp = await t.context.newCDPSession(t.page);
     await t.go();
     await idle(c, t.page);
@@ -141,7 +156,7 @@ async function loadScreen(c, s, add) {
     const SEL = 'input:not([type=hidden]):not([type=checkbox]):not([type=radio]):not([type=button]):not([type=submit]), textarea';
     const visible = [];
     {
-      const t = await open(browser, origin, url, env);
+      const t = await open(c, s, env);
       await t.go();
       await idle(c, t.page);
       const all = t.page.locator(SEL);
@@ -150,7 +165,7 @@ async function loadScreen(c, s, add) {
     }
     for (const i of visible) {
       if (late(c, s, ['script-cost-per-key'])) break;
-      const t = await open(browser, origin, url, env);
+      const t = await open(c, s, env);
       await t.go();
       await idle(c, t.page);
       const field = t.page.locator(SEL).nth(i);
@@ -173,9 +188,9 @@ async function loadScreen(c, s, add) {
   // layout-shift entries, and any element present early that later moved 8 px or more (an empty
   // container the content later pushes down produces no entry, but is a shift all the same).
   if (!late(c, s, ['layout-shift'])) await guard(c, s, ['layout-shift'], '', async (env) => {
-    for (const width of [390, 1440]) {
+    for (const width of c.widths || [390, 1440]) {
       for (const slowMs of [0, 1500]) {
-        const t = await open(browser, origin, url, { ...env, viewport: { width, height: 900 } });
+        const t = await open(c, s, { ...env, viewport: { width, height: 900 } });
         t.faults.slowMs = slowMs;
         await t.go();
         await t.page.evaluate(SNAP);
@@ -190,7 +205,7 @@ async function loadScreen(c, s, add) {
 
   // No visible feedback while the page's own requests are slow.
   if (!late(c, s, ['no-feedback-slow'])) await guard(c, s, ['no-feedback-slow'], '', async (env) => {
-    const t = await open(browser, origin, url, env);
+    const t = await open(c, s, env);
     t.faults.slowMs = 1500;
     await t.go();
     await sleep(500);
@@ -202,7 +217,7 @@ async function loadScreen(c, s, add) {
 
   // A failed request at load with no visible error.
   if (!late(c, s, ['failed-request-no-error'])) await guard(c, s, ['failed-request-no-error'], '', async (env) => {
-    const t = await open(browser, origin, url, env);
+    const t = await open(c, s, env);
     t.faults.failApi = true;
     await t.go();
     await sleep(900);
@@ -217,14 +232,12 @@ const MODE_PROBE = { repeat: 'repeat-requests', slow: 'no-feedback-slow', fail: 
 
 // Click every distinct clickable: repeat requests, then slow, then failing answers.
 async function clickScreen(c, s, add) {
-  const { browser, origin } = c;
-  const url = new URL(s.url, origin).toString();
   if (c.noClicks) { for (const probe of Object.values(MODE_PROBE)) c.notChecked?.push({ probe, route: s.url, reason: `clicks not run: ${c.noClicks}` }); return; }
   if (late(c, s, Object.values(MODE_PROBE), 'clicks: ')) return;
   const TAG = tagClickables(c.maxClickables);
   let names = [], texts = [];
   await guard(c, s, Object.values(MODE_PROBE), 'clicks: ', async (env) => {
-    const t = await open(browser, origin, url, env);
+    const t = await open(c, s, env);
     await t.go();
     await idle(c, t.page);
     names = await t.page.evaluate(TAG);
@@ -242,7 +255,7 @@ async function clickScreen(c, s, add) {
       tasks.push(async () => {
         if (late(c, s, [MODE_PROBE[mode]], `click "${names[i]}": `)) return;
         await guard(c, s, [MODE_PROBE[mode]], `click "${names[i]}": `, async (env) => {
-          const t = await open(browser, origin, url, env);
+          const t = await open(c, s, env);
           await t.go();
           await idle(c, t.page);
           await t.page.evaluate(TAG);

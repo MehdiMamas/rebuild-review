@@ -119,8 +119,15 @@ if (statesFile) {
 }
 
 // 4. Probes.
-const probes = await runProbes({ browser, origin, screens, timings });
-const a11y = await measureScreens({ browser, origin, screens, timings, probes });
+// A fresh context per call: it blocks the outside, records, and goto()s the screen's address.
+const open = async (s, { width = 1440, height = 900, colorScheme = 'light' } = {}) => {
+  const faults = {};
+  const { context, rec } = await makeContext(browser, origin, { viewport: { width, height }, colorScheme, faults });
+  const page = await context.newPage();
+  return { page, rec, faults, close: () => context.close(), go: () => page.goto(new URL(s.url, origin).toString(), { waitUntil: 'load' }) };
+};
+const probes = await runProbes({ open, screens, timings });
+const a11y = await measureScreens({ open, screens, timings, probes });
 if (buildMs !== null) timings.push({ name: 'build-ms', value: buildMs, unit: 'ms' });
 await browser.close();
 stop();
