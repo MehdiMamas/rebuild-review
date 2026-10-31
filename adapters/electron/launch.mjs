@@ -11,7 +11,7 @@ import { _electron } from 'playwright';
 import { redactUrl, redactHeaders, scrub, sleep, locate, runStep } from '../web/context.mjs';
 
 const DEAD_PROXY = '127.0.0.1:9';
-const ENV_ALLOW = ['PATH', 'DISPLAY', 'XAUTHORITY', 'TMPDIR', 'TEMP', 'TMP', 'SystemRoot', 'LANG', 'LANGUAGE'];
+const ENV_ALLOW = ['PATH', 'LD_LIBRARY_PATH', 'DISPLAY', 'XAUTHORITY', 'TMPDIR', 'TEMP', 'TMP', 'SystemRoot', 'LANG', 'LANGUAGE'];
 export const SIZES = { narrow: { w: 1024, h: 700 }, wide: { w: 1440, h: 900 } };
 
 // dir is relative: to work/ next to run.json, or, for a file named rebuild-run.json, to that file's own folder.
