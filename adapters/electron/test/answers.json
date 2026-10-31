@@ -1,0 +1,16 @@
+{
+  "note": "Written before the probes were run. Only run.mjs reads this file; the fixture and the adapter never do. 'heading' is the screen's h1.",
+  "problems": [
+    { "id": "E1", "what": "layout shift: a banner fills an empty box above the list 800 ms after the screen opens", "heading": "Tasks", "probe": "layout-shift" },
+    { "id": "E2", "what": "focus lost while typing: the whole view, input included, is redrawn on every keystroke", "heading": "Search", "probe": "focus-lost" },
+    { "id": "E3", "what": "repeated identical requests: Refresh sends the same request eight times", "heading": "Reports", "probe": "repeat-requests" },
+    { "id": "E4", "what": "console error as the screen opens", "heading": "Settings", "probe": "console-errors" },
+    { "id": "E5", "what": "failed request with no visible error: Load profile", "heading": "Profile", "probe": "failed-request-no-error" },
+    { "id": "E6", "what": "no feedback during a slow request: Sync now", "heading": "Sync", "probe": "no-feedback-slow" }
+  ],
+  "control": { "heading": "About", "note": "static text and a Back button that makes no request; no probe may flag it" },
+  "screens": ["Workbench", "Tasks", "Search", "Reports", "Settings", "Profile", "Sync", "About", "Inspector overview", "Inspector details"],
+  "windows": ["Workbench", "Inspector"],
+  "nativeDialogButton": "Choose file",
+  "mainProcessFetch": "main-process fetch to outside address (printed by the app on its stdout)"
+}
