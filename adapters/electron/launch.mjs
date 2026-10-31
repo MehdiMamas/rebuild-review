@@ -6,7 +6,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { createRequire } from 'node:module';
 import { execSync, spawnSync, spawn } from 'node:child_process';
-import { pathToFileURL } from 'node:url';
+import { pathToFileURL, fileURLToPath } from 'node:url';
 import { _electron } from 'playwright';
 import { redactUrl, redactHeaders, scrub, sleep, locate, runStep } from '../web/context.mjs';
 
@@ -79,7 +79,9 @@ export async function launchApp(run, appFile, { theme = 'light' } = {}) {
     NO_PROXY: 'localhost,127.0.0.1,::1', no_proxy: 'localhost,127.0.0.1,::1', NODE_USE_ENV_PROXY: '1',
   });
   const executablePath = l.executablePath ? path.resolve(workDir, l.executablePath) : createRequire(path.join(workDir, 'package.json'))('electron');
-  const args = [...(l.args || ['.']), `--user-data-dir=${d.profile}`, `--extensions-dir=${d.ext}`, `--proxy-server=${DEAD_PROXY}`, '--proxy-bypass-list=localhost;127.0.0.1;[::1]'];
+  const mainLog = path.join(tmp, 'main.log');
+  env.RR_MAIN_LOG = mainLog;
+  const args = ['-r', fileURLToPath(new URL('./mainlog.cjs', import.meta.url)), ...(l.args || ['.']), `--user-data-dir=${d.profile}`, `--extensions-dir=${d.ext}`, `--proxy-server=${DEAD_PROXY}`, '--proxy-bypass-list=localhost;127.0.0.1;[::1]'];
 
   let pid = 0, stopped = false;
   const cleanup = () => { try { if (pid) process.kill(pid, 'SIGKILL'); } catch {} try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {} };
@@ -98,10 +100,16 @@ export async function launchApp(run, appFile, { theme = 'light' } = {}) {
   const swaps = [[pathToFileURL(workDir).href, 'file:///<app>'], [workDir, '<app>'], [fs.realpathSync(workDir), '<app>'], [tmp, '<profile>'], [fs.realpathSync(tmp), '<profile>'], [os.homedir(), '<home>']];
   const clean = (v) => { let x = String(v); for (const [a, b] of swaps) x = x.split(a).join(b); return scrub(x); };
   const rec = { blocked: [], har: [], console: [], pageErrors: [], main: [] };
-  for (const [stream, tag] of [[app.process().stdout, 'stdout'], [app.process().stderr, 'stderr']]) {
-    let buf = '';
-    stream.on('data', (c) => { buf += c; const lines = buf.split('\n'); buf = lines.pop(); for (const x of lines) if (x.trim()) rec.main.push(clean(`${tag} ${x}`)); });
-  }
+  // The app's own output comes from the file the preload writes, read every 200 ms and once more at stop.
+  let logPos = 0, logRest = '';
+  const pullLog = () => {
+    try {
+      const b = fs.readFileSync(mainLog); if (b.length <= logPos) return;
+      const parts = (logRest + b.subarray(logPos).toString()).split('\n'); logPos = b.length; logRest = parts.pop();
+      for (const x of parts) if (x.trim()) rec.main.push(clean(x));
+    } catch {}
+  };
+  const logTimer = setInterval(pullLog, 200); logTimer.unref();
   const ownSchemes = new Set(['file:', 'data:', 'blob:', 'about:', ...(l.schemes || []).map((s) => (s.endsWith(':') ? s : `${s}:`))]);
   const allowed = (raw) => {
     try { const u = new URL(raw); return ownSchemes.has(u.protocol) || ['localhost', '127.0.0.1', '[::1]'].includes(u.hostname); } catch { return false; }
@@ -159,6 +167,7 @@ export async function launchApp(run, appFile, { theme = 'light' } = {}) {
     if (stopped) return;
     stopped = true;
     if (app) { try { await Promise.race([app.close(), sleep(5000)]); } catch {} }
+    pullLog(); clearInterval(logTimer);
     cleanup();
     process.off('exit', cleanup);
   }
