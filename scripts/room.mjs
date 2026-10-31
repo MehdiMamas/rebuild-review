@@ -288,6 +288,14 @@ export function replaceProject(runDir, n, roomProject) {
   }
 }
 
+// The rebuild stays on the platform of the original: a web app is rebuilt as a web app, an Electron app as an Electron app.
+export function platformNote(runDir) {
+  let platform = '';
+  try { platform = JSON.parse(fs.readFileSync(path.join(runDir, 'run.json'), 'utf8')).platform || ''; } catch {}
+  if (!platform) return '';
+  return `\n\nThe original runs on the platform "${platform}". The rebuild must run on the same platform, so the review can drive it the same way. Do not change the platform.`;
+}
+
 export async function main(argv) {
   const mode = argv[0];
   const opt = (k) => { const i = argv.indexOf(k); return i > 0 ? argv[i + 1] : undefined; };
@@ -320,7 +328,7 @@ export async function main(argv) {
     const deny = denyList(runDir, target);
     writeSettings(room, { denyPaths: deny, noWrite: scanPaths(runDir, target) });
     result.costUsd += await provewall({ runDir, room, target, transcriptPath: path.join(dir, `${mode}-${n}.wall.jsonl`) });
-    const prompt = fs.readFileSync(path.join(HERE, '..', 'prompts', mode + '.md'), 'utf8') + (failures ? '\n\nproject/ already holds the last round. Change it, do not start over. Fix the failures in input/failures.md without breaking any other feature in input/features.md. Commit when done.' : '');
+    const prompt = fs.readFileSync(path.join(HERE, '..', 'prompts', mode + '.md'), 'utf8') + platformNote(runDir) + (failures ? '\n\nproject/ already holds the last round. Change it, do not start over. Fix the failures in input/failures.md without breaking any other feature in input/features.md. Commit when done.' : '');
     const r = await runChild({ room, prompt, model: MODEL[mode], maxBudgetUsd: mode === 'build' ? budget : BUDGET_USD[mode], transcriptPath: transcript });
     result.costUsd += r.costUsd;
     const hits = scanTranscript(transcript, scanPaths(runDir, target));

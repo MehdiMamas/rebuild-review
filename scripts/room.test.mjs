@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { filterGolden, prepareRoom, scanTranscript, wallTried, cloneProject, copyEnv, denyList, writeSettings, fixStack, stackFixPrompt, replaceProject, main } from './room.mjs';
+import { platformNote, filterGolden, prepareRoom, scanTranscript, wallTried, cloneProject, copyEnv, denyList, writeSettings, fixStack, stackFixPrompt, replaceProject, main } from './room.mjs';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'room-test-'));
 
@@ -286,4 +286,11 @@ test('env written by copyEnv stays out of the room, a dirty rebuild-run.json doe
   assert.equal('env' in JSON.parse(fs.readFileSync(path.join(runDir, 'project', 'rebuild-run.json'), 'utf8')), false);
   copyEnv(runDir);
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(runDir, 'project', 'rebuild-run.json'), 'utf8')).env, { SETTING: 'stand-in' });
+});
+
+test('platformNote names the original platform and is empty without a run file', () => {
+  const d = tmp();
+  assert.equal(platformNote(d), '');
+  fs.writeFileSync(path.join(d, 'run.json'), JSON.stringify({ platform: 'electron' }));
+  assert.match(platformNote(d), /platform "electron"[\s\S]*same platform/);
 });
