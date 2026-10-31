@@ -20,3 +20,7 @@ Platform `electron`. The app is a desktop program with windows and no address. `
 - Import `launchApp` by absolute path: `import { launchApp } from '<plugin>/adapters/electron/launch.mjs'`, read `APP_RUN` as JSON, call `launchApp(run, process.env.APP_RUN)`, and `stop()` at the end.
 - Each test launches its own isolated copy of the app. Install and build have already run (`RR_PREPARED=1`).
 - The limit is 60 seconds per test, or the launch time plus 60 seconds if the launch alone is longer.
+
+## Running on Linux without a screen
+
+Under `xvfb-run -a` the app and the nine checks run with no visible window. Use a throwaway `HOME` for the test process; the adapter gives the app its own isolated home on top of that. `LD_LIBRARY_PATH` is the one loader variable the adapter passes to the app, for libraries installed without root.
