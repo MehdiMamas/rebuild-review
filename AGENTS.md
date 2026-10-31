@@ -82,6 +82,11 @@ what it renders, then scores the rebuild against the original. See README.md.
 - The parity tests for known-answer runs are `benchmark/known-answer-tests/` (F-001..F-007 are the planted defects D1-D7, F-008..F-011 the hidden features H1-H4); run them with `adapters/web/parity.mjs --tests benchmark/known-answer-tests`, and set `PLAYWRIGHT_PATH` when the tests are copied elsewhere. On the unchanged fixture the defect tests fail, so the gate fails and the verdict is `leave`; a copy with every defect fixed passes.
 - It is not a calibrated probability. Reading it: a low number with "track record" as the limit means the tool has few checked runs, not that this verdict looks bad. Tests: `node --test scripts/confidence.test.mjs`.
 
+## Same settings on both sides, and rules from the first real run (#11)
+
+- `run.json` may hold `env` (object of stand-in settings, never real secrets). `startApp` starts the app with `{...process.env, ...run.env, PORT}`. `scripts/room.mjs` copies `env` into `project/rebuild-run.json` right after the build is delivered (`copyEnv`; nothing is added when `run.json` has none) and removes it from the copy the builder gets on a `--failures` run, so the builder never sees it. Values are never printed or put in the report. Tests: `node --test scripts/app-env.test.mjs scripts/room.test.mjs`.
+- Prompt rules in `workflows/rebuild-review.js` (asked, not enforced): the merge step lists docs-only items under `## Not built (from the docs)` as bullets without an F-id (no new kind; `kinds()` ignores them); a defect about what the running app does must record what was done and seen, and the critic repeats it once; the parity test writer asserts meaning not wording, does not assert browser behaviour, and stays inside the feature's text.
+
 ## Conventions
 
 - Any kind of project, not only web. Nothing outside a platform adapter may assume HTML,

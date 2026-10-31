@@ -12,6 +12,7 @@ produce the same layout.
 { "platform": "...", "dir": "path inside work/", "install": "...", "build": "...", "start": "...", "address": "..." }
 ```
 
+- `env` is optional: an object of environment variables the adapter adds when it starts the app (`{...process.env, ...env, PORT}`), so the original and the rebuild start with the same settings. `rebuild-run.json` gets the same `env`, copied from `run.json` after the build is delivered. Values are stand-ins only, never real secrets; they are never printed or put in the report.
 - `dir` is relative, never absolute (the adapter throws otherwise): to `work/` next to `run.json`, except in a file named `rebuild-run.json`, where it is relative to that file's own folder.
 - The target is never run in place. The agent clones it to `<runDir>/work/` and the adapter runs that copy.
 - The adapter refuses an address that is not on this machine.
