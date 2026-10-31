@@ -155,7 +155,7 @@ a{color:var(--link)}*{box-sizing:border-box}body{margin:0;background:var(--bg);c
 main{max-width:860px;margin:0 auto;padding:16px}section{margin:0 0 28px}h1,h2,h3{line-height:1.25}h2{border-bottom:1px solid var(--line);padding-bottom:4px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 16px;margin:0 0 12px;overflow-wrap:anywhere}
 .badge{display:inline-block;font-weight:700;font-size:1.4rem;text-transform:uppercase}.adopt{color:var(--adopt)}.port{color:var(--port)}.leave{color:var(--leave)}
-.mut{color:var(--mut)}table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:4px 8px;border-bottom:1px solid var(--line);overflow-wrap:anywhere}
+.parts td:nth-child(-n+2),.parts th:nth-child(2){white-space:nowrap}.mut{color:var(--mut)}table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:4px 8px;border-bottom:1px solid var(--line);overflow-wrap:anywhere}
 .pair{display:flex;gap:8px;margin:0 0 12px}.pair figure{flex:1;margin:0;min-width:0}.pair img{max-width:100%;height:auto;border:1px solid var(--line)}
 @media (max-width:600px){.pair{flex-direction:column}}code{overflow-wrap:anywhere}`;
 
@@ -181,7 +181,7 @@ export function render(runDir, { embedCap = EMBED_CAP, thresholds, stopped } = {
   const confHtml = !conf ? '' : conf.percent === null
     ? '<p><strong>Confidence:</strong> not measured (there is no score).</p>'
     : `<p><strong>Confidence: ${esc(conf.percent)}%</strong>, limited by <strong>${esc(conf.limitedBy)}</strong>. It is the weakest of four parts, not a calibrated probability.${conf.outsideRange ? ` This target (${esc(conf.parts['track record'].inputs.targetSourceLines)} source lines) is outside what was tested (up to ${esc(conf.calibratedUpTo)} lines), so it is capped.` : ''}</p>` +
-      `<table><tr><th>Part</th><th>Reads</th><th>Inputs</th></tr>${Object.entries(conf.parts).map(([n, p]) => `<tr><td>${esc(n)}</td><td>${esc(p.percent)}%</td><td>${esc(inputText(p.inputs))}${p.left && p.left.length ? `<br><span class="mut">left out: ${esc(p.left.join('; '))}</span>` : ''}</td></tr>`).join('')}</table>`;
+      `<table class="parts"><tr><th>Part</th><th>Reads</th><th>Inputs</th></tr>${Object.entries(conf.parts).map(([n, p]) => `<tr><td>${esc(n)}</td><td>${esc(p.percent)}%</td><td>${esc(inputText(p.inputs))}${p.left && p.left.length ? `<br><span class="mut">left out: ${esc(p.left.join('; '))}</span>` : ''}</td></tr>`).join('')}</table>`;
   sec('verdict', 'Verdict', `<p><span class="badge ${v.verdict}">${esc(v.verdict)}</span></p><p>${esc(v.why)}</p>` + confHtml +
     `<div class="card"><strong>Do this first:</strong> ${esc(actions.length ? actions[0].title : FIRST[v.verdict])}</div>`);
 
