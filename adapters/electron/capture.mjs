@@ -162,7 +162,7 @@ if (statesFile) {
 // 4. Probes and measurements, each on a fresh isolated launch of the screen.
 const open = electronOpener(run, appFile);
 const widths = [SIZES.narrow.w, SIZES.wide.w];
-const probes = await runProbes({ open, screens, timings, widths });
+const probes = await runProbes({ openScreen: open, screens, timings, widths });
 const a11y = await measureScreens({ open, screens, timings, probes, widths });
 if (buildMs !== null) timings.push({ name: 'build-ms', value: buildMs, unit: 'ms' });
 if (launchMs !== null) timings.push({ name: 'launch-ms', value: launchMs, unit: 'ms' });
