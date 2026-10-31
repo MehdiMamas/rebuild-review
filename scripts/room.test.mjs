@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { filterGolden, prepareRoom, scanTranscript, wallTried, cloneProject, copyEnv, denyList, writeSettings, fixStack, stackFixPrompt } from './room.mjs';
+import { filterGolden, prepareRoom, scanTranscript, wallTried, cloneProject, copyEnv, denyList, writeSettings, fixStack, stackFixPrompt, replaceProject, main } from './room.mjs';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'room-test-'));
 
@@ -205,4 +205,69 @@ test('stackFixPrompt never passes a source file name or quote to the child', () 
   assert.match(prompt, /line 47: source file path/);
   assert.match(prompt, /own words/);
   assert.doesNotMatch(prompt, /secret|forty characters/);
+});
+
+test('prepareRoom refuses a failures.md that names the run folder or fails the no-source check', () => {
+  let { target, runDir } = makeRun('F-001 A user sees a list.\n');
+  fs.writeFileSync(path.join(runDir, 'failures.md'), `## F-001 (keep)\nfailed in ${runDir}/parity\n`);
+  assert.throws(() => prepareRoom({ runDir, target, inputs: ['features.md', 'failures.md'] }), /contains/);
+  ({ target, runDir } = makeRun('F-001 A user sees a list.\n'));
+  fs.writeFileSync(path.join(runDir, 'failures.md'), '## F-001 (keep)\nsee src/App.jsx\n');
+  assert.throws(() => prepareRoom({ runDir, target, inputs: ['features.md', 'failures.md'] }), /no-source check/);
+});
+
+test('replaceProject shelves the old project as project-from-build-<n-1>; a failure leaves it in place', () => {
+  const runDir = fs.realpathSync(tmp());
+  fs.mkdirSync(path.join(runDir, 'rebuild')); fs.mkdirSync(path.join(runDir, 'project'));
+  fs.writeFileSync(path.join(runDir, 'project', 'v'), 'old');
+  assert.throws(() => replaceProject(runDir, 2, tmp()), /git repo/);
+  assert.equal(fs.readFileSync(path.join(runDir, 'project', 'v'), 'utf8'), 'old');
+  assert.equal(fs.existsSync(path.join(runDir, 'rebuild', 'project-from-build-1')), false);
+  replaceProject(runDir, 2, repo({ v: 'new' }));
+  assert.equal(fs.readFileSync(path.join(runDir, 'project', 'v'), 'utf8'), 'new');
+  assert.equal(fs.readFileSync(path.join(runDir, 'rebuild', 'project-from-build-1', 'v'), 'utf8'), 'old');
+});
+
+test('a build with failures and no budget left fails with the reason budget', async () => {
+  const { target, runDir } = makeRun('F-001 A user sees a list.\n');
+  fs.mkdirSync(path.join(runDir, 'rebuild'));
+  fs.writeFileSync(path.join(runDir, 'rebuild', 'build-1.result.json'), JSON.stringify({ costUsd: 50 }));
+  const f = path.join(runDir, 'f.md'); fs.writeFileSync(f, '## F-001 (keep)\nx\n');
+  const log = console.log; console.log = () => {};
+  let code; try { code = await main(['build', '--target', target, '--run-dir', runDir, '--failures', f]); } finally { console.log = log; }
+  assert.equal(code, 1);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(runDir, 'rebuild', 'build-2.result.json'), 'utf8')).reason, 'budget');
+});
+
+test('prepareRoom gives the committed project only: no ignored files, no uncommitted files, no origin remote', () => {
+  const { target, runDir } = makeRun('F-001 A user sees a list.\n');
+  const proj = repo({ 'a.js': 'a', '.gitignore': 'node_modules\n' });
+  fs.mkdirSync(path.join(proj, 'node_modules')); fs.writeFileSync(path.join(proj, 'node_modules', 'x.js'), 'x');
+  fs.writeFileSync(path.join(proj, 'dirty.js'), 'd');
+  execFileSync('git', ['-C', proj, 'remote', 'add', 'origin', runDir]);
+  fs.cpSync(proj, path.join(runDir, 'project'), { recursive: true });
+  const room = prepareRoom({ runDir, target, inputs: ['features.md'] });
+  const p = path.join(room, 'project');
+  assert.equal(fs.existsSync(path.join(p, 'a.js')), true);
+  assert.equal(fs.existsSync(path.join(p, 'node_modules')), false);
+  assert.equal(fs.existsSync(path.join(p, 'dirty.js')), false);
+  assert.equal(execFileSync('git', ['-C', p, 'remote'], { encoding: 'utf8' }).trim(), '');
+  fs.rmSync(room, { recursive: true, force: true });
+});
+
+test('env written by copyEnv stays out of the room, a dirty rebuild-run.json does not fail the round, and a later delivery gets the env again', () => {
+  const { target, runDir } = makeRun('F-001 A user sees a list.\n');
+  fs.writeFileSync(path.join(runDir, 'run.json'), JSON.stringify({ start: 'y', env: { SETTING: 'stand-in' } }));
+  const proj = repo({ 'rebuild-run.json': JSON.stringify({ start: 'x', dir: '.' }) });
+  fs.cpSync(proj, path.join(runDir, 'project'), { recursive: true });
+  copyEnv(runDir);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(runDir, 'project', 'rebuild-run.json'), 'utf8')).env, { SETTING: 'stand-in' });
+  const room = prepareRoom({ runDir, target, inputs: ['features.md'] });
+  assert.equal('env' in JSON.parse(fs.readFileSync(path.join(room, 'project', 'rebuild-run.json'), 'utf8')), false);
+  // round 2: the delivery replaces the project, then copyEnv puts the settings back
+  fs.mkdirSync(path.join(runDir, 'rebuild'), { recursive: true });
+  replaceProject(runDir, 2, path.join(room, 'project'));
+  assert.equal('env' in JSON.parse(fs.readFileSync(path.join(runDir, 'project', 'rebuild-run.json'), 'utf8')), false);
+  copyEnv(runDir);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(runDir, 'project', 'rebuild-run.json'), 'utf8')).env, { SETTING: 'stand-in' });
 });

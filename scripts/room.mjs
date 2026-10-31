@@ -7,6 +7,7 @@ import crypto from 'node:crypto';
 import { spawnSync, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { checkText, trackedTexts } from './check-features.mjs';
+import { LOOP_USD, readCost } from './parity-results.mjs';
 
 export const BUDGET_USD = { stack: 3, build: 25, wall: 0.5 };
 export const MODEL = { stack: 'sonnet', build: 'opus', wall: 'haiku' };
@@ -60,7 +61,7 @@ function allFiles(d, out = []) {
 export function prepareRoom({ runDir, target, inputs }) {
   const work = path.join(runDir, 'work');
   const srcTexts = trackedTexts(work);
-  for (const f of ['features.md', 'technology.md', 'stack.md']) {
+  for (const f of ['features.md', 'technology.md', 'stack.md', 'failures.md']) {
     if (!inputs.includes(f)) continue;
     const problems = checkText(fs.readFileSync(path.join(runDir, f), 'utf8'), srcTexts);
     if (problems.length) throw new Error(`${f} fails the no-source check: ${problems.slice(0, 5).join('; ')}`);
@@ -85,8 +86,18 @@ export function prepareRoom({ runDir, target, inputs }) {
     }
   }
   const proj = path.join(runDir, 'project');
-  if (fs.existsSync(proj)) fs.cpSync(proj, path.join(room, 'project'), { recursive: true });
-  dropEnv(path.join(room, 'project', 'rebuild-run.json'));
+  if (fs.existsSync(proj)) {
+    try {
+      // committed state only: a plain clone, so uncommitted and ignored files never arrive (and an uncommitted file does not fail the round)
+      const c = spawnSync('git', ['clone', '--quiet', proj, path.join(room, 'project')], { encoding: 'utf8' });
+      if (c.status !== 0) throw new Error('git clone of the previous project failed: ' + c.stderr.slice(0, 200));
+      spawnSync('git', ['-C', path.join(room, 'project'), 'remote', 'remove', 'origin'], { encoding: 'utf8' });
+      dropEnv(path.join(room, 'project', 'rebuild-run.json'));
+    } catch (e) {
+      fs.rmSync(room, { recursive: true, force: true });
+      throw e;
+    }
+  }
   return room;
 }
 
@@ -257,6 +268,24 @@ export function cloneProject(from, to) {
   if (c.status !== 0) throw new Error('git clone of the built project failed: ' + c.stderr.slice(0, 200));
 }
 
+// Moves the current project to rebuild/project-from-build-<n-1> and puts the new one in its place; on any failure the old one is put back.
+export function replaceProject(runDir, n, roomProject) {
+  const proj = path.join(runDir, 'project'), shelf = path.join(runDir, 'rebuild', `project-from-build-${n - 1}`);
+  const had = fs.existsSync(proj);
+  if (had) {
+    fs.rmSync(shelf, { recursive: true, force: true });
+    fs.renameSync(proj, shelf);
+    spawnSync('git', ['-C', shelf, 'clean', '-fdxq'], { encoding: 'utf8' });
+  }
+  try {
+    cloneProject(roomProject, proj);
+  } catch (e) {
+    fs.rmSync(proj, { recursive: true, force: true });
+    if (had) fs.renameSync(shelf, proj);
+    throw e;
+  }
+}
+
 export async function main(argv) {
   const mode = argv[0];
   const opt = (k) => { const i = argv.indexOf(k); return i > 0 ? argv[i + 1] : undefined; };
@@ -273,6 +302,12 @@ export async function main(argv) {
   const result = { ok: false, reason: '', costUsd: 0, transcript };
   let room;
   try {
+    let budget = BUDGET_USD.build;
+    if (mode === 'build' && failures) {
+      const left = LOOP_USD - readCost(runDir).spent;
+      if (left <= 0) throw new Error('budget');
+      budget = Math.min(budget, left);
+    }
     const inputs = mode === 'stack' ? ['features.md', 'technology.md'] : ['features.md', 'technology.md', 'stack.md', 'golden'];
     if (mode === 'build' && failures) {
       fs.copyFileSync(failures, path.join(runDir, 'failures.md.tmp'));
@@ -283,8 +318,8 @@ export async function main(argv) {
     const deny = denyList(runDir, target);
     writeSettings(room, { denyPaths: deny, noWrite: scanPaths(runDir, target) });
     result.costUsd += await provewall({ runDir, room, target, transcriptPath: path.join(dir, `${mode}-${n}.wall.jsonl`) });
-    const prompt = fs.readFileSync(path.join(HERE, '..', 'prompts', mode + '.md'), 'utf8') + (failures ? '\n\nFix the failures in input/failures.md.' : '');
-    const r = await runChild({ room, prompt, model: MODEL[mode], maxBudgetUsd: BUDGET_USD[mode], transcriptPath: transcript });
+    const prompt = fs.readFileSync(path.join(HERE, '..', 'prompts', mode + '.md'), 'utf8') + (failures ? '\n\nproject/ already holds the last round. Change it, do not start over. Fix the failures in input/failures.md without breaking any other feature in input/features.md. Commit when done.' : '');
+    const r = await runChild({ room, prompt, model: MODEL[mode], maxBudgetUsd: mode === 'build' ? budget : BUDGET_USD[mode], transcriptPath: transcript });
     result.costUsd += r.costUsd;
     const hits = scanTranscript(transcript, scanPaths(runDir, target));
     if (hits.length) throw new Error(`transcript names a forbidden path (${hits[0].forbidden})`);
@@ -307,7 +342,8 @@ export async function main(argv) {
       fs.copyFileSync(path.join(room, 'stack.md'), path.join(runDir, 'stack.md'));
     } else {
       if (!fs.existsSync(path.join(room, 'project'))) throw new Error('child built no project/');
-      cloneProject(path.join(room, 'project'), path.join(runDir, 'project'));
+      if (failures) replaceProject(runDir, n, path.join(room, 'project'));
+      else cloneProject(path.join(room, 'project'), path.join(runDir, 'project'));
       copyEnv(runDir);
     }
     result.ok = true;
