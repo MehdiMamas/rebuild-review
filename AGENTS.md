@@ -20,6 +20,16 @@ what it renders, then scores the rebuild against the original. See README.md.
 - Test: `cd adapters/web && npm test` (about 3 minutes). It runs six checks on a `bench:init` copy of `benchmark/`, never on the repo folder, and prints which planted defects the probes flagged.
 - Gotcha: `work/` holds source, so the sandbox for the rebuild step (#7) must deny reads of it as well as the target.
 
+## Capture (Android and Flutter adapter)
+
+- `adapters/android/` serves `platform` android and flutter (see the Android section of `adapters/CONTRACT.md`). Plain adb and uiautomator from Node, no dependencies, no `npm install`.
+- Needs: Android SDK in `ANDROID_HOME` or `~/Library/Android/sdk` with `platform-tools`, `emulator`, `cmdline-tools` and the image `system-images;android-35;google_apis;arm64-v8a`; JDK 21 or 17 for Gradle (the driver finds it); Flutter on PATH for the Flutter fixture. Installs are user scope, never sudo.
+- It creates and uses the AVD `rebuild-review` on fixed port 5584, headless, `-wipe-data -no-snapshot-save`, and refuses to run if `emulator-5584` already exists. It never touches other AVDs. Delete it after use: `avdmanager delete avd -n rebuild-review` (the test does).
+- Run: `node adapters/android/capture.mjs --app <runDir>/run.json --out <runDir>/golden [--states states.json]`; `RR_DEBUG=1` prints the crawl.
+- Fixtures: `benchmark-android/` (Kotlin, plain Views) and `benchmark-flutter/`, each with a mock API, `answers.json` and `init.mjs`.
+- Test: `node adapters/android/test/run.mjs [android] [flutter]` (about 15 minutes for both). Six checks per fixture on an init copy, a found/missed table, and the shared layout check `adapters/contract-check.mjs` (also run by the web test).
+- Gotchas: the app's debug or release build needs the INTERNET permission and cleartext HTTP (`benchmark-flutter/prepare-android.mjs` adds both after `flutter create`); HTTPS apps are not captured; Google background traffic shows up in `blockedRequests` and varies between runs.
+
 ## Inventory phase
 
 - Needs `<runDir>/work/` (clone of the target) and `<runDir>/run.json` (platform, install, build, start, address); `golden/` is used when present. The skill passes `pluginRoot` (`${CLAUDE_PLUGIN_ROOT}`) so the workflow can run `scripts/check-features.mjs`.

@@ -1,0 +1,11 @@
+[
+  {"id":"D1","kind":"defect","probe":"crash-anr","what":"Settings > Send feedback throws and the app crashes","observe":"Open the overflow menu, Settings, tap Send feedback; logcat shows FATAL EXCEPTION"},
+  {"id":"D2","kind":"defect","probe":"failed-request-no-error","what":"Save on the New task screen shows nothing when the POST fails","observe":"With the API failing, tap Save; the screen does not change and no error text appears"},
+  {"id":"D3","kind":"defect","probe":"no-feedback-slow","what":"Save on the New task screen shows no progress while the POST is slow","observe":"With a 3 s delay on the API, tap Save; nothing changes for 3 s"},
+  {"id":"D4","kind":"defect","probe":"repeat-requests","what":"The task detail screen refetches GET /api/tasks/<id> every 150 ms","observe":"Open a task; the same request repeats several times a second"},
+  {"id":"D5","kind":"defect","probe":"dropped-frames","what":"List rows spend 40 ms binding, so scrolling drops frames","observe":"Scroll the task list; gfxinfo reports janky frames"},
+  {"id":"D6","kind":"defect","probe":"small-touch-target","what":"The Refresh control in the title bar is 24 dp","observe":"Its bounds are narrower than 48 dp"},
+  {"id":"D7","kind":"defect","probe":"unlabeled-control","what":"The star button in the title bar has no label","observe":"It is clickable and has no text or content description"},
+  {"id":"H1","kind":"hidden-feature","what":"Long-press a task opens Task actions (Archive task, Delete task)","observe":"Long-press a row; a dialog titled Task actions appears"},
+  {"id":"H2","kind":"hidden-feature","what":"Settings is reachable only from the overflow menu","observe":"Tap More options, then Settings"}
+]

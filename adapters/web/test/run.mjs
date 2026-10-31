@@ -5,6 +5,7 @@ import path from 'node:path';
 import http from 'node:http';
 import { execFileSync, spawnSync, spawn } from 'node:child_process';
 import { startApp } from '../app.mjs';
+import { checkGolden } from '../../contract-check.mjs';
 
 const here = path.dirname(new URL(import.meta.url).pathname);
 const repo = path.resolve(here, '../../..');
@@ -135,6 +136,9 @@ check('6 target git status is clean after the runs', status === '', status || 'c
   try { await startApp({ platform: 'web', dir: '../..', start: 'true', address: 'http://127.0.0.1:4236' }, f); } catch (e) { escaped = /stay inside/.test(e.message); }
   check('7 rebuild-run.json starts from its own folder with dir "."; absolute dir and .. refused', started === true && refused && escaped, `started ${started}; absolute refused ${refused}; .. refused ${escaped}`);
 }
+// Test 8: the shared layout check, the same function the android test uses.
+const problems = checkGolden(g1);
+check('8 golden/ layout passes the shared contract check', problems.length === 0, problems.join('; ') || 'ok');
 
 // Test 8: coverage.json lists what was reached; a low --max-screens lists the screens it cut.
 {
