@@ -7,9 +7,11 @@ import crypto from 'node:crypto';
 import { spawnSync, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { checkText, trackedTexts } from './check-features.mjs';
-import { LOOP_USD, readCost } from './parity-results.mjs';
+import { readCost } from './parity-results.mjs';
+import { readPlan, addCost } from './size.mjs';
+import { buildOrder, failureIds, featureAreas } from './areas.mjs';
 
-export const BUDGET_USD = { stack: 3, build: 25, wall: 0.5 };
+export const BUDGET_USD = { wall: 0.5 }; // stack and build budgets come from <runDir>/size.json (floors 3 and 25 when there is none)
 export const MODEL = { stack: 'sonnet', build: 'opus', wall: 'haiku' };
 export const PERMISSION_MODE = 'bypassPermissions';
 export const REGISTRIES = [
@@ -216,6 +218,27 @@ export function denyList(runDir, target) {
   return [...new Set(out)];
 }
 
+// ---- areas ----
+// <runDir>/areas.json when there is one (the workflow writes it before Stack); null otherwise.
+function readAreas(runDir) {
+  try { return JSON.parse(fs.readFileSync(path.join(runDir, 'areas.json'), 'utf8')); } catch { return null; }
+}
+
+function featureCounts(runDir, spec) {
+  const of = featureAreas(fs.readFileSync(path.join(runDir, 'features.md'), 'utf8'), spec);
+  return Object.fromEntries(spec.areas.map((a) => [a.id, Object.values(of).filter((x) => x === a.id).length]));
+}
+
+export const areaStackNote = (ids, counts) => `\n\nThis app is split into areas: ${ids.map((i) => `${i} (${counts[i]} features, tagged [area: ${i}] in input/features.md)`).join('; ')}. Each area is built later by its own builder, one after another, in the same project. Add two more sections to stack.md. "Build order": a list, one item per area, each starting with the area ID, in the order the areas should be built (what others depend on first); every area exactly once. "Shared contracts": the data shapes, API routes, shared components and naming that more than one area uses, in behaviour and technology words, so builders of different areas fit together.`;
+
+export const areaBuildNote = (id, featureIds, order, isRound, failing) => `\n\nThis app is built area by area, in this order: ${order.join(', ')}. You build only the area "${id}": its features are the entries of input/features.md tagged [area: ${id}] (${featureIds.join(', ')}). project/ may already hold earlier areas: keep them working, follow the Build order and Shared contracts in input/stack.md, and do not rewrite other areas. Keep project/rebuild-run.json valid for everything built so far.${isRound ? ` Fix only failures listed for these features: ${featureIds.filter((f) => failing && failing.has(f)).join(', ')}.` : ''} Commit when done.`;
+
+function checkChild(r, transcript, runDir, target, where = '') {
+  const hits = scanTranscript(transcript, scanPaths(runDir, target));
+  if (hits.length) throw new Error(`transcript names a forbidden path (${hits[0].forbidden})${where}`);
+  if (r.code !== 0 || r.isError) throw new Error(`child failed${where}: ${(r.text || r.error || 'exit ' + r.code).slice(0, 300)}`);
+}
+
 // ---- CLI ----
 export function cloneProject(from, to) {
   const git = (...a) => spawnSync('git', ['-C', from, ...a], { encoding: 'utf8' });
@@ -261,9 +284,10 @@ export async function main(argv) {
   const result = { ok: false, reason: '', costUsd: 0, transcript };
   let room;
   try {
-    let budget = BUDGET_USD.build;
+    const sized = readPlan(runDir);
+    let budget = sized.buildUsd;
     if (mode === 'build' && failures) {
-      const left = LOOP_USD - readCost(runDir).spent;
+      const left = sized.loopUsd - readCost(runDir).spent;
       if (left <= 0) throw new Error('budget');
       budget = Math.min(budget, left);
     }
@@ -277,19 +301,54 @@ export async function main(argv) {
     const deny = denyList(runDir, target);
     writeSettings(room, { denyPaths: deny, noWrite: scanPaths(runDir, target) });
     result.costUsd += await provewall({ runDir, room, target, transcriptPath: path.join(dir, `${mode}-${n}.wall.jsonl`) });
-    const prompt = fs.readFileSync(path.join(HERE, '..', 'prompts', mode + '.md'), 'utf8') + (failures ? '\n\nproject/ already holds the last round. Change it, do not start over. Fix the failures in input/failures.md without breaking any other feature in input/features.md. Commit when done.' : '');
-    const r = await runChild({ room, prompt, model: MODEL[mode], maxBudgetUsd: mode === 'build' ? budget : BUDGET_USD[mode], transcriptPath: transcript });
-    result.costUsd += r.costUsd;
-    const hits = scanTranscript(transcript, scanPaths(runDir, target));
-    if (hits.length) throw new Error(`transcript names a forbidden path (${hits[0].forbidden})`);
-    if (r.code !== 0 || r.isError) throw new Error(`child failed: ${(r.text || r.error || 'exit ' + r.code).slice(0, 300)}`);
+    const spec = readAreas(runDir);
+    const multi = !!spec && spec.areas.length > 1;
+    const failNote = failures ? '\n\nproject/ already holds the last round. Change it, do not start over. Fix the failures in input/failures.md without breaking any other feature in input/features.md. Commit when done.' : '';
+    const base = fs.readFileSync(path.join(HERE, '..', 'prompts', mode + '.md'), 'utf8');
     if (mode === 'stack') {
+      const ids = multi ? spec.areas.map((a) => a.id) : [];
+      const prompt = base + (multi ? areaStackNote(ids, featureCounts(runDir, spec)) : '');
+      const r = await runChild({ room, prompt, model: MODEL.stack, maxBudgetUsd: sized.stackUsd, transcriptPath: transcript });
+      result.costUsd += r.costUsd;
+      checkChild(r, transcript, runDir, target);
       if (!fs.existsSync(path.join(room, 'stack.md'))) throw new Error('child wrote no stack.md');
+      if (multi) buildOrder(fs.readFileSync(path.join(room, 'stack.md'), 'utf8'), ids);
       fs.copyFileSync(path.join(room, 'stack.md'), path.join(runDir, 'stack.md'));
-    } else {
+    } else if (!multi) {
+      const r = await runChild({ room, prompt: base + failNote, model: MODEL.build, maxBudgetUsd: budget, transcriptPath: transcript });
+      result.costUsd += r.costUsd;
+      checkChild(r, transcript, runDir, target);
       if (!fs.existsSync(path.join(room, 'project'))) throw new Error('child built no project/');
       if (failures) replaceProject(runDir, n, path.join(room, 'project'));
       else cloneProject(path.join(room, 'project'), path.join(runDir, 'project'));
+    } else {
+      // One child per area, in build order, in this room and its one git repo. The wall was proven once above; the transcript is checked after every child.
+      const ids = spec.areas.map((a) => a.id);
+      const order = buildOrder(fs.readFileSync(path.join(runDir, 'stack.md'), 'utf8'), ids);
+      const of = featureAreas(fs.readFileSync(path.join(runDir, 'features.md'), 'utf8'), spec);
+      const doneFile = path.join(dir, 'areas-done.json');
+      const doneAreas = !failures && fs.existsSync(doneFile) ? JSON.parse(fs.readFileSync(doneFile, 'utf8')) : {};
+      const failing = failures ? new Set(failureIds(fs.readFileSync(failures, 'utf8'))) : null;
+      const todo = order.filter((id) => (failing ? Object.keys(of).some((f) => of[f] === id && failing.has(f)) : !doneAreas[id]));
+      let pool = failures ? budget : budget - Object.values(doneAreas).reduce((a, x) => a + x.costUsd, 0);
+      result.areas = [];
+      for (const id of todo) {
+        if (pool <= 0) throw new Error(`budget: spent before area ${id} could be built; a rerun continues with the areas not done`);
+        const mine = Object.keys(of).filter((f) => of[f] === id).sort();
+        const tr = path.join(dir, `${mode}-${n}.${id}.jsonl`);
+        const r = await runChild({ room, prompt: base + areaBuildNote(id, mine, order, !!failures, failing) + failNote, model: MODEL.build, maxBudgetUsd: pool, transcriptPath: tr });
+        result.costUsd += r.costUsd;
+        pool -= r.costUsd;
+        result.areas.push({ id, costUsd: r.costUsd });
+        checkChild(r, tr, runDir, target, ` in area ${id}`);
+        if (!fs.existsSync(path.join(room, 'project'))) throw new Error(`child built no project/ in area ${id}`);
+        if (!failures) {
+          cloneProject(path.join(room, 'project'), path.join(runDir, 'project'));
+          doneAreas[id] = { costUsd: r.costUsd };
+          fs.writeFileSync(doneFile, JSON.stringify(doneAreas, null, 2));
+        }
+      }
+      if (failures) replaceProject(runDir, n, path.join(room, 'project'));
     }
     result.ok = true;
   } catch (e) {
@@ -299,6 +358,7 @@ export async function main(argv) {
     fs.rmSync(path.join(runDir, '.canary'), { force: true });
   }
   fs.writeFileSync(resultPath, JSON.stringify(result, null, 2));
+  addCost(runDir, mode === 'stack' ? 'Stack' : 'Rebuild', result.costUsd);
   console.log('RESULT ' + resultPath);
   console.log(JSON.stringify({ ok: result.ok, reason: result.reason }));
   return result.ok ? 0 : 1;

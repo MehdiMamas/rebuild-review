@@ -1,0 +1,41 @@
+{
+  "gate": { "minPassRate": 0.95 },
+  "verdict": { "adoptOverall": 15, "worseValue": -0.15, "betterValue": 0.15 },
+  "values": {
+    "speed": {
+      "weight": 0.4,
+      "metrics": [
+        { "name": "lcp", "better": "lower", "floor": 100, "unit": "ms" },
+        { "name": "inp-ms", "better": "lower", "floor": 16, "unit": "ms" },
+        { "name": "cls", "better": "lower", "floor": 0.02, "unit": "score" },
+        { "name": "bytes", "better": "lower", "floor": 10240, "unit": "bytes" },
+        { "name": "heap-mb", "better": "lower", "floor": 2, "unit": "MB" },
+        { "name": "build-ms", "better": "lower", "floor": 2000, "unit": "ms" },
+        { "name": "script-ms-per-key", "better": "lower", "floor": 2, "unit": "ms" }
+      ]
+    },
+    "ux": {
+      "weight": 0.4,
+      "metrics": [{ "name": "probe-failures", "better": "lower", "floor": 0, "unit": "probes" }],
+      "question": "Walk through it against the platform's interface guidelines: are loading, error and empty states there, is focus handled?"
+    },
+    "simplicity": {
+      "weight": 0.1,
+      "metrics": [
+        { "name": "lines", "better": "lower", "floor": "10%", "unit": "lines" },
+        { "name": "files", "better": "lower", "floor": 0, "unit": "files" },
+        { "name": "dependencies", "better": "lower", "floor": 0, "unit": "packages" },
+        { "name": "build-steps", "better": "lower", "floor": 0, "unit": "commands" },
+        { "name": "longest-file", "better": "lower", "floor": 0, "unit": "lines" }
+      ],
+      "question": "Could a newcomer change it?"
+    },
+    "compatibility": {
+      "weight": 0.1,
+      "metrics": [
+        { "name": "a11y-violations", "better": "lower", "floor": 0, "unit": "nodes" },
+        { "name": "overflow-narrow", "better": "lower", "floor": 0, "unit": "px" }
+      ]
+    }
+  }
+}
