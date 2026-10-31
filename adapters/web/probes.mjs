@@ -1,6 +1,6 @@
 // Interaction probes. Each is a general check for one kind of failure; none knows the app.
 // Result rows: { probe, screen, passed, evidence }. passed=false means the probe flagged a problem.
-import { makeContext, sleep } from './context.mjs';
+import { makeContext, sleep, isDataRequest } from './context.mjs';
 
 const TYPE_TEXT = 'xyz';
 const FEEDBACK = `(() => {
@@ -53,9 +53,9 @@ async function open(browser, origin, url, opts = {}) {
   await page.addInitScript(WATCH);
   const api = { pending: 0, seen: [] };
   page.on('request', (r) => {
-    if (['fetch', 'xhr'].includes(r.resourceType())) { api.pending++; api.seen.push(`${r.method()} ${r.url()}`); }
+    if (isDataRequest(r)) { api.pending++; api.seen.push(`${r.method()} ${r.url()}`); }
   });
-  const done = (r) => ['fetch', 'xhr'].includes(r.resourceType()) && api.pending--;
+  const done = (r) => isDataRequest(r) && api.pending--;
   page.on('requestfinished', done);
   page.on('requestfailed', done);
   return { context, rec, page, faults, api, go: () => page.goto(url, { waitUntil: 'load' }) };

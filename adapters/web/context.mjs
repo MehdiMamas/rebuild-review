@@ -39,7 +39,17 @@ export function assertLocalhost(address) {
   return u;
 }
 
-const isApi = (r) => ['fetch', 'xhr'].includes(r.request().resourceType());
+// A request the app's own code made for data. Framework route prefetches and client navigation payloads are not.
+export function isDataRequest(request) {
+  if (!['fetch', 'xhr'].includes(request.resourceType())) return false;
+  const h = request.headers();
+  if (/prefetch/i.test(h['sec-purpose'] || '') || /prefetch/i.test(h['purpose'] || '')) return false;
+  if (h['next-router-prefetch']) return false;
+  if (h['rsc'] && !h['next-action']) return false;
+  if (new URL(request.url()).pathname.startsWith('/_next/data/')) return false;
+  return true;
+}
+const isApi = (r) => isDataRequest(r.request());
 
 // Makes a context that blocks anything off the app's origin and records a redacted HAR.
 // faults (mutable): { slowMs: delay every fetch/xhr, failApi: answer every fetch/xhr with 500 }
