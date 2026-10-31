@@ -49,7 +49,7 @@ export function coverage(runDir, rubric = tryJson(DEFAULT_RUBRIC)) {
   }
   const cov = tryJson(path.join(runDir, 'golden', 'coverage.json'));
   if (cov) {
-    const reached = count(cov.screensReached ?? cov.reached), cut = count(cov.screensCutOff ?? cov.cutOff);
+    const reached = count(cov.screensReached), cut = count(cov.screensCut);
     if (reached + cut > 0) { inputs.screensReached = reached; inputs.screensSeen = reached + cut; factors.push(reached / (reached + cut)); }
     else left.push('screens (golden/coverage.json has no screen counts)');
     if (cov.buttonsSkipped !== undefined) inputs.buttonsSkipped = count(cov.buttonsSkipped);
@@ -127,7 +127,7 @@ export function confidence(runDir, { rubric, calibration } = {}) {
   let percent = parts[limitedBy].percent;
   // Range check: size.json when present, else the original's measured line count.
   const size = tryJson(path.join(runDir, 'size.json'));
-  const lines = size && typeof size.lines === 'number' ? size.lines : (score.values.simplicity && (score.values.simplicity.measured || []).find((m) => m.name === 'lines') || {}).original;
+  const lines = size && size.size && typeof size.size.lines === 'number' ? size.size.lines : (score.values.simplicity && (score.values.simplicity.measured || []).find((m) => m.name === 'lines') || {}).original;
   const biggest = parts['track record'].inputs.biggestSourceLines;
   const cap = (rubric.confidence || {}).outsideRangeCap ?? 30;
   const outsideRange = typeof lines === 'number' && lines > biggest;

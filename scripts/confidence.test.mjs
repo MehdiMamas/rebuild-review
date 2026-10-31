@@ -54,10 +54,10 @@ test('coverage multiplies features and metrics; untested and not-run count again
 });
 
 test('coverage uses screens reached out of seen when coverage.json exists', () => {
-  const c = coverage(run({ coverageJson: { screensReached: 3, screensCutOff: 1, buttonsSkipped: 4 } }), rubric);
+  const c = coverage(run({ coverageJson: { screensReached: ['/', '/a', '/b'], screensCut: ['/c'], buttonsSkipped: [{ screen: '/', tried: 20, skipped: 4 }] } }), rubric);
   assert.equal(c.inputs.screensReached, 3);
   assert.equal(c.inputs.screensSeen, 4);
-  assert.equal(c.inputs.buttonsSkipped, 4);
+  assert.equal(c.inputs.buttonsSkipped, 1);
   assert.equal(c.percent, 75);
   assert.deepEqual(c.left, []);
 });
@@ -128,7 +128,7 @@ test('a target over the calibrated range is capped and says so', () => {
 
 test('size.json is used for the range check when present', () => {
   const d = run();
-  w(path.join(d, 'size.json'), { lines: 9000 });
+  w(path.join(d, 'size.json'), { size: { lines: 9000 }, plan: { units: 2 } });
   assert.equal(confidence(d, { rubric, calibration: record(100, 100) }).outsideRange, true);
 });
 
