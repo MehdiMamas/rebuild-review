@@ -21,3 +21,4 @@ test('still fails on real .js paths', () => {
     assert.ok(checkText(t, []).some((p) => p.includes('source file path')), t);
   }
 });
+test('passes on a "Not built (from the docs)" section', () => assert.deepEqual(checkText('F-001 keep. Search filters tasks.\n\n## Not built (from the docs)\n- Export to PDF is described in the docs but the app has no such control.', src), []));

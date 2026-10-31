@@ -86,6 +86,7 @@ export function prepareRoom({ runDir, target, inputs }) {
   }
   const proj = path.join(runDir, 'project');
   if (fs.existsSync(proj)) fs.cpSync(proj, path.join(room, 'project'), { recursive: true });
+  dropEnv(path.join(room, 'project', 'rebuild-run.json'));
   return room;
 }
 
@@ -206,6 +207,26 @@ export function denyList(runDir, target) {
 }
 
 // ---- CLI ----
+// run.json's optional "env" (stand-in settings) is copied into the delivered rebuild-run.json so the rebuild starts like the original. Values are never printed.
+export function copyEnv(runDir) {
+  const from = path.join(runDir, 'run.json'), to = path.join(runDir, 'project', 'rebuild-run.json');
+  if (!fs.existsSync(from) || !fs.existsSync(to)) return;
+  const env = JSON.parse(fs.readFileSync(from, 'utf8')).env;
+  if (env === undefined) return;
+  const rb = JSON.parse(fs.readFileSync(to, 'utf8'));
+  rb.env = env;
+  fs.writeFileSync(to, JSON.stringify(rb, null, 2) + '\n');
+}
+
+// The builder never sees the settings: remove them from the copy it gets.
+function dropEnv(file) {
+  if (!fs.existsSync(file)) return;
+  const rb = JSON.parse(fs.readFileSync(file, 'utf8'));
+  if (!('env' in rb)) return;
+  delete rb.env;
+  fs.writeFileSync(file, JSON.stringify(rb, null, 2) + '\n');
+}
+
 export function cloneProject(from, to) {
   const git = (...a) => spawnSync('git', ['-C', from, ...a], { encoding: 'utf8' });
   if (git('rev-parse', '--verify', 'HEAD').status !== 0) throw new Error('the built project is not a git repo with a commit');
@@ -254,6 +275,7 @@ export async function main(argv) {
     } else {
       if (!fs.existsSync(path.join(room, 'project'))) throw new Error('child built no project/');
       cloneProject(path.join(room, 'project'), path.join(runDir, 'project'));
+      copyEnv(runDir);
     }
     result.ok = true;
   } catch (e) {

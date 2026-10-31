@@ -18,7 +18,7 @@ export async function startApp(run, appFile) {
   let buildMs = null;
   if (run.build) { const t0 = Date.now(); execSync(run.build, { cwd: workDir, stdio: 'inherit' }); buildMs = Date.now() - t0; }
   const port = new URL(origin).port;
-  const server = spawn(run.start, { cwd: workDir, shell: true, detached: true, stdio: 'ignore', env: { ...process.env, PORT: port } });
+  const server = spawn(run.start, { cwd: workDir, shell: true, detached: true, stdio: 'ignore', env: { ...process.env, ...run.env, PORT: port } });
   const stop = () => { try { process.kill(-server.pid); } catch {} server.kill(); };
   process.on('exit', stop);
   for (let i = 0; ; i++) {

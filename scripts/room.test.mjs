@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { filterGolden, prepareRoom, scanTranscript, wallTried, cloneProject, denyList, writeSettings } from './room.mjs';
+import { filterGolden, prepareRoom, scanTranscript, wallTried, cloneProject, copyEnv, denyList, writeSettings } from './room.mjs';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'room-test-'));
 
@@ -164,4 +164,17 @@ test('denyList covers sibling runs, the plugin root and a worktree target\'s git
   writeSettings(room, { denyPaths: deny, noWrite: [wt, runDir] });
   const rules = JSON.parse(fs.readFileSync(path.join(base, 'room.settings', 'settings.json'), 'utf8')).permissions.deny;
   assert.ok(rules.includes(`Edit(/${wt})`) && rules.includes(`Edit(/${runDir}/**)`));
+});
+
+test('copyEnv copies run.json env into rebuild-run.json, and leaves it alone when run.json has none', () => {
+  const runDir = tmp();
+  fs.mkdirSync(path.join(runDir, 'project'));
+  const rb = path.join(runDir, 'project', 'rebuild-run.json');
+  fs.writeFileSync(rb, JSON.stringify({ start: 'x', dir: '.' }));
+  fs.writeFileSync(path.join(runDir, 'run.json'), JSON.stringify({ start: 'y' }));
+  copyEnv(runDir);
+  assert.equal('env' in JSON.parse(fs.readFileSync(rb, 'utf8')), false);
+  fs.writeFileSync(path.join(runDir, 'run.json'), JSON.stringify({ start: 'y', env: { SETTING: 'stand-in' } }));
+  copyEnv(runDir);
+  assert.deepEqual(JSON.parse(fs.readFileSync(rb, 'utf8')), { start: 'x', dir: '.', env: { SETTING: 'stand-in' } });
 });

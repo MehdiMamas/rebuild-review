@@ -36,3 +36,8 @@ test('settle moves wrong and flaky tests, notes them, rewrites original.json; me
   assert.deepEqual(out.map((o) => [o.feature, o.original]), [['F-001', 'pass'], ['F-002', 'not run'], ['F-003', 'not run'], ['F-004', 'not run']]);
   fs.rmSync(t, { recursive: true, force: true });
 });
+
+test('kinds ignores the "Not built (from the docs)" section (bullets without an F-id)', () => {
+  const withSection = md + '\n## Not built (from the docs)\n- Export to PDF is described in the docs but the app has no such control.\n- Dark theme toggle is documented only.\n';
+  assert.deepEqual(kinds(withSection), { 'F-001': 'keep', 'F-002': 'defect', 'F-003': 'keep' });
+});
