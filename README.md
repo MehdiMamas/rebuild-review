@@ -49,7 +49,16 @@ With it come:
 
 ## Cost and size
 
-A run always covers the whole app. Before spending, the skill measures the source (`scripts/size.mjs`) and prints an estimated cost range; the run needs `maxUsd` at or above the high end, otherwise nothing is spent. Budgets scale with size (`scale.json`), and actual spend per phase is written to `cost.json` in the run folder. `cost.json` covers the stack and rebuild steps only; agents outside them are not in it.
+A run always covers the whole app. Before spending, the skill measures the source (`scripts/size.mjs`) and prints an estimated cost range; the run needs `maxUsd` at or above the high end, otherwise nothing is spent. Budgets scale with size (`scale.json`), and actual spend per phase is written to `cost.json` in the run folder. `cost.json` covers the stack and rebuild steps only.
+
+**`maxUsd` only limits those steps too.** The agents that inventory, write tests and judge are not priced or capped, so the true total is higher than `cost.json` and can pass `maxUsd`.
+
+Measured so far:
+
+| Project | Source lines | `cost.json` | Rest of the run |
+|---|---|---|---|
+| The planted fixture in `benchmark/` | 306 | $11.65 to $15.19 | not priced |
+| A private web app, several runs | 3,159 to 6,270 | $6 to $11 | one run: 63 agents, 3.15M tokens, 73 minutes |
 
 ### Big apps
 
@@ -66,8 +75,15 @@ The run ends with one page, `report/index.html`, with no scripts and its images 
 - **Coverage:** what was reached, and what was not.
 - **Confidence:** a low number with "track record" as the limit means the tool has few checked runs, not that this verdict looks bad.
 
+## Example report
+
+[`docs/example-report.html`](docs/example-report.html) is the report from one run on the planted fixture; download it and open it in a browser. Its link to the project does not work outside the run folder.
+
+![Top of the example report: verdict, confidence and scores](docs/example-report.png)
+
 ## Known limits
 
+- A dead route stays. A page reachable only by typing its address looks the same as a hidden feature that must survive, so the rebuild keeps it. On the planted fixture, rebuilds beat 14 of 15 items, and this is the miss ([#9](https://github.com/MehdiMamas/rebuild-review/issues/9)).
 - Capture exists for web and Electron only. Other platforms stop with a plain reason.
 - Compatibility is narrow: accessibility violations and horizontal overflow at 390 px, in Chromium. Other browsers are not checked.
 - Screens are found by crawling and clicking, up to a cap (`--max-screens`, 30 by default). Screens cut by the cap are listed in Coverage, not hidden.
