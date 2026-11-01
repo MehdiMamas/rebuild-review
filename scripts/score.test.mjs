@@ -116,12 +116,13 @@ test('measure: source counts from a walk, dependencies, build steps, worst per s
   put(path.join(d, 'src/package-lock.json'), '{}');
   put(path.join(d, 'src/node_modules/x/i.js'), 'x');
   put(path.join(d, 'src/logo.png'), 'a\0b');
+  put(path.join(d, 'src/spec.md'), '1\n'.repeat(500));
   put(path.join(d, 'g/timings.json'), [{ name: 'root.lcp', value: 100 }, { name: 'a.lcp', value: 300 }, { name: 'inp-ms', value: 20 }, { name: 'root.load', value: 9 }]);
   put(path.join(d, 'g/probes.json'), [{ passed: false }, { passed: true }, { passed: false }]);
   put(path.join(d, 'g/a11y-violations.json'), [{ screen: 'root', violations: [{ id: 'label', nodes: 2 }, { id: 'x', nodes: 1 }] }]);
   put(path.join(d, 'run.json'), { install: 'npm i && npm ci', build: 'npm run build' });
   const m = measure(path.join(d, 'src'), path.join(d, 'g'), { run: path.join(d, 'run.json') });
-  assert.deepEqual(m, { lcp: 300, 'inp-ms': 20, 'probe-failures': 2, 'a11y-violations': 3, files: 3, lines: 5, 'longest-file': 3, dependencies: 3, 'build-steps': 3 });
+  assert.deepEqual(m, { lcp: 300, 'inp-ms': 20, 'probe-failures': 2, 'a11y-violations': 3, files: 2, lines: 4, 'longest-file': 3, dependencies: 3, 'build-steps': 3 });
 });
 
 test('blind leaves out .git, README, run files and stack.md, and keeps both sides apart', () => {
