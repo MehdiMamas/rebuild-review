@@ -379,6 +379,7 @@ const ran = []
 const deps = await agent(`Run exactly: node ${q(pluginRoot + '/scripts/adapter-deps.mjs')} ${q(pluginRoot)} . Return ok true if it exited 0, otherwise ok false with its error output as detail. Change nothing else.`, { ...CHEAP, label: 'adapter-deps', schema: RUN_RESULT })
 if (!deps || !deps.ok) {
   const reason = `adapter dependencies: ${(deps && deps.detail) || 'agent died'}`
+  await stoppedReport('Setup', reason)
   return { ran, stopped: 'Setup', reason }
 }
 for (const phase of PHASES) {
@@ -393,11 +394,11 @@ for (const phase of PHASES) {
 4. Otherwise do not run the capture yourself; return captured true when run.json is written. If any step failed, return captured false with the error as the reason.`,
       { model: 'sonnet', effort: 'low', label: 'Capture', phase, schema: CAPTURE_RESULT },
     )
-    if (!prep || !prep.captured) return { ran, stopped: 'Capture', reason: (prep && prep.reason) || 'capture agent died' }
+    if (!prep || !prep.captured) { const reason = (prep && prep.reason) || 'capture agent died'; await stoppedReport(phase, reason); return { ran, stopped: 'Capture', reason } }
     const cap = await longRun('capture', `node ${q((await adapterDir()) + '/capture.mjs')} --app ${q(runDir + '/run.json')} --out ${q(runDir + '/golden')}`, 'capture', phase)
-    if (!exitedOk(cap)) return { ran, stopped: 'Capture', reason: `the capture did not finish: ${whyNot(cap)}` }
+    if (!exitedOk(cap)) { const reason = `the capture did not finish: ${whyNot(cap)}`; await stoppedReport(phase, reason); return { ran, stopped: 'Capture', reason } }
     const captured = await agent(`If ${runDir}/golden/manifest.json exists, write ${runDir}/Capture.done containing the word done and return captured true. Otherwise return captured false with the reason "no manifest.json". Touch nothing else.`, { ...CHEAP, label: 'Capture.done', phase, schema: CAPTURE_RESULT })
-    if (!captured || !captured.captured) return { ran, stopped: 'Capture', reason: (captured && captured.reason) || 'capture agent died' }
+    if (!captured || !captured.captured) { const reason = (captured && captured.reason) || 'capture agent died'; await stoppedReport(phase, reason); return { ran, stopped: 'Capture', reason } }
     ran.push(phase)
     continue
   }
