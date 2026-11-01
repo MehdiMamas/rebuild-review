@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { kinds, wrongTests, settle, merge } from './parity-results.mjs';
+import { kinds, wrongTests, settle, merge, failing, cleanDetail, readCost, loop, MAX_ROUNDS, LOOP_USD } from './parity-results.mjs';
 
 const md = '# Features\n\nF-001 keep. Page.\n- **F-002 defect.** No loading\nF-003 Keep: shortcut\nsome other line\n';
 const res = (o) => Object.entries(o).map(([feature, passed]) => ({ feature, passed, detail: '' }));
@@ -40,4 +40,109 @@ test('settle moves wrong and flaky tests, notes them, rewrites original.json; me
 test('kinds ignores the "Not built (from the docs)" section (bullets without an F-id)', () => {
   const withSection = md + '\n## Not built (from the docs)\n- Export to PDF is described in the docs but the app has no such control.\n- Dark theme toggle is documented only.\n';
   assert.deepEqual(kinds(withSection), { 'F-001': 'keep', 'F-002': 'defect', 'F-003': 'keep' });
+});
+
+// ---- the loop ----
+const feat = 'F-001 keep. A\nF-002 defect. B\nF-003 keep. C\nF-004 keep. D\n';
+function runFixture({ rebuild, rounds = [], builds = [{ n: 1, cost: 1 }], err } = {}) {
+  const run = fs.mkdtempSync(path.join(os.tmpdir(), 'loop-'));
+  const par = path.join(run, 'parity');
+  fs.mkdirSync(par); fs.mkdirSync(path.join(run, 'rebuild')); fs.mkdirSync(path.join(run, 'project'));
+  fs.writeFileSync(path.join(run, 'features.md'), feat);
+  fs.writeFileSync(path.join(par, 'untested.md'), 'F-004: not visible\n');
+  if (rebuild) fs.writeFileSync(path.join(par, 'rebuild.json'), JSON.stringify(Object.entries(rebuild).map(([feature, passed]) => ({ feature, passed, detail: passed ? '' : `bad ${feature}` }))));
+  if (rounds.length) fs.writeFileSync(path.join(par, 'rounds.json'), JSON.stringify(rounds.map((failing, i) => ({ round: i + 1, build: i + 1, failing, costUsd: 0 }))));
+  if (err) fs.writeFileSync(path.join(par, 'run-error.txt'), err);
+  for (const b of builds) fs.writeFileSync(path.join(run, 'rebuild', `build-${b.n}.result.json`), JSON.stringify({ ok: true, costUsd: b.cost }));
+  return { run, par, md: path.join(run, 'features.md') };
+}
+
+test('failing counts a missing result, keeps defect, skips untested features', () => {
+  const f = runFixture({ rebuild: { 'F-001': true, 'F-002': false } });
+  assert.deepEqual(failing(f.par, f.md).map((x) => x.feature), ['F-002', 'F-003']);
+  assert.equal(failing(f.par, f.md)[1].detail, 'no result for this feature');
+});
+
+test('cleanDetail drops stack lines, hides POSIX and Windows paths, keeps a URL, caps at 15 lines', () => {
+  const t = cleanDetail('Error: expected 1\n    at Foo (/home/x/y.mjs:3:4)\nopen /home/x/y.mjs failed\nat C:\\Users\\x\\a.js\nfile C:\\Users\\x\\a.js and D:/w/b.js\nsee http://127.0.0.1:3000/api/tasks ok\nin /tmp/par/tests', '/tmp/par');
+  assert.equal(t, 'Error: expected 1\nopen <path> failed\nfile <path> and <path>\nsee http://127.0.0.1:3000/api/tasks ok\nin <path>/tests');
+  assert.equal(cleanDetail(Array.from({ length: 30 }, (_, i) => `l${i}`).join('\n')).split('\n').length, 15);
+});
+
+test('readCost sums build results only and finds the highest build number', () => {
+  const f = runFixture({ builds: [{ n: 1, cost: 2 }, { n: 3, cost: 4.5 }] });
+  fs.writeFileSync(path.join(f.run, 'rebuild', 'stack-1.result.json'), JSON.stringify({ costUsd: 99 }));
+  assert.deepEqual(readCost(f.run), { spent: 6.5, build: 3 });
+});
+
+test('loop: done when nothing fails; builds otherwise and writes rounds.json and failures.md', () => {
+  let f = runFixture({ rebuild: { 'F-001': true, 'F-002': true, 'F-003': true } });
+  assert.deepEqual(loop(f.par, f.md, f.run), { action: 'done', reason: 'all tested features pass', failing: [] });
+  f = runFixture({ rebuild: { 'F-001': true, 'F-002': false, 'F-003': true } });
+  const out = loop(f.par, f.md, f.run);
+  assert.equal(out.action, 'build'); assert.deepEqual(out.failing, ['F-002']);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(f.par, 'rounds.json'), 'utf8')), [{ round: 1, build: 1, failing: ['F-002'], costUsd: 1 }]);
+  assert.equal(fs.readFileSync(path.join(f.par, 'failures.md'), 'utf8'), '## F-002 (defect)\nbad F-002\n');
+});
+
+test('loop: stop with no progress after 2 rounds that did not improve, and restores the best project', () => {
+  const f = runFixture({ rebuild: { 'F-001': false, 'F-002': false, 'F-003': true }, rounds: [['F-001'], ['F-001', 'F-002']], builds: [{ n: 1, cost: 1 }, { n: 2, cost: 1 }, { n: 3, cost: 1 }] });
+  fs.writeFileSync(path.join(f.run, 'project', 'v'), '3');
+  fs.mkdirSync(path.join(f.run, 'rebuild', 'project-from-build-1'));
+  fs.writeFileSync(path.join(f.run, 'rebuild', 'project-from-build-1', 'v'), '1');
+  const out = loop(f.par, f.md, f.run);
+  assert.deepEqual(out, { action: 'stop', reason: 'no progress', failing: ['F-001', 'F-002'], restored: 1 });
+  assert.equal(fs.readFileSync(path.join(f.run, 'project', 'v'), 'utf8'), '1');
+  assert.equal(fs.readFileSync(path.join(f.run, 'rebuild', 'project-from-build-3', 'v'), 'utf8'), '3');
+});
+
+test('loop: a tie picks the later build, so nothing is restored', () => {
+  const f = runFixture({ rebuild: { 'F-001': false, 'F-002': true, 'F-003': true }, rounds: [['F-001'], ['F-001']], builds: [{ n: 1, cost: 1 }, { n: 2, cost: 1 }, { n: 3, cost: 1 }] });
+  fs.mkdirSync(path.join(f.run, 'rebuild', 'project-from-build-1'));
+  const out = loop(f.par, f.md, f.run);
+  assert.equal(out.action, 'stop'); assert.equal(out.restored, undefined);
+});
+
+test('loop: stop on budget and on rounds', () => {
+  let f = runFixture({ rebuild: { 'F-001': false, 'F-002': true, 'F-003': true }, builds: [{ n: 1, cost: LOOP_USD }] });
+  assert.equal(loop(f.par, f.md, f.run).reason, 'budget');
+  f = runFixture({ rebuild: { 'F-001': false, 'F-002': true, 'F-003': true }, rounds: Array.from({ length: MAX_ROUNDS - 1 }, (_, i) => Array.from({ length: MAX_ROUNDS - i }, (_, j) => `x${j}`)) });
+  const out = loop(f.par, f.md, f.run);
+  assert.deepEqual([out.action, out.reason], ['stop', 'rounds']);
+});
+
+test('loop: run-error.txt makes every tested feature fail with that text', () => {
+  const f = runFixture({ err: 'app did not start' });
+  const out = loop(f.par, f.md, f.run);
+  assert.deepEqual(out.failing, ['F-001', 'F-002', 'F-003']);
+  assert.match(fs.readFileSync(path.join(f.par, 'failures.md'), 'utf8'), /## F-001 \(keep\)\napp did not start/);
+});
+
+test('cleanDetail drops quoted test source, assertion fields and test-at lines from real node --test output; file:// paths are hidden', () => {
+  const ok = [
+    'test at a.test.mjs:3:1', '\u2716 ok one (3.3ms)', '  AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:', '  ', '    assert.ok(rows.length > 0)', '  ',
+    '      at TestContext.<anonymous> (file:///work/a.test.mjs:3:48)', '    generatedMessage: true,', "    code: 'ERR_ASSERTION',", '    actual: false,', '    expected: true,', "    operator: '==',",
+  ].join('\n');
+  assert.equal(cleanDetail(ok), '\u2716 ok one (3.3ms)\n    actual: false,\n    expected: true,');
+  const eq = ['test at a.test.mjs:4:1', '\u2716 eq (0.1ms)', '  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:', '  ', '  3 !== 4', '  ', "    operator: 'strictEqual',"].join('\n');
+  assert.equal(cleanDetail(eq), '\u2716 eq (0.1ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  3 !== 4\n  ');
+  assert.equal(cleanDetail('failed in file:///Users/x/y/a.mjs:3 here'), 'failed in <path> here');
+});
+
+test('failures.md carries the assertion message; a failure with no message says so and names the feature; no test source or path', () => {
+  const head = ['test at /tmp/p/tests/F-002.test.mjs:3:1', '\u2716 seeded rows (1.0ms)'];
+  const withMsg = [...head, '  AssertionError [ERR_ASSERTION]: expected title, status and due date on each row; saw only the title', '      at TestContext.<anonymous> (file:///tmp/p/tests/F-002.test.mjs:3:48)', '    actual: false,'].join('\n');
+  const noMsg = [...head, '  AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:', '  ', '    assert.ok(rows.every(Boolean))', '  ', '      at TestContext.<anonymous> (file:///tmp/p/tests/F-002.test.mjs:3:48)', '    actual: false,'].join('\n');
+  const run = (detail) => {
+    const f = runFixture({});
+    fs.writeFileSync(path.join(f.par, 'run-error.txt'), detail);
+    loop(f.par, f.md, f.run);
+    return fs.readFileSync(path.join(f.par, 'failures.md'), 'utf8');
+  };
+  const a = run(withMsg);
+  assert.match(a, /expected title, status and due date on each row; saw only the title/);
+  assert.doesNotMatch(a, /gave no message|assert\.ok|\/tmp\/p/);
+  const b = run(noMsg);
+  assert.match(b, /## F-001 \(keep\)\nThe test gave no message for F-001; read its text in features\.md\./);
+  assert.doesNotMatch(b, /assert\.ok|rows\.every|\/tmp\/p/);
 });
