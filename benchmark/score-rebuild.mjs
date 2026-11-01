@@ -170,7 +170,10 @@ const checks = {
     const box = await searchBox(t.page);
     await box.click();
     armed = true;
-    await t.page.keyboard.type('ab', { delay: 0 });
+    // A gap longer than a usual debounce, so a debounced app still sends two requests.
+    await t.page.keyboard.type('a');
+    await sleep(500);
+    await t.page.keyboard.type('b');
     await sleep(3000);
     const end = norm(await t.page.innerText('body'));
     await t.context.close();

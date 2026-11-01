@@ -188,6 +188,12 @@ test('--stopped renders the leave page with no score/ and leaves Report.done alo
   const html = fs.readFileSync(path.join(d, 'report/index.html'), 'utf8');
   assert.match(html, /badge leave/);
   assert.match(html, /The run stopped at Rebuild: room agent died/);
+  assert.match(html, /run stopped before anything could be compared/);
+  assert.doesNotMatch(html, /no screens on this platform/);
+  if (!fs.existsSync(path.join(d, 'project'))) {
+    assert.match(html, /No project was built in this run/);
+    assert.doesNotMatch(html, /href="\.\.\/project\/"/);
+  }
   assert.match(html, /Keep the original/);
   assert.ok(!fs.existsSync(path.join(d, 'Report.done')));
 });

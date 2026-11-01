@@ -209,7 +209,7 @@ export function render(runDir, { embedCap = EMBED_CAP, thresholds, stopped } = {
   }).join('');
   const shots = pairs.length
     ? pairs.map((p) => `<div class="pair"><figure><figcaption>Original: ${esc(p.key)}</figcaption><img alt="Original, ${esc(p.key)}" src="data:image/png;base64,${p.a}"></figure><figure><figcaption>Rebuild: ${esc(p.key)}</figcaption><img alt="Rebuild, ${esc(p.key)}" src="data:image/png;base64,${p.b}"></figure></div>`).join('') + (left ? `<p class="mut">${left} more screenshot pair(s) left out (at most ${MAX_PAIRS} pairs and ${Math.round(embedCap / 1048576)} MB are embedded).</p>` : '')
-    : `<p class="mut">${hasAny ? (left ? `${left} screenshot pair(s) left out (embed limit).` : 'no screenshot exists on both sides') : 'no screens on this platform'}</p>`;
+    : `<p class="mut">${hasAny ? (left ? `${left} screenshot pair(s) left out (embed limit).` : 'no screenshot exists on both sides') : stopped ? 'the run stopped before anything could be compared' : 'no screens on this platform'}</p>`;
   sec('compare', 'Was, now and should', (cmpHtml || '<p class="mut">not written</p>') + '<h3>Screenshots</h3>' + shots);
 
   // 5 Features
@@ -252,7 +252,7 @@ export function render(runDir, { embedCap = EMBED_CAP, thresholds, stopped } = {
   sec('cost', 'Cost', `<p>${results.length ? `$${cost.toFixed(2)} across ${results.length} builder run(s)` : 'No builder cost was recorded'}${Array.isArray(rounds) ? `; ${rounds.length} round(s) in rounds.json` : ''}. Rebuild children only; other agents are not counted.</p>`);
 
   // 8 Where the project is
-  sec('project', 'Where the project is', `<p><a href="../project/">project/</a> <code>${esc(path.join(runDir, 'project'))}</code></p><p>To use it, copy it over your project by hand. This tool never changes your project, and files an issue only if you ask.</p>`);
+  sec('project', 'Where the project is', !fs.existsSync(path.join(runDir, 'project')) ? '<p class="mut">No project was built in this run.</p>' : `<p><a href="../project/">project/</a> <code>${esc(path.join(runDir, 'project'))}</code></p><p>To use it, copy it over your project by hand. This tool never changes your project, and files an issue only if you ask.</p>`);
 
   const page = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'"><title>Rebuild review report</title><style>${CSS}</style></head><body><main><h1>Rebuild review report</h1>${html.join('\n')}</main></body></html>`;
   fs.mkdirSync(path.join(runDir, 'report'), { recursive: true });
