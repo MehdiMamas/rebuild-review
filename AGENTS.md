@@ -18,6 +18,7 @@ what it renders, then scores the rebuild against the original. See README.md.
 - Setup: a run does it first (`scripts/adapter-deps.mjs` runs `npm install` in each `adapters/*` whose dependencies are missing; a failure stops the run with the reason). By hand: `cd adapters/web && npm install`. Chromium must be installed (`npx playwright install chromium`). Test: `node --test scripts/adapter-deps.test.mjs`.
 - Run: `node adapters/web/capture.mjs --app <runDir>/run.json --out <runDir>/golden [--states states.json]`. The app must already be cloned to `<runDir>/work/`; `run.json` is described in the contract. Only localhost addresses are accepted.
 - Test: `cd adapters/web && npm test` (about 3 minutes). It runs seven numbered checks on a `bench:init` copy of `benchmark/`, never on the repo folder, and prints which planted defects the probes flagged.
+- `startApp` (`adapters/web/app.mjs`) stops a leftover of the app on the run's port when the listener's working folder is inside the run's work copy (agents exploring the app can leave one); any other listener, a missing `lsof` or Windows still refuses. Test: `node --test scripts/app-env.test.mjs`.
 - Gotcha: `work/` holds source, so the sandbox for the rebuild step (#7) must deny reads of it as well as the target.
 
 ## Capture (Electron adapter)
