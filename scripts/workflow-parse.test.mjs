@@ -22,3 +22,11 @@ test('long commands go through longRun', () => {
   assert.ok(src.includes('async function longRun('))
   for (const l of src.split('\n').filter((l) => /capture\.mjs|parity\.mjs|room\.mjs/.test(l) && /\bnode \$\{q\(/.test(l))) assert.ok(/longRun\(/.test(l), l.slice(0, 120))
 })
+
+test('every stop of a run writes a report page', () => {
+  // A run that stops still ends with a page saying why. The Estimate stop has no `ran`: nothing was spent, so there is no run to report.
+  const lines = readFileSync(file, 'utf8').split('\n')
+  lines.forEach((l, i) => {
+    if (l.includes('return { ran, stopped')) assert.ok(/stoppedReport\(/.test(l) || /stoppedReport\(/.test(lines[i - 1]), l.slice(0, 120))
+  })
+})
