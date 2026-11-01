@@ -86,6 +86,10 @@ export async function launchApp(run, appFile, { theme = 'light' } = {}) {
   let pid = 0, stopped = false;
   const cleanup = () => { try { if (pid) process.kill(pid, 'SIGKILL'); } catch {} try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {} };
   process.on('exit', cleanup);
+  // If this process is killed with SIGKILL no exit handler runs, so a small watcher outside it removes the app and its profile folder.
+  // It starts before the launch: a kill during the launch would otherwise leave the app alive with nothing watching it.
+  // The folder reaches the watcher through its environment, not its command line, so killing by that folder does not kill the watcher first.
+  spawn(process.execPath, ['--input-type=module', '-e', WATCHER, String(process.pid)], { detached: true, stdio: 'ignore', env: { ...process.env, RR_WATCH_DIR: tmp } }).unref();
   let app;
   try {
     app = await _electron.launch({ executablePath, args, cwd: workDir, env, timeout: 30000 });
@@ -147,9 +151,6 @@ export async function launchApp(run, appFile, { theme = 'light' } = {}) {
     page.on('close', () => { const i = windows.indexOf(page); if (i >= 0) windows.splice(i, 1); });
   };
   app.on('window', watch);
-  // If this process is killed with SIGKILL no exit handler runs, so a small watcher outside it removes the app and its profile folder.
-  // The folder reaches the watcher through its environment, not its command line, so killing by that folder does not kill the watcher first.
-  spawn(process.execPath, ['--input-type=module', '-e', WATCHER, String(process.pid), String(app.process().pid)], { detached: true, stdio: 'ignore', env: { ...process.env, RR_WATCH_DIR: tmp } }).unref();
   const page = await app.firstWindow({ timeout: 30000 }).catch(async (e) => { await stopNow(); throw new Error(`the app opened no window: ${scrub(e.message).split('\n')[0]}`); });
   app.windows().forEach(watch);
 
@@ -207,17 +208,21 @@ export function electronOpener(run, appFile) {
   };
 }
 
+// Ends when the folder goes (a normal stop removes it). When the owner dies it kills by folder several times, since child processes may still be starting.
 const WATCHER = `
 import fs from 'node:fs'; import { spawnSync } from 'node:child_process';
-const [owner, app] = process.argv.slice(1).map(Number); const dir = process.env.RR_WATCH_DIR;
+const owner = Number(process.argv[1]); const dir = process.env.RR_WATCH_DIR;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const alive = (p) => { try { process.kill(p, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
-while (alive(owner) && alive(app)) await new Promise((r) => setTimeout(r, 400));
-if (alive(app)) {
-  if (process.platform === 'win32') spawnSync('taskkill', ['/F', '/T', '/PID', String(app)]);
-  else { spawnSync('pkill', ['-KILL', '-f', dir]); try { process.kill(app, 'SIGKILL'); } catch {} }
+while (alive(owner) && fs.existsSync(dir)) await sleep(400);
+if (fs.existsSync(dir)) {
+  for (let i = 0; i < 5; i++) {
+    if (process.platform === 'win32') spawnSync('powershell', ['-NoProfile', '-Command', 'Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -like ("*" + $env:RR_WATCH_DIR + "*") } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }']);
+    else spawnSync('pkill', ['-KILL', '-f', dir]);
+    await sleep(300);
+  }
+  try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
 }
-await new Promise((r) => setTimeout(r, 500));
-try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
 `;
 
 // Kills any process whose command line contains marker (the app's profile folder lives under it) and removes the folder.
