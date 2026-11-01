@@ -121,6 +121,8 @@ what it renders, then scores the rebuild against the original. See README.md.
   the model nicely. The main one: the rebuild agent cannot read the target's source.
 - A target project is never modified. Every run writes to its own output folder.
 - No Claude or AI attribution in commits, PRs or release notes.
+- This repo is public. Issues, comments, PRs and commits never name a private app reviewed with this tool or show what it does (its routes, its domain words; write a route as `/items/<id>`), and hold no local paths, machine state or process ids. Every helper brief says so. A leak is deleted and reposted clean, never edited.
+- Agents that start the app stop it by process id (`STOP_APP` in the workflow); never `pkill` or `killall`. `startApp` stays the guard for one left behind (#65).
 
 ## Size and scale (#35)
 - `node scripts/size.mjs <workDir> <runDir>` counts source lines of git-tracked files (skipping lock, vendored, generated and non-source files, all listed) and writes `<runDir>/size.json` with the budgets from `scale.json` (one unit = 20,000 lines; floors equal the old fixed limits; per-unit values are first guesses). Test: `node --test scripts/size.test.mjs`.

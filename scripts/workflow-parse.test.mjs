@@ -30,3 +30,9 @@ test('every stop of a run writes a report page', () => {
     if (l.includes('return { ran, stopped')) assert.ok(/stoppedReport\(/.test(l) || /stoppedReport\(/.test(lines[i - 1]), l.slice(0, 120))
   })
 })
+
+test('agents that start the app are told to stop it, and only the stop rule names pkill or killall', () => {
+  const lines = readFileSync(file, 'utf8').split('\n')
+  assert.equal(lines.filter((l) => /pkill|killall/.test(l) && !l.startsWith('const STOP_APP')).length, 0)
+  assert.equal(lines.filter((l) => l.includes('${STOP_APP}')).length, 4)
+})
