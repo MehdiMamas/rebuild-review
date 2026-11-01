@@ -7,6 +7,7 @@ import { makeContext, runStep, sleep, scrub } from './context.mjs';
 import { startApp } from './app.mjs';
 import { runProbes } from './probes.mjs';
 import { measureScreens } from './metrics.mjs';
+import { routeKey, pickNext, leftOver } from './crawl.mjs';
 
 const arg = (n) => { const i = process.argv.indexOf(`--${n}`); return i > 0 ? process.argv[i + 1] : undefined; };
 const appFile = path.resolve(arg('app') || '');
@@ -19,8 +20,10 @@ const SIZES = [{ w: 390, h: 844 }, { w: 1440, h: 900 }];
 const THEMES = ['light', 'dark'];
 const MAX_SCREENS = Number(arg('max-screens')) || 30;
 const MAX_BUTTONS = Number(arg('max-buttons')) || 10;
+const MAX_PER_ROUTE = Number(arg('max-per-route')) || 2;
 const MAX_HAR_BYTES = Number(arg('max-har-bytes')) || 50 * 1024 * 1024;
-const notCaptured = [], cutScreens = [], skippedButtons = [];
+const notCaptured = [], skippedButtons = [];
+let cutScreens = [], sameRouteSkipped = [];
 const slug = (u) => { const p = new URL(u).pathname.replace(/^\/|\/$/g, '').replace(/[^\w-]+/g, '-'); return p || 'root'; };
 const write = (f, data) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, typeof data === 'string' ? data : JSON.stringify(data, null, 2)); };
 
@@ -40,15 +43,19 @@ const queue = [start], seen = new Map();
 {
   const { context, rec } = await makeContext(browser, origin, { viewport: { width: 1440, height: 900 } });
   const page = await context.newPage();
+  const counts = new Map(), seenKey = (u) => new URL(u).pathname + new URL(u).search;
   while (queue.length) {
-    const url = queue.shift();
-    const key = new URL(url).pathname + new URL(url).search;
-    if (seen.has(key)) continue;
+    const at = pickNext(queue, counts, seen, seenKey, MAX_PER_ROUTE);
+    if (at < 0) break;
+    const url = queue.splice(at, 1)[0];
+    const key = seenKey(url);
     if (seen.size >= MAX_SCREENS) {
       notCaptured.push(`crawl stopped at ${MAX_SCREENS} screens; ${url} not visited`);
-      for (const u of [url, ...queue]) { const x = new URL(u), k = x.pathname + x.search; if (!seen.has(k) && !cutScreens.includes(k)) cutScreens.push(k); }
+      queue.unshift(url);
       break;
     }
+    const rk = routeKey(new URL(url).pathname);
+    counts.set(rk, (counts.get(rk) || 0) + 1);
     try { await page.goto(url); await settle(page); } catch (e) { notCaptured.push(`${url}: ${scrub(e.message).split('\n')[0]}`); seen.set(key, null); continue; }
     seen.set(key, { id: slug(url), url: key, title: await page.title() });
     const hrefs = await page.$$eval('a[href]', (as) => as.map((a) => a.href));
@@ -66,6 +73,8 @@ const queue = [start], seen = new Map();
     }
     queue.push(...[...found].sort());
   }
+  ({ cut: cutScreens, sameRouteSkipped } = leftOver(queue, counts, seen, seenKey));
+  if (sameRouteSkipped.length) notCaptured.push(`same route with different data, not visited (max ${MAX_PER_ROUTE} per route): ${sameRouteSkipped.map((r) => `${r.route} x${r.count}`).join(', ')}`);
   collect(rec);
   await context.close();
 }
@@ -138,9 +147,10 @@ let harBytes = 0;
 const harKept = har.filter((e) => (harBytes += JSON.stringify(e).length) <= MAX_HAR_BYTES);
 write(path.join(out, 'network.har'), { log: { version: '1.2', creator: { name: 'rebuild-review web adapter', version: '1' }, entries: harKept } });
 write(path.join(out, 'coverage.json'), {
-  caps: { maxScreens: MAX_SCREENS, maxButtons: MAX_BUTTONS, maxHarBytes: MAX_HAR_BYTES },
+  caps: { maxScreens: MAX_SCREENS, maxButtons: MAX_BUTTONS, maxPerRoute: MAX_PER_ROUTE, maxHarBytes: MAX_HAR_BYTES },
   screensReached: screens.map((s) => s.url),
   screensCut: cutScreens,
+  sameRouteSkipped,
   buttonsSkipped: skippedButtons,
   harEntriesSkipped: har.length - harKept.length,
 });
