@@ -41,7 +41,7 @@ what it renders, then scores the rebuild against the original. See README.md.
 
 ## Stack and Rebuild phases (clean room)
 
-- Both run through `node scripts/room.mjs stack|build --target T --run-dir R [--failures file]` (a sonnet agent starts it in the background and reads `<runDir>/rebuild/<mode>-<n>.result.json`). Prompts: `prompts/stack.md`, `prompts/build.md`. `Stack.done` / `Rebuild.done` are written only when the result says ok. `--failures` is for the parity loop (#8).
+- Both run through `node scripts/room.mjs stack|build --target T --run-dir R [--failures file]` (started by `longRun`, then a sonnet agent reads the result file named on the last output lines, `<runDir>/rebuild/<mode>-<n>.result.json`). Prompts: `prompts/stack.md`, `prompts/build.md`. `Stack.done` / `Rebuild.done` are written only when the result says ok. `--failures` is for the parity loop (#8).
 - In stack mode `stack.md` is checked with `check-features.mjs` right after the child writes it; on problems the child is asked up to two times to rewrite it (`fixStack`, transcripts `stack-<n>.fix-<i>.jsonl`), and it is copied to the run folder only after it passes.
 - The room is a new `mktemp -d` folder outside the run folder (the run folder's name contains the target's name). Everything the builder sees is a filtered copy in `room/input/`: `features.md`, `technology.md`, `stack.md` and `golden/`. `features.md`, `technology.md` and `stack.md` are re-checked with `check-features.mjs` before copying, and the copies are grepped for the target path and the run folder path.
 - `golden/` is filtered (`filterGolden`) because `network.har` holds the app's JS, CSS and source map bodies and `render.html` can hold inline scripts, which together are the source. JSON, image and font bodies stay (API contract and assets); `run.json` is dropped.
@@ -93,8 +93,8 @@ what it renders, then scores the rebuild against the original. See README.md.
 ## Workflow syntax
 
 - `workflows/rebuild-review.js` is one script of long template literals, so a plain backtick in a prompt breaks every run. `node --test scripts/workflow-parse.test.mjs` compiles it; CI runs that.
-- Every `run_in_background true` in a prompt also says `timeout 7200000`: the Bash default of 10 minutes kills a build. The same test checks it.
-- Every prompt that runs `capture.mjs` or `parity.mjs` includes `LONG` (same limit): a capture's probes take about a minute per screen on a real app. The same test checks it.
+- No prompt asks an agent to run a command in the background (`run_in_background`): `workflow-parse.test.mjs` fails on any. Every capture, parity and `room.mjs` step goes through `longRun(name, command, label, phase)`: one cheap agent runs `node scripts/long-run.mjs start <runDir>/long <name> -- <cmd>` (a detached supervisor; output in `<name>.log`, `<name>.exit` written when it ends; the same name still running is attached to, not started twice), then the script asks one cheap agent at a time to run `long-run.mjs wait <dir> <name> --seconds 540` once in the foreground (Bash timeout 600000) until it prints `exited` (with the code) or `lost` (no exit file and a dead supervisor), at most 54 waits (8 hours). Workflow code decides; no agent waits. Test: `node --test scripts/long-run.test.mjs`.
+- A top-level `claude -p` run of the workflow needs `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0`, or the workflow itself is stopped after 10 minutes.
 
 ## Conventions
 

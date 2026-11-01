@@ -8,8 +8,6 @@ export const meta = {
   ],
 }
 
-// A capture's probes take about a minute per screen on a real app, far over the Bash limits.
-const LONG = 'Run each node command with the Bash tool with run_in_background true and timeout 7200000, then wait for it to end before going on.'
 const q = JSON.stringify
 const ARGS = typeof args === 'string' ? (() => { try { return JSON.parse(args) } catch (e) { return args } })() : args
 if (!ARGS || !ARGS.target || !ARGS.runDir || !ARGS.pluginRoot) {
@@ -21,6 +19,43 @@ const PHASES = ['Capture', 'Inventory', 'Stack', 'Rebuild', 'Parity', 'Score', '
 const ADAPTER = `${ARGS.pluginRoot}/adapters`
 const CHEAP = { model: 'haiku', effort: 'low' }
 const CAPTURE_RESULT = { type: 'object', properties: { captured: { type: 'boolean' }, reason: { type: 'string' } }, required: ['captured'] }
+
+// Long commands (captures, parity runs, room.mjs) run under a detached supervisor (scripts/long-run.mjs). One cheap agent starts it;
+// then this script asks one cheap agent at a time to wait once (at most 540 s) until the command has exited or the supervisor is lost.
+// No agent is ever asked to wait for a command to end, and no agent holds the command in its own Bash call.
+const LONG_RUN = `${pluginRoot}/scripts/long-run.mjs`
+const LONG_DIR = `${runDir}/long`
+const WAIT_SECONDS = 540
+const MAX_WAITS = 54 // 54 waits of 540 s are 8 hours
+const STARTED = { type: 'object', required: ['ok'], properties: { ok: { type: 'boolean' }, detail: { type: 'string' } } }
+const WAITED = { type: 'object', required: ['state'], properties: { state: { type: 'string', enum: ['running', 'exited', 'lost'] }, code: { type: 'number' }, tail: { type: 'string' } } }
+async function longRun(name, command, label, phase) {
+  const started = await agent(`Run exactly this one command with the Bash tool (it returns at once):\nnode ${q(LONG_RUN)} start ${q(LONG_DIR)} ${q(name)} -- ${command}\nReturn ok true if it exited 0, otherwise ok false with its error output as detail. Change nothing else.`, { ...CHEAP, label: `${label}-start`, phase, schema: STARTED })
+  if (!started || !started.ok) return { state: 'lost', tail: `could not start: ${(started && started.detail) || 'start agent died'}` }
+  for (let n = 1; n <= MAX_WAITS; n++) {
+    const w = await agent(`Run exactly this one command with the Bash tool in the foreground (never in the background), with the Bash timeout set to 600000:\nnode ${q(LONG_RUN)} wait ${q(LONG_DIR)} ${q(name)} --seconds ${WAIT_SECONDS}\nIt prints one JSON line. Return its fields state, code (leave it out when null) and tail, copied exactly. Change nothing else.`, { ...CHEAP, label: `${label}-wait-${n}`, phase, schema: WAITED })
+    if (w && w.state !== 'running') return w
+  }
+  return { state: 'lost', tail: 'still running after 8 hours of waiting' }
+}
+const exitedOk = (r) => r.state === 'exited' && r.code === 0
+const whyNot = (r) => r.state === 'exited' ? `exit code ${r.code}: ${r.tail}` : `${r.state === 'lost' ? 'the command was lost' : r.state}: ${r.tail}`
+
+// The adapter folder for the platform in run.json, read once by an agent.
+let ADIR = null
+async function adapterDir() {
+  if (ADIR) return ADIR
+  const r = await agent(`Read "platform" in ${runDir}/run.json. Return dir as the adapter folder path ${ADAPTER}/<platform> (flutter uses the android folder). Change nothing.`, { ...CHEAP, label: 'adapter-dir', schema: { type: 'object', required: ['dir'], properties: { dir: { type: 'string' } } } })
+  if (!r || !r.dir) throw new Error('could not read the platform from run.json')
+  ADIR = r.dir
+  return ADIR
+}
+
+// A room.mjs command has ended; its result file is named on its last output lines.
+async function roomResult(r, label, phase) {
+  if (r.state !== 'exited') return { ok: false, reason: whyNot(r) }
+  return agent(`A command ended. Its last output lines were:\n${r.tail}\nThey end with "RESULT <file>" and a JSON line. Read that result file and return ok and reason from it. If there is no RESULT line or the file is missing, return ok false with the reason. Change nothing else, and never read anything under ${target} or ${runDir}/work.`, { model: 'sonnet', effort: 'low', label: `${label}-result`, phase, schema: { type: 'object', required: ['ok'], properties: { ok: { type: 'boolean' }, reason: { type: 'string' } } } })
+}
 
 // Scripts cannot read the filesystem, so an agent lists the finished phases.
 const listed = await agent(
@@ -131,8 +166,11 @@ async function runInventory() {
     await agent(`Write the file ${runDir}/InventoryFound.done containing the word done. Touch nothing else.`, { ...CHEAP, label: 'InventoryFound.done', phase: 'Inventory' })
   }
   // Second capture: the states the finders discovered, so the builder also sees error and loading states.
-  const recap = await agent(`Run the capture adapter again with the states the finders found. Read "platform" in ${runDir}/run.json; the adapter is ${ADAPTER}/<platform>/capture.mjs (flutter uses the android folder). ${LONG} Run: node <adapter> --app ${q(runDir + '/run.json')} --out ${q(runDir + '/golden')} --states ${q(INV + '/states.json')}. Return ok true if it exited 0, with the states count it printed, otherwise ok false with the error. Also read ${runDir}/golden/manifest.json and return total (the number of states in ${INV}/states.json) and missing (the entries of notCaptured that start with "state "), as a list of strings. Change nothing else.`, { model: 'sonnet', effort: 'low', label: 'second-capture', phase: 'Inventory', schema: { type: 'object', required: ['ok'], properties: { ok: { type: 'boolean' }, detail: { type: 'string' }, total: { type: 'number' }, missing: { type: 'array', items: { type: 'string' } } } } })
-  if (!recap || !recap.ok) throw new Error(`Inventory: second capture failed: ${(recap && recap.detail) || 'agent died'}. The run can be resumed by running the rebuild-review skill again with ${runDir} as the run folder, which repeats only the capture.`)
+  const adir = await adapterDir()
+  const cap = await longRun('second-capture', `node ${q(adir + '/capture.mjs')} --app ${q(runDir + '/run.json')} --out ${q(runDir + '/golden')} --states ${q(INV + '/states.json')}`, 'second-capture', 'Inventory')
+  if (!exitedOk(cap)) throw new Error(`Inventory: second capture failed: ${whyNot(cap)}. The run can be resumed by running the rebuild-review skill again with ${runDir} as the run folder, which repeats only the capture.`)
+  const recap = await agent(`Read ${runDir}/golden/manifest.json and return total (the number of states in ${INV}/states.json) and missing (the entries of notCaptured that start with "state "), as a list of strings. Change nothing.`, { ...CHEAP, label: 'second-capture-manifest', phase: 'Inventory', schema: { type: 'object', required: ['total', 'missing'], properties: { total: { type: 'number' }, missing: { type: 'array', items: { type: 'string' } } } } })
+  if (!recap) throw new Error('Inventory: the manifest agent died')
   const gaps = recap.missing || []
   if (gaps.length * 2 > (recap.total || 0)) throw new Error(`Inventory: ${gaps.length} of ${recap.total} states were not captured: ${gaps.slice(0, 5).join('; ')}`)
   await agent(`Write the file ${runDir}/Inventory.done containing the word done. Touch nothing else.`, { ...CHEAP, label: 'Inventory.done', phase: 'Inventory' })
@@ -149,7 +187,12 @@ async function runParity() {
   const has = await agent(`Read "platform" in ${runDir}/run.json. The adapter folder is ${ADAPTER}/<platform> (flutter uses the android folder). Return ok true if ${ADAPTER}/<that folder>/parity.mjs exists, otherwise ok false with detail "No parity adapter for platform <platform>". Change nothing.`, { ...CHEAP, label: 'parity-adapter', phase: 'Parity', schema: RUN_RESULT })
   if (!has || !has.ok) return { stopped: 'Parity', reason: (has && has.detail) || 'adapter check agent died' }
 
-  const runOn = (label, appJson, out) => agent(`Read "platform" in ${runDir}/run.json; the adapter folder is ${ADAPTER}/<platform> (flutter uses the android folder). ${LONG} Run: node <adapter folder>/parity.mjs --app ${q(appJson)} --tests ${q(TESTS)} --out ${q(out)}. Return ok true if it exited 0 and ${out} exists, with its one-line summary as detail; otherwise ok false with the error. Change nothing else.`, { model: 'sonnet', effort: 'low', label, phase: 'Parity', schema: RUN_RESULT })
+  const runOn = async (label, appJson, out) => {
+    const adir = await adapterDir()
+    const r = await longRun(label, `node ${q(adir + '/parity.mjs')} --app ${q(appJson)} --tests ${q(TESTS)} --out ${q(out)}`, label, 'Parity')
+    if (!exitedOk(r)) return { ok: false, detail: whyNot(r) }
+    return agent(`Return ok true if ${q(out)} exists, otherwise ok false with detail "no results file". Change nothing.`, { ...CHEAP, label: `${label}-out`, phase: 'Parity', schema: RUN_RESULT })
+  }
   const mustRun = (r, what) => { if (!r || !r.ok) throw new Error(`Parity: ${what} failed: ${(r && r.detail) || 'agent died'}`) }
 
   const areas = await ensureAreas()
@@ -194,11 +237,18 @@ A feature marked "keep" gets a test asserting the behaviour. A feature marked "d
 
   // The rebuild, when there is one: the suite runs on it, failures go back to the builder until it passes (code decides when to stop), then the visual diff.
   const RB = `${runDir}/project/rebuild-run.json`
-  const ADAPTER_PLAT = `Read "platform" in ${runDir}/run.json (the adapter folder is ${ADAPTER}/<platform>; flutter uses the android folder)`
   const hasRb = await agent(`Return ok true if ${q(RB)} exists, otherwise ok false. Change nothing.`, { ...CHEAP, label: 'parity-rebuild-exists', phase: 'Parity', schema: RUN_RESULT })
   if (!hasRb) throw new Error('Parity: the rebuild check agent died')
   if (hasRb.ok) {
-    const suite = (label) => agent(`${ADAPTER_PLAT}. Delete ${q(PAR + '/rebuild.json')} and ${q(PAR + '/run-error.txt')} if they exist. Run node ${q(pluginRoot + '/scripts/free-port.mjs')}, which prints a free port, and set the port in "address" of ${q(RB)} to it (http://127.0.0.1:<port>, nothing else in that file changes; the builder's committed copy keeps its own port and is not committed again). ${LONG} Then run: node <adapter folder>/parity.mjs --app ${q(RB)} --tests ${q(TESTS)} --out ${q(PAR + '/rebuild.json')}. If it exits non-zero, write its error text to ${q(PAR + '/run-error.txt')}. Return ok true if it exited 0, otherwise ok false. Change nothing else.`, { model: 'sonnet', effort: 'low', label, phase: 'Parity', schema: RUN_RESULT })
+    const suite = async (label) => {
+      const adir = await adapterDir()
+      const p = await agent(`Delete ${q(PAR + '/rebuild.json')} and ${q(PAR + '/run-error.txt')} if they exist. Run node ${q(pluginRoot + '/scripts/free-port.mjs')}, which prints a free port, and set the port in "address" of ${q(RB)} to it (http://127.0.0.1:<port>, nothing else in that file changes; the builder's committed copy keeps its own port and is not committed again). Return ok true when done. Change nothing else.`, { ...CHEAP, label: `${label}-prep`, phase: 'Parity', schema: RUN_RESULT })
+      if (!p || !p.ok) return p
+      const r = await longRun(label, `node ${q(adir + '/parity.mjs')} --app ${q(RB)} --tests ${q(TESTS)} --out ${q(PAR + '/rebuild.json')}`, label, 'Parity')
+      if (exitedOk(r)) return { ok: true }
+      await agent(`Write ${q(PAR + '/run-error.txt')} containing exactly this text: ${r.tail}\nTouch nothing else.`, { ...CHEAP, label: `${label}-error`, phase: 'Parity' })
+      return { ok: false }
+    }
     const LOOP_SCHEMA = { type: 'object', required: ['action', 'reason', 'failing'], properties: { action: { type: 'string', enum: ['done', 'build', 'stop'] }, reason: { type: 'string' }, failing: { type: 'array', items: { type: 'string' } }, restored: { type: 'number' } } }
     let restored = false
     let started = true
@@ -213,7 +263,8 @@ A feature marked "keep" gets a test asserting the behaviour. A feature marked "d
         if (d.action === 'stop') await agent(`Write ${q(PAR + '/loop-stop.txt')} containing: ${d.reason}. Touch nothing else.`, { ...CHEAP, label: 'parity-loop-stop', phase: 'Parity' })
         break
       }
-      const b = await agent(`Run this command with the Bash tool with run_in_background true and timeout 7200000, then wait until it exits (do not poll in a loop; check once it has finished): node ${q(pluginRoot + '/scripts/room.mjs')} build --target ${q(target)} --run-dir ${q(runDir)} --failures ${q(PAR + '/failures.md')}\nWhen it exits, its last lines are "RESULT <file>" and a JSON line. Read that result file and return ok and reason from it. Change nothing else, and never read anything under ${target} or ${runDir}/work.`, { model: 'sonnet', effort: 'low', label: `parity-build-${round}`, phase: 'Parity', schema: { type: 'object', required: ['ok'], properties: { ok: { type: 'boolean' }, reason: { type: 'string' } } } })
+      const bl = await longRun(`parity-build-${round}`, `node ${q(pluginRoot + '/scripts/room.mjs')} build --target ${q(target)} --run-dir ${q(runDir)} --failures ${q(PAR + '/failures.md')}`, `parity-build-${round}`, 'Parity')
+      const b = await roomResult(bl, `parity-build-${round}`, 'Parity')
       if (!b || !b.ok) {
         await agent(`Write ${q(PAR + '/loop-stop.txt')} containing: ${(b && b.reason) || 'build agent died'}. Touch nothing else.`, { ...CHEAP, label: 'parity-loop-stop', phase: 'Parity' })
         break
@@ -225,7 +276,14 @@ A feature marked "keep" gets a test asserting the behaviour. A feature marked "d
       started = fin.ok
     }
     if (started) {
-      const rb = await agent(`${ADAPTER_PLAT}. ${LONG} Run, in order: (1) node <adapter folder>/capture.mjs --app ${q(RB)} --out ${q(runDir + '/golden-rebuild')} --states ${q(INV + '/states.json')}; (2) only if step (1) exited 0, node ${q(pluginRoot + '/scripts/visual-diff.mjs')} ${q(runDir + '/golden')} ${q(runDir + '/golden-rebuild')} ${q(PAR + '/visual-diff.json')}. Return ok true with detail "rebuilt" if both exited 0, otherwise ok false with the first error (if step (1) failed, do not run step (2)). Change nothing else.`, { model: 'sonnet', effort: 'low', label: 'parity-rebuild', phase: 'Parity', schema: RUN_RESULT })
+      const adir = await adapterDir()
+      let rb = { ok: true, detail: 'rebuilt' }
+      const c1 = await longRun('parity-rebuild-capture', `node ${q(adir + '/capture.mjs')} --app ${q(RB)} --out ${q(runDir + '/golden-rebuild')} --states ${q(INV + '/states.json')}`, 'parity-rebuild-capture', 'Parity')
+      if (!exitedOk(c1)) rb = { ok: false, detail: whyNot(c1) }
+      else {
+        const c2 = await longRun('parity-rebuild-diff', `node ${q(pluginRoot + '/scripts/visual-diff.mjs')} ${q(runDir + '/golden')} ${q(runDir + '/golden-rebuild')} ${q(PAR + '/visual-diff.json')}`, 'parity-rebuild-diff', 'Parity')
+        if (!exitedOk(c2)) rb = { ok: false, detail: whyNot(c2) }
+      }
       mustRun(rb, 'the rebuild capture')
     } else {
       await agent(`Append the line "the rebuild would not start, capture and visual diff skipped" to ${q(PAR + '/loop-stop.txt')}. Touch nothing else.`, { ...CHEAP, label: 'parity-loop-stop', phase: 'Parity' })
@@ -325,15 +383,18 @@ if (!deps || !deps.ok) {
 for (const phase of PHASES) {
   if (done.has(`${phase}.done`)) continue
   if (phase === 'Capture') {
-    const captured = await agent(
-      `Capture the running app of ${target}. Never run or write to ${target} itself.
+    const prep = await agent(
+      `Prepare the capture of the running app of ${target}. Never run or write to ${target} itself.
 1. Clone it: git clone ${target} ${runDir}/work
 2. Work out from the files in ${runDir}/work how to install, build and start the app and which address it listens on. Run: node ${q(pluginRoot + '/scripts/free-port.mjs')} and use the port it prints in "address"; if the app cannot listen on a chosen port, keep the port it uses and say so in the result. Then write ${runDir}/run.json: {"platform": "web", "dir": "<folder inside work, relative to work/, e.g. app; never an absolute path>", "install": "...", "build": "...", "start": "...", "address": "http://127.0.0.1:<port>"}. The start command must read the port from the PORT environment variable or use the port in the address. Only web apps on localhost are supported.
 3. If the project is not a web app (no adapter for its platform), do not guess: write nothing else and return captured false with the reason "No capture adapter for platform <platform>".
-4. Otherwise: ${LONG} Run: node ${q(ADAPTER + '/web/capture.mjs')} --app ${q(runDir + '/run.json')} --out ${q(runDir + '/golden')}
-5. When ${runDir}/golden/manifest.json exists, write ${runDir}/Capture.done containing the word done and return captured true. If any step failed, return captured false with the error as the reason.`,
+4. Otherwise do not run the capture yourself; return captured true when run.json is written. If any step failed, return captured false with the error as the reason.`,
       { model: 'sonnet', effort: 'low', label: 'Capture', phase, schema: CAPTURE_RESULT },
     )
+    if (!prep || !prep.captured) return { ran, stopped: 'Capture', reason: (prep && prep.reason) || 'capture agent died' }
+    const cap = await longRun('capture', `node ${q(ADAPTER + '/web/capture.mjs')} --app ${q(runDir + '/run.json')} --out ${q(runDir + '/golden')}`, 'capture', phase)
+    if (!exitedOk(cap)) return { ran, stopped: 'Capture', reason: `the capture did not finish: ${whyNot(cap)}` }
+    const captured = await agent(`If ${runDir}/golden/manifest.json exists, write ${runDir}/Capture.done containing the word done and return captured true. Otherwise return captured false with the reason "no manifest.json". Touch nothing else.`, { ...CHEAP, label: 'Capture.done', phase, schema: CAPTURE_RESULT })
     if (!captured || !captured.captured) return { ran, stopped: 'Capture', reason: (captured && captured.reason) || 'capture agent died' }
     ran.push(phase)
     continue
@@ -348,10 +409,8 @@ for (const phase of PHASES) {
   if (phase === 'Stack' || phase === 'Rebuild') {
     const mode = phase === 'Stack' ? 'stack' : 'build'
     // The room script does the work in a clean room (scripts/room.mjs); the agent only runs it and reports.
-    const r = await agent(
-      `Run this command with the Bash tool and run_in_background true and timeout 7200000 (a build takes far longer than the 10-minute default), then wait until it exits (do not poll in a loop; check once it has finished): node ${JSON.stringify(pluginRoot + '/scripts/room.mjs')} ${mode} --target ${JSON.stringify(target)} --run-dir ${JSON.stringify(runDir)}\nWhen it exits, its last lines are "RESULT <file>" and a JSON line. Read that result file and return ok and reason from it. Change nothing else, and never read anything under ${target} or ${runDir}/work.`,
-      { model: 'sonnet', effort: 'low', label: phase, phase, schema: { type: 'object', required: ['ok'], properties: { ok: { type: 'boolean' }, reason: { type: 'string' } } } },
-    )
+    const rl = await longRun(`room-${mode}`, `node ${q(pluginRoot + '/scripts/room.mjs')} ${mode} --target ${q(target)} --run-dir ${q(runDir)}`, phase, phase)
+    const r = await roomResult(rl, phase, phase)
     if (!r || !r.ok) { const reason = (r && r.reason) || 'room agent died'; await stoppedReport(phase, reason); return { ran, stopped: phase, reason } }
     await agent(`Write the file ${runDir}/${phase}.done containing the word done. Touch nothing else.`, { ...CHEAP, label: `${phase}.done`, phase })
     ran.push(phase)
