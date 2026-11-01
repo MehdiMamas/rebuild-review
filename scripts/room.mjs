@@ -11,7 +11,8 @@ import { readCost } from './parity-results.mjs';
 import { readPlan, addCost } from './size.mjs';
 import { buildOrder, failureIds, featureAreas } from './areas.mjs';
 
-export const BUDGET_USD = { wall: 0.5 }; // stack and build budgets come from <runDir>/size.json (floors 3 and 25 when there is none)
+// Stack and build budgets come from <runDir>/size.json (floors 3 and 25 when there is none).
+export const BUDGET_USD = { wall: 0.5 };
 export const MODEL = { stack: 'sonnet', build: 'opus', wall: 'haiku' };
 export const PERMISSION_MODE = 'bypassPermissions';
 export const REGISTRIES = [
@@ -358,7 +359,7 @@ export async function main(argv) {
         check: () => checkText(fs.readFileSync(path.join(room, 'stack.md'), 'utf8'), srcTexts),
         ask: async (problems, i) => {
           const tr = path.join(dir, `${mode}-${n}.fix-${i}.jsonl`);
-          const fr = await runChild({ room, prompt: stackFixPrompt(problems) + (multi ? ' Keep the "Build order" and "Shared contracts" sections.' : ''), model: MODEL.stack, maxBudgetUsd: BUDGET_USD.stack, transcriptPath: tr });
+          const fr = await runChild({ room, prompt: stackFixPrompt(problems) + (multi ? ' Keep the "Build order" and "Shared contracts" sections.' : ''), model: MODEL.stack, maxBudgetUsd: sized.stackUsd, transcriptPath: tr });
           result.costUsd += fr.costUsd;
           checkChild(fr, tr, runDir, target);
         },
