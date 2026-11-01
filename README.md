@@ -7,6 +7,8 @@ looks like, rebuilds the full project the best and simplest way, and scores the 
 Works on any kind of project: web, Android, iOS, Flutter, desktop, CLI, library, backend.
 The pipeline is the same, and only capture and the test driver change per platform.
 
+Platforms with a capture adapter: web (`adapters/web`) and Electron (`adapters/electron`). Setup for each is in AGENTS.md.
+
 Status: planning. The design and the work list are in issue #1.
 
 ## What goes in

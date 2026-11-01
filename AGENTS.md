@@ -20,6 +20,16 @@ what it renders, then scores the rebuild against the original. See README.md.
 - Test: `cd adapters/web && npm test` (about 3 minutes). It runs seven numbered checks on a `bench:init` copy of `benchmark/`, never on the repo folder, and prints which planted defects the probes flagged.
 - Gotcha: `work/` holds source, so the sandbox for the rebuild step (#7) must deny reads of it as well as the target.
 
+## Capture (Electron adapter)
+
+- `adapters/electron/` (`launch.mjs`, `capture.mjs`, `parity.mjs`); contract and driving notes: `adapters/CONTRACT.md`, `adapters/electron/DRIVING.md`. `run.json` has no `address`; it has `launch: { executablePath?, args, schemes? }`.
+- Setup once: `cd adapters/web && npm install` (the electron adapter reuses its probes and axe-core), then `cd adapters/electron && npm install` (Electron and Playwright; Linux needs a display, `xvfb-run -a`).
+- Run: `node adapters/electron/capture.mjs --app <runDir>/run.json --out <runDir>/golden [--states states.json] [--max-screens N] [--max-buttons N] [--max-har-bytes N]`. Screens are found by clicking; the app is relaunched and the clicks replayed to get back to one, so a run takes minutes.
+- The app runs isolated: own user data, home and environment (an allowlist, never this process's), outside requests from a window blocked and listed, the main process sent to a dead proxy, native dialogs answered "canceled" and listed. Requests over a custom protocol handled in the main process are invisible to the driver, so the app's own data should come over loopback or `file:`.
+- Test: `cd adapters/electron && npm test` (about 30 minutes: nine checks on `test/fixture`, which plants six problems and one clean screen; `test/answers.json` is read only by `test/run.mjs`). Misses are printed as MISS, never tuned away. CI job `electron-adapter` runs it under `xvfb-run`.
+- Run it headless on Linux, never on a desktop Mac (the windows disturb the user): on the `pc` machine, clone the branch into `~/work/rebuild-review-electron`, `npm ci` in `adapters/web` and `adapters/electron` (with `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1` for web), then `HOME=$(mktemp -d) xvfb-run -a npm test` in `adapters/electron`. Missing system libraries (libnss3, libnspr4) can be unpacked with `apt-get download` + `dpkg -x` and given through `LD_LIBRARY_PATH`, which the adapter passes to the app. Bring back only the log.
+- A rebuild must stay on the original's platform; the workflow stops with a plain reason otherwise.
+
 ## Inventory phase
 
 - Needs `<runDir>/work/` (clone of the target) and `<runDir>/run.json` (platform, install, build, start, address); `golden/` is used when present. The skill passes `pluginRoot` (`${CLAUDE_PLUGIN_ROOT}`) so the workflow can run `scripts/check-features.mjs`.
