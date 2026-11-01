@@ -9,7 +9,18 @@ The pipeline is the same, and only capture and the test driver change per platfo
 
 Platforms with a capture adapter: web (`adapters/web`) and Electron (`adapters/electron`). Setup for each is in AGENTS.md.
 
-Status: planning. The design and the work list are in issue #1.
+## Install and run
+
+```
+claude plugin marketplace add MehdiMamas/rebuild-review
+claude plugin install rebuild-review@rebuild-review
+```
+
+Then, in Claude Code: `/rebuild-review:rebuild-review <target-path> maxUsd=<dollars>`.
+
+It only runs when you call it. The target is never changed: each run writes to its own folder,
+`<target>-rebuild-review/<run-id>/`, next to the target. A web target needs Chromium
+(`npx playwright install chromium`); adapter packages install themselves on the first run.
 
 ## What goes in
 
@@ -38,9 +49,28 @@ With it come:
 
 ## Cost and size
 
-A run always covers the whole app. Before spending, the skill measures the source (`scripts/size.mjs`) and prints an estimated cost range; the run needs `maxUsd` at or above the high end, otherwise nothing is spent. Budgets scale with size (`scale.json`), and actual spend per phase is written to `cost.json` in the run folder.
+A run always covers the whole app. Before spending, the skill measures the source (`scripts/size.mjs`) and prints an estimated cost range; the run needs `maxUsd` at or above the high end, otherwise nothing is spent. Budgets scale with size (`scale.json`), and actual spend per phase is written to `cost.json` in the run folder. `cost.json` covers the stack and rebuild steps only; agents outside them are not in it.
 
 ### Big apps
 
 A big app is split into areas inside the run; the run still covers the whole app. Each area is inventoried, tested, rebuilt and judged on its own, and the scores are weighed by lines of code. The report has a Coverage section: features found, tested and rebuilt per area, screens reached, what was not reached and what was excluded (with the reason).
 
+## Reading the report
+
+The run ends with one page, `report/index.html`, with no scripts and its images embedded.
+
+- **Verdict**, decided by code from `rubric.json`: `adopt` (the rebuild passed the feature gate and is better overall, with no value clearly worse), `port` (not adopt, but some value is better, so take those parts), or `leave` (keep the original).
+- **Gate:** the share of features whose tests pass on the rebuild. It sits beside the scores and is never blended into them.
+- **Scores:** -100 to +100 overall, positive means the rebuild is better. Each value is half measured numbers, half blind judges. A metric missing on either side reads "not measured", never 0.
+- **Actions:** what to do next. An action whose citation is false is dropped.
+- **Coverage:** what was reached, and what was not.
+- **Confidence:** a low number with "track record" as the limit means the tool has few checked runs, not that this verdict looks bad.
+
+## Known limits
+
+- Capture exists for web and Electron only. Other platforms stop with a plain reason.
+- Compatibility is narrow: accessibility violations and horizontal overflow at 390 px, in Chromium. Other browsers are not checked.
+- Screens are found by crawling and clicking, up to a cap (`--max-screens`, 30 by default). Screens cut by the cap are listed in Coverage, not hidden.
+- The app runs with stand-in settings (`env` in `run.json`), never real secrets, so anything behind a real external service is only as good as its stand-in.
+- Multi-area prompts for big apps are covered by generated fixtures; see issue #35 for the state of a real big-app run.
+- Confidence is not a calibrated probability.
