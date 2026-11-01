@@ -12,17 +12,13 @@ test('the workflow compiles', () => {
   assert.doesNotThrow(() => new AsyncFunction(body))
 })
 
-test('every background command asks for the longest time limit', () => {
-  // The Bash tool stops a background command after 10 minutes unless told otherwise; a build takes longer.
-  const src = readFileSync(file, 'utf8')
-  const uses = src.split('run_in_background true').length - 1
-  assert.ok(uses > 0)
-  assert.equal(src.split('run_in_background true and timeout 7200000').length - 1, uses)
+test('no prompt asks an agent to run a command in the background', () => {
+  // A long command runs under scripts/long-run.mjs (longRun in the workflow); an agent that holds it in its own Bash call answers before it ends.
+  assert.equal(readFileSync(file, 'utf8').split('run_in_background').length - 1, 0)
 })
 
-test('every prompt that runs capture or parity asks for the longest time limit', () => {
-  // A capture on a real app takes far more than the 10 minutes a background command gets by default.
-  const lines = readFileSync(file, 'utf8').split('\n').filter((l) => /capture\.mjs|node <adapter> --app|parity\.mjs --app/.test(l))
-  assert.ok(lines.length >= 3)
-  for (const l of lines) assert.ok(l.includes('${LONG}'), l.slice(0, 120))
+test('long commands go through longRun', () => {
+  const src = readFileSync(file, 'utf8')
+  assert.ok(src.includes('async function longRun('))
+  for (const l of src.split('\n').filter((l) => /capture\.mjs|parity\.mjs|room\.mjs/.test(l) && /\bnode \$\{q\(/.test(l))) assert.ok(/longRun\(/.test(l), l.slice(0, 120))
 })
