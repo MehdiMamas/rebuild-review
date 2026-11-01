@@ -31,6 +31,7 @@ jobs:
           node --test scripts/workflow-parse.test.mjs
           node --test scripts/areas.test.mjs
           node --test scripts/long-run.test.mjs
+          node --test adapters/web/test/crawl.test.mjs
 
   web-adapter:
     runs-on: ubuntu-latest

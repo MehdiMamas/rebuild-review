@@ -29,6 +29,7 @@ golden/timings.json        list of { name, value, unit }
 golden/probes.json         list of { probe, screen, passed, evidence }; passed=false means the probe flagged a problem
 golden/console.log         errors the app printed
 golden/a11y-violations.json  optional: list of { screen, violations: [{ id, impact, nodes }] }
+golden/coverage.json       optional: screensReached, screensCut (distinct routes the screen cap stopped), sameRouteSkipped [{ route, count }] (same route, different data, left out by --max-per-route, default 2), buttonsSkipped, harEntriesSkipped
 ```
 
 Screenshots are taken at a narrow and a wide size, in light and dark theme.
