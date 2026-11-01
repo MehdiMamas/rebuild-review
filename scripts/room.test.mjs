@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { filterGolden, prepareRoom, scanTranscript, wallTried, cloneProject, copyEnv, denyList, writeSettings, fixStack, stackFixPrompt, replaceProject, main } from './room.mjs';
+import { BUDGET_USD, filterGolden, prepareRoom, scanTranscript, wallTried, cloneProject, copyEnv, denyList, writeSettings, fixStack, stackFixPrompt, replaceProject, main } from './room.mjs';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'room-test-'));
 
@@ -270,4 +270,9 @@ test('env written by copyEnv stays out of the room, a dirty rebuild-run.json doe
   assert.equal('env' in JSON.parse(fs.readFileSync(path.join(runDir, 'project', 'rebuild-run.json'), 'utf8')), false);
   copyEnv(runDir);
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(runDir, 'project', 'rebuild-run.json'), 'utf8')).env, { SETTING: 'stand-in' });
+});
+
+test('every BUDGET_USD key room.mjs uses exists, so no child gets --max-budget-usd undefined', () => {
+  const src = fs.readFileSync(new URL('./room.mjs', import.meta.url), 'utf8');
+  for (const [, key] of src.matchAll(/BUDGET_USD\.(\w+)/g)) assert.ok(key in BUDGET_USD, `BUDGET_USD.${key} does not exist`);
 });

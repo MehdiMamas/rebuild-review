@@ -29,6 +29,7 @@ jobs:
           node --test scripts/report.test.mjs
           node --test scripts/size.test.mjs
           node --test scripts/workflow-parse.test.mjs
+          node --test scripts/areas.test.mjs
 
   web-adapter:
     runs-on: ubuntu-latest

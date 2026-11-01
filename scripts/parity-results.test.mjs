@@ -146,3 +146,11 @@ test('failures.md carries the assertion message; a failure with no message says 
   assert.match(b, /## F-001 \(keep\)\nThe test gave no message for F-001; read its text in features\.md\./);
   assert.doesNotMatch(b, /assert\.ok|rows\.every|\/tmp\/p/);
 });
+
+test('loop: the budget stop uses the loop budget from size.json, the floor without it', () => {
+  let f = runFixture({ rebuild: { 'F-001': false, 'F-002': true, 'F-003': true }, builds: [{ n: 1, cost: 60 }] });
+  assert.equal(loop(f.par, f.md, f.run).reason, 'budget');
+  f = runFixture({ rebuild: { 'F-001': false, 'F-002': true, 'F-003': true }, builds: [{ n: 1, cost: 60 }] });
+  fs.writeFileSync(path.join(f.run, 'size.json'), JSON.stringify({ plan: { loopUsd: 200 } }));
+  assert.equal(loop(f.par, f.md, f.run).action, 'build');
+});
