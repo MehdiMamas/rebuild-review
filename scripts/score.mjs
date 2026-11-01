@@ -11,7 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { scan } from './size.mjs';
+import { scan, skipReason } from './size.mjs';
 import { validate } from './areas.mjs';
 
 const readJson = (f) => JSON.parse(fs.readFileSync(f, 'utf8'));
@@ -133,7 +133,7 @@ export function measure(sourceDir, goldenDir, { run, rubric = readJson(DEFAULT_R
   const af = path.join(goldenDir, 'a11y-violations.json');
   if (fs.existsSync(af)) put('a11y-violations', readJson(af).reduce((n, r) => n + (r.violations || []).reduce((m, v) => m + (v.nodes || 0), 0), 0));
   if (fs.existsSync(sourceDir)) {
-    const files = listSource(sourceDir);
+    const files = listSource(sourceDir).filter((f) => !skipReason(f)); // the same files size.mjs counts
     const counts = files.map((f) => lineCount(path.join(sourceDir, f)));
     put('files', files.length);
     put('lines', counts.reduce((a, b) => a + b, 0));
