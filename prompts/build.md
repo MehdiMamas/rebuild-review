@@ -4,6 +4,8 @@ Inputs:
 - `input/features.md`: every feature, with given/when/then, marked `keep` or `defect`.
 - `input/stack.md`: the stack to use.
 - `input/golden/`: what the original app rendered and how it behaved (screens, accessibility trees, `network.har`, timings, probes).
+- `input/foundations.md`, when it exists: what must carry over whatever the features say (license and attribution, saved data formats, config files, extension manifests, external services, and so on). Keep every item marked `found`, as `input/stack.md` says.
+- `input/base/`, only when it exists: the upstream the app is built on. `project/` already starts as that tree. Change only the app-own behaviour on top of it.
 - `input/failures.md`, only when it exists: failures from the last round. Fix those.
 
 Build the whole project in `project/` as its own git repo (`git init`, commit as you go with clear messages), backend included, feature by feature from `input/features.md`, checking each against `input/golden/`.

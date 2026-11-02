@@ -7,6 +7,7 @@ import crypto from 'node:crypto';
 import { spawnSync, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { checkText, trackedTexts } from './check-features.mjs';
+import { readBase, fetchBase, checkWall, git as baseGit } from './base.mjs';
 import { readCost } from './parity-results.mjs';
 import { readPlan, addCost } from './size.mjs';
 import { buildOrder, failureIds, featureAreas } from './areas.mjs';
@@ -66,7 +67,7 @@ function allFiles(d, out = []) {
 export function prepareRoom({ runDir, target, inputs }) {
   const work = path.join(runDir, 'work');
   const srcTexts = trackedTexts(work);
-  for (const f of ['features.md', 'technology.md', 'stack.md', 'failures.md']) {
+  for (const f of ['features.md', 'technology.md', 'stack.md', 'failures.md', 'foundations.md']) {
     if (!inputs.includes(f)) continue;
     const problems = checkText(fs.readFileSync(path.join(runDir, f), 'utf8'), srcTexts);
     if (problems.length) throw new Error(`${f} fails the no-source check: ${problems.slice(0, 5).join('; ')}`);
@@ -81,7 +82,26 @@ export function prepareRoom({ runDir, target, inputs }) {
     else fs.copyFileSync(s, path.join(inp, f));
   }
   const forbidden = [...new Set([target, runDir, fs.realpathSync(target), fs.realpathSync(runDir)])];
+  // The base is fetched here, in the plugin process; the child's network list never names the upstream host.
+  const base = inputs.includes('base') ? readBase(runDir) : null;
+  const baseTree = base && base.upstream ? path.join(inp, 'base') : null;
+  if (baseTree) {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-basefetch-'));
+    try {
+      fetchBase({ url: base.upstream.url, commit: base.upstream.commit, dest: tmp });
+      const problems = checkWall({ workDir: work, baseDir: tmp, commit: base.upstream.commit, ownPaths: base.ownPaths });
+      if (problems.length) throw new Error(`the base fails the wall check: ${problems.join('; ')}`);
+      fs.rmSync(path.join(tmp, '.git'), { recursive: true, force: true });
+      fs.cpSync(tmp, baseTree, { recursive: true });
+    } catch (e) {
+      fs.rmSync(room, { recursive: true, force: true });
+      throw e;
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  }
   for (const p of allFiles(inp)) {
+    if (baseTree && p.startsWith(baseTree + path.sep)) continue;
     if (IMG.test(p)) continue;
     const t = fs.readFileSync(p, 'utf8');
     const hit = forbidden.find((x) => t.includes(x));
@@ -102,6 +122,14 @@ export function prepareRoom({ runDir, target, inputs }) {
       fs.rmSync(room, { recursive: true, force: true });
       throw e;
     }
+  } else if (baseTree) {
+    // project/ starts as the base in one commit
+    const pr = path.join(room, 'project');
+    fs.cpSync(baseTree, pr, { recursive: true });
+    const step = (...a) => { const r = baseGit(pr, '-c', 'user.name=rebuild-review', '-c', 'user.email=rebuild-review@localhost', '-c', 'commit.gpgsign=false', ...a); if (!r.ok) { fs.rmSync(room, { recursive: true, force: true }); throw new Error(`git ${a[0]} of the base failed: ${r.err.slice(0, 200)}`); } };
+    step('init', '-q');
+    step('add', '-A');
+    step('commit', '-q', '-m', 'Upstream base');
   }
   return room;
 }
@@ -260,6 +288,14 @@ function featureCounts(runDir, spec) {
   return Object.fromEntries(spec.areas.map((a) => [a.id, Object.values(of).filter((x) => x === a.id).length]));
 }
 
+// The base is named only by what it is, never by address: the builder gets the tree, not where it came from.
+export function baseNote(runDir, mode) {
+  const b = readBase(runDir);
+  if (!b || !b.upstream) return '';
+  if (mode === 'stack') return '\n\nThe app is built on an upstream base (a ' + b.kind + '). input/base/ holds that base; project/ starts as a copy of it. Choose the stack the base already uses, and write in stack.md only what the app adds on top of it.';
+  return '\n\nThe app is built on an upstream base (a ' + b.kind + '). input/base/ holds it, and project/ already starts as that tree in one commit. Do not rebuild what the base already does: change only the app-own behaviour in input/features.md on top of the base. Entries under "From the base (not rebuilt)" in input/features.md are already there.';
+}
+
 export const areaStackNote = (ids, counts) => `\n\nThis app is split into areas: ${ids.map((i) => `${i} (${counts[i]} features, tagged [area: ${i}] in input/features.md)`).join('; ')}. Each area is built later by its own builder, one after another, in the same project. Add two more sections to stack.md. "Build order": a list, one item per area, each starting with the area ID, in the order the areas should be built (what others depend on first); every area exactly once. "Shared contracts": the data shapes, API routes, shared components and naming that more than one area uses, in behaviour and technology words, so builders of different areas fit together.`;
 
 export const areaBuildNote = (id, featureIds, order, isRound, failing) => `\n\nThis app is built area by area, in this order: ${order.join(', ')}. You build only the area "${id}": its features are the entries of input/features.md tagged [area: ${id}] (${featureIds.join(', ')}). project/ may already hold earlier areas: keep them working, follow the Build order and Shared contracts in input/stack.md, and do not rewrite other areas. Keep project/rebuild-run.json valid for everything built so far.${isRound ? ` Fix only failures listed for these features: ${featureIds.filter((f) => failing && failing.has(f)).join(', ')}.` : ''} Commit when done.`;
@@ -350,7 +386,7 @@ export async function main(argv) {
       if (left <= 0) throw new Error('budget');
       budget = Math.min(budget, left);
     }
-    const inputs = mode === 'stack' ? ['features.md', 'technology.md'] : ['features.md', 'technology.md', 'stack.md', 'golden'];
+    const inputs = mode === 'stack' ? ['features.md', 'technology.md', 'foundations.md'] : ['features.md', 'technology.md', 'stack.md', 'foundations.md', 'golden', 'base'];
     if (mode === 'build' && failures) {
       fs.copyFileSync(failures, path.join(runDir, 'failures.md.tmp'));
       fs.renameSync(path.join(runDir, 'failures.md.tmp'), path.join(runDir, 'failures.md'));
@@ -363,7 +399,7 @@ export async function main(argv) {
     const spec = readAreas(runDir);
     const multi = !!spec && spec.areas.length > 1;
     const failNote = failures ? '\n\nproject/ already holds the last round. Change it, do not start over. Fix the failures in input/failures.md without breaking any other feature in input/features.md. Commit when done.' : '';
-    const base = fs.readFileSync(path.join(HERE, '..', 'prompts', mode + '.md'), 'utf8') + platformNote(runDir);
+    const base = fs.readFileSync(path.join(HERE, '..', 'prompts', mode + '.md'), 'utf8') + platformNote(runDir) + baseNote(runDir, mode);
     if (mode === 'stack') {
       const ids = multi ? spec.areas.map((a) => a.id) : [];
       const prompt = base + (multi ? areaStackNote(ids, featureCounts(runDir, spec)) : '');
