@@ -59,6 +59,7 @@ Measured so far:
 |---|---|---|---|
 | The planted fixture in `benchmark/` | 306 | $11.65 to $15.19 | not priced |
 | A private web app, several runs | 3,159 to 6,270 | $6 to $11 | one run: 63 agents, 3.15M tokens, 73 minutes |
+| actualbudget/actual (11 areas) | 351,633 | $185.64 | not priced |
 
 ### Big apps
 
@@ -88,5 +89,5 @@ The run ends with one page, `report/index.html`, with no scripts and its images 
 - Compatibility is narrow: accessibility violations and horizontal overflow at 390 px, in Chromium. Other browsers are not checked.
 - Screens are found by crawling and clicking, up to a cap (`--max-screens`, 30 by default). Screens cut by the cap are listed in Coverage, not hidden.
 - The app runs with stand-in settings (`env` in `run.json`), never real secrets, so anything behind a real external service is only as good as its stand-in.
-- Multi-area prompts for big apps are covered by generated fixtures; see issue #35 for the state of a real big-app run.
+- Big apps: one real run (actualbudget/actual, 351,633 lines) finished every phase, but only 418 of 962 features got a test (most need state the demo data cannot make, such as linked bank accounts) and 49% passed on the rebuild. Details in issue #35.
 - Confidence is not a calibrated probability.
