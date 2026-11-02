@@ -91,3 +91,7 @@ The run ends with one page, `report/index.html`, with no scripts and its images 
 - The app runs with stand-in settings (`env` in `run.json`), never real secrets, so anything behind a real external service is only as good as its stand-in.
 - Big apps: one real run (actualbudget/actual, 351,633 lines) finished every phase, but only 418 of 962 features got a test (most need state the demo data cannot make, such as linked bank accounts) and 49% passed on the rebuild. Details in issue #35.
 - Confidence is not a calibrated probability.
+
+## License
+
+MIT, see [LICENSE](LICENSE).
