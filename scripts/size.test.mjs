@@ -31,6 +31,9 @@ test('a large synthetic size scales every budget up', () => {
   assert.ok(p.buildUsd > 25 && p.loopUsd > 50 && p.maxScreens > 30 && p.maxButtons > 10);
   assert.ok(p.estimateUsd.high > p.estimateUsd.low);
   assert.equal(plan({ lines: 20001 }, scale).units, 2);
+  const big = plan({ lines: 351633 }, scale); // 18 units: the fix rounds get money on top of the first build
+  assert.equal(big.loopUsd, big.buildUsd + 18 * scale.perUnit.loopUsd);
+  for (const l of [1, 100000, 351633, 2000000]) { const q = plan({ lines: l }, scale); assert.ok(q.loopUsd - q.buildUsd >= scale.floors.loopUsd - scale.floors.buildUsd); }
   assert.equal(plan({ lines: 0 }, scale).units, 1);
 });
 

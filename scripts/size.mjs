@@ -60,7 +60,8 @@ export function plan(size, scale) {
     units,
     buildUsd: Math.max(f.buildUsd, units * p.buildUsd),
     stackUsd: f.stackUsd,
-    loopUsd: Math.max(f.loopUsd, units * p.loopUsd),
+    // the loop's budget includes the first build, so the fix rounds get perUnit.loopUsd on top of it (#74)
+    loopUsd: Math.max(f.buildUsd, units * p.buildUsd) + Math.max(f.loopUsd - f.buildUsd, units * p.loopUsd),
     maxScreens: Math.max(f.screens, units * p.screens),
     maxButtons: Math.max(f.buttons, units * p.buttons),
     estimateUsd: { low: units * p.costLowUsd, high: units * p.costHighUsd },
