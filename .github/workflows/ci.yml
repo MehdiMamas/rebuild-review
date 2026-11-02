@@ -45,6 +45,9 @@ jobs:
         run: |
           npm install --no-audit --no-fund
           npx playwright install --with-deps chromium
+      - name: Context tests (URLs that do not parse, locate waits)
+        working-directory: adapters/web
+        run: node --test test/context.test.mjs
       - name: Adapter tests
         working-directory: adapters/web
         run: npm test

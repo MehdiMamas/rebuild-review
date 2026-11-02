@@ -127,12 +127,7 @@ export function writeSettings(room, { denyPaths, noWrite = [], only }) {
 }
 
 export function runChild({ room, prompt, model, maxBudgetUsd, transcriptPath, mode = PERMISSION_MODE }) {
-  const env = { PATH: process.env.PATH, HOME: process.env.HOME };
-  for (const k of ['TMPDIR', 'USER', 'LANG', 'ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN']) if (process.env[k]) env[k] = process.env[k];
-  const args = ['-p', '--model', model, '--max-budget-usd', String(maxBudgetUsd), '--permission-mode', mode,
-    '--setting-sources', 'project', '--disallowedTools', 'WebFetch', 'WebSearch', '--disable-slash-commands',
-    '--strict-mcp-config', '--no-session-persistence', '--output-format', 'stream-json', '--verbose'];
-  args.push('--settings', settingsPath(room));
+  const { args, env } = childSpawn({ room, model, maxBudgetUsd, mode });
   const out = fs.openSync(transcriptPath, 'w');
   return new Promise((resolve) => {
     const c = spawn('claude', args, { cwd: room, env, stdio: ['pipe', out, out] });
@@ -143,6 +138,18 @@ export function runChild({ room, prompt, model, maxBudgetUsd, transcriptPath, mo
     });
     c.on('error', (e) => { fs.closeSync(out); resolve({ code: -1, isError: true, costUsd: 0, error: String(e) }); });
   });
+}
+
+// The claude -p command line and environment for a child in the room.
+export function childSpawn({ room, model, maxBudgetUsd, mode = PERMISSION_MODE }) {
+  // No subagents (disallowed below) and no print-mode limit on background commands: a child that ends while work runs in the background loses it uncommitted.
+  const env = { PATH: process.env.PATH, HOME: process.env.HOME, CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: '0' };
+  for (const k of ['TMPDIR', 'USER', 'LANG', 'ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN']) if (process.env[k]) env[k] = process.env[k];
+  const args = ['-p', '--model', model, '--max-budget-usd', String(maxBudgetUsd), '--permission-mode', mode,
+    '--setting-sources', 'project', '--disallowedTools', 'WebFetch', 'WebSearch', 'Agent', 'Task', 'Workflow', 'SendMessage', 'SendToProject', 'SendToProjectContext', 'RemoteTrigger', 'ListAgents', 'PushNotification', 'DesignSync', '--disable-slash-commands',
+    '--strict-mcp-config', '--no-session-persistence', '--output-format', 'stream-json', '--verbose'];
+  args.push('--settings', settingsPath(room));
+  return { args, env };
 }
 
 function parseResult(file) {
