@@ -1,11 +1,13 @@
 // Report phase: code decides the verdict and renders one self-contained page; a model only proposes actions.
 // CLI: report.mjs verdict <runDir>        prints the verdict as JSON
 //      report.mjs check-actions <runDir>  report/actions.proposed.json -> report/actions.json (+ actions.dropped.json)
+//      report.mjs check-foundations <runDir>  report/foundations.proposed.json -> report/foundations.json (+ foundations.dropped.json)
 //      report.mjs render <runDir>         writes report/index.html
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { confidence } from './confidence.mjs';
+import { items as foundationItems, CATEGORIES } from './foundations.mjs';
 
 const readJson = (f) => JSON.parse(fs.readFileSync(f, 'utf8'));
 const tryJson = (f) => { try { return readJson(f); } catch { return null; } };
@@ -98,6 +100,35 @@ export function checkActions(runDir) {
   return { kept, dropped };
 }
 
+// A model proposes, per foundations item, whether the rebuild kept it: [{item, status: kept|changed|missing, evidence: [{kind, ref}]}].
+// Code drops any entry with an unknown item, an unknown status, no evidence or a false citation; an item with no kept entry reads "not checked".
+export const FOUNDATION_STATUS = ['kept', 'changed', 'missing'];
+export function checkFoundations(runDir) {
+  const proposed = tryJson(path.join(runDir, 'report', 'foundations.proposed.json'));
+  const score = tryJson(path.join(runDir, 'score', 'score.json'));
+  const parity = tryJson(path.join(runDir, 'parity', 'parity.json'));
+  const ctx = {
+    metrics: new Set(score && score.values ? Object.values(score.values).flatMap((v) => (v.measured || []).map((m) => m.name)) : []),
+    features: new Set((Array.isArray(parity) ? parity : []).map((p) => String(p.feature).toUpperCase())),
+  };
+  const ids = new Set(foundationItems(tryText(path.join(runDir, 'foundations.md')) || '').map((i) => i.id));
+  const kept = [], dropped = [], seen = new Set();
+  for (const a of Array.isArray(proposed) ? proposed : []) {
+    const ev = a && Array.isArray(a.evidence) ? a.evidence : [];
+    const problems = [];
+    if (!a || !ids.has(a.item)) problems.push('no such foundations item');
+    else if (seen.has(a.item)) problems.push('item already has a status');
+    if (!FOUNDATION_STATUS.includes(a && a.status)) problems.push('status is not kept, changed or missing');
+    if (!ev.length) problems.push('no evidence');
+    for (const e of ev) { const p = evidenceProblem(runDir, e, ctx); if (p) problems.push(p); }
+    if (problems.length) dropped.push({ entry: a, reasons: problems }); else { kept.push(a); seen.add(a.item); }
+  }
+  fs.mkdirSync(path.join(runDir, 'report'), { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'report', 'foundations.json'), JSON.stringify(kept, null, 2));
+  fs.writeFileSync(path.join(runDir, 'report', 'foundations.dropped.json'), JSON.stringify(dropped, null, 2));
+  return { kept, dropped };
+}
+
 // ---- render ----
 // compare.md: "## <value>" with "### was", "### now", "### should".
 export function parseCompare(md) {
@@ -182,8 +213,12 @@ export function render(runDir, { embedCap = EMBED_CAP, thresholds, stopped } = {
     ? '<p><strong>Confidence:</strong> not measured (there is no score).</p>'
     : `<p><strong>Confidence: ${esc(conf.percent)}%</strong>, limited by <strong>${esc(conf.limitedBy)}</strong>. It is the weakest of four parts, not a calibrated probability.${conf.outsideRange ? ` This target (${esc(conf.parts['track record'].inputs.targetSourceLines)} source lines) is outside what was tested (up to ${esc(conf.calibratedUpTo)} lines), so it is capped.` : ''}</p>` +
       `<table class="parts"><tr><th>Part</th><th>Reads</th><th>Inputs</th></tr>${Object.entries(conf.parts).map(([n, p]) => `<tr><td>${esc(n)}</td><td>${esc(p.percent)}%</td><td>${esc(inputText(p.inputs))}${p.left && p.left.length ? `<br><span class="mut">left out: ${esc(p.left.join('; '))}</span>` : ''}</td></tr>`).join('')}</table>`;
+  const baseInfo = tryJson(path.join(runDir, 'base.json'));
+  const baseHtml = !baseInfo ? '' : baseInfo.upstream
+    ? `<p><strong>Base:</strong> ${esc(baseInfo.kind)}, ${esc(baseInfo.upstream.url)} at ${esc(baseInfo.upstream.ref)} (commit ${esc(String(baseInfo.upstream.commit).slice(0, 12))}). Found by: ${esc((baseInfo.evidence || []).join('; ') || 'a pinned answer')}. The rebuild is built on that base; code metrics count only the app's own code (${esc(baseInfo.ownLines)} source lines in ${esc((baseInfo.ownPaths || []).length)} files).</p>`
+    : '<p><strong>Base:</strong> none (the whole app was rebuilt).</p>';
   sec('verdict', 'Verdict', `<p><span class="badge ${v.verdict}">${esc(v.verdict)}</span></p><p>${esc(v.why)}</p>` + confHtml +
-    `<div class="card"><strong>Do this first:</strong> ${esc(actions.length ? actions[0].title : FIRST[v.verdict])}</div>`);
+    baseHtml + `<div class="card"><strong>Do this first:</strong> ${esc(actions.length ? actions[0].title : FIRST[v.verdict])}</div>`);
 
   // 2 Scores, gate beside them
   if (score && score.values) {
@@ -227,8 +262,24 @@ export function render(runDir, { embedCap = EMBED_CAP, thresholds, stopped } = {
       `<h3>Excluded from the run</h3>${cov.excluded && cov.excluded.length ? `<ul>${cov.excluded.map((x) => `<li><code>${esc(x.path)}</code> (${esc(x.files)} files): ${esc(x.reason)}</li>`).join('')}</ul>` : '<p>Nothing was excluded.</p>'}`);
   }
 
+  // 5b Foundations: what had to carry over, and whether the rebuild kept it
+  const fText = tryText(path.join(runDir, 'foundations.md'));
+  const fdropped = tryJson(path.join(runDir, 'report', 'foundations.dropped.json')) || [];
+  if (fText) {
+    const fKept = new Map((tryJson(path.join(runDir, 'report', 'foundations.json')) || []).map((x) => [x.item, x]));
+    const head = Object.fromEntries(CATEGORIES.map((c) => [c.id, c.heading]));
+    const rows = foundationItems(fText).map((i) => {
+      const k = fKept.get(i.id);
+      const status = i.status !== 'found' ? i.status : k ? k.status : 'not checked';
+      const cites = k ? k.evidence.map((e) => `${e.kind}: ${e.ref}`).join('; ') : '';
+      return `<tr><td>${esc(head[i.category])}</td><td>${esc(i.status || '?')}</td><td>${esc(i.text)}</td><td>${esc(i.status === 'found' ? status : '')}</td><td>${esc(cites)}</td></tr>`;
+    }).join('');
+    sec('foundations', 'Foundations', `<p>What had to carry over whatever the features say. Only items found in the original are compared; an item with no checked status reads "not checked", never "kept".</p><table><tr><th>Category</th><th>In the original</th><th>Item</th><th>Rebuild</th><th>Evidence</th></tr>${rows}</table>`);
+  }
+
   // 6 Not checked
   const items = [];
+  for (const d of fdropped) items.push(`Dropped foundations status for ${(d.entry && d.entry.item) || '?'}: ${(d.reasons || []).join('; ')}`);
   if (score) {
     for (const n of score.notChecked || []) items.push(`Not checked: ${n}`);
     for (const [name, x] of Object.entries(score.values || {})) for (const m of x.notMeasured || []) items.push(`${name}: ${m} was not measured`);
@@ -262,16 +313,19 @@ export function render(runDir, { embedCap = EMBED_CAP, thresholds, stopped } = {
 
 if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const [cmd, runDir] = process.argv.slice(2);
-  if (!runDir) { console.error('usage: report.mjs verdict|check-actions|render <runDir>'); process.exit(2); }
+  if (!runDir) { console.error('usage: report.mjs verdict|check-actions|check-foundations|render <runDir>'); process.exit(2); }
   if (cmd === 'verdict') {
     const v = verdict(tryJson(path.join(runDir, 'score', 'score.json')));
     console.log(JSON.stringify(v));
   } else if (cmd === 'check-actions') {
     const r = checkActions(runDir);
     console.log(`kept ${r.kept.length}, dropped ${r.dropped.length}`);
+  } else if (cmd === 'check-foundations') {
+    const r = checkFoundations(runDir);
+    console.log(`kept ${r.kept.length}, dropped ${r.dropped.length}`);
   } else if (cmd === 'render') {
     const i = process.argv.indexOf('--stopped');
     render(runDir, i > 0 ? { stopped: process.argv.slice(i + 1).join(' ') } : {});
     console.log(`wrote ${path.join(runDir, 'report', 'index.html')}`);
-  } else { console.error('usage: report.mjs verdict|check-actions|render <runDir>'); process.exit(2); }
+  } else { console.error('usage: report.mjs verdict|check-actions|check-foundations|render <runDir>'); process.exit(2); }
 }

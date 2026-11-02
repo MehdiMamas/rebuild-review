@@ -1,5 +1,5 @@
 // Score phase: measure, blind, check, gaps, collate. Code does all the arithmetic; judges only supply cited scores.
-// CLI: score.mjs measure <sourceDir> <goldenDir> <out.json> [--run run.json] [--rubric rubric.json]
+// CLI: score.mjs measure <sourceDir> <goldenDir> <out.json> [--run run.json] [--rubric rubric.json] [--own-run <runDir> --side original|rebuild]
 //      score.mjs source <runDir> original|rebuild
 //      score.mjs blind <runDir> <n> [--seed s] [--labels file]
 //      score.mjs labels <runDir> <blindFolder> '<json of judges>'   (writes score/.labels.json after verifying it)
@@ -11,7 +11,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { scan, skipReason } from './size.mjs';
+import { scan, skipReason, readOwn } from './size.mjs';
+import { ownSince } from './base.mjs';
 import { validate } from './areas.mjs';
 
 const readJson = (f) => JSON.parse(fs.readFileSync(f, 'utf8'));
@@ -113,7 +114,8 @@ function countDependencies(dir) {
   return found ? n : null;
 }
 
-export function measure(sourceDir, goldenDir, { run, rubric = readJson(DEFAULT_RUBRIC) } = {}) {
+// own: { root, paths } limits the code metrics to the app's own files (root is the git root holding sourceDir; paths are relative to it).
+export function measure(sourceDir, goldenDir, { run, rubric = readJson(DEFAULT_RUBRIC), own = null } = {}) {
   const out = {};
   const better = {};
   for (const v of Object.values(rubric.values)) for (const m of v.metrics || []) better[m.name] = m.better;
@@ -133,7 +135,8 @@ export function measure(sourceDir, goldenDir, { run, rubric = readJson(DEFAULT_R
   const af = path.join(goldenDir, 'a11y-violations.json');
   if (fs.existsSync(af)) put('a11y-violations', readJson(af).reduce((n, r) => n + (r.violations || []).reduce((m, v) => m + (v.nodes || 0), 0), 0));
   if (fs.existsSync(sourceDir)) {
-    const files = listSource(sourceDir).filter((f) => !skipReason(f)); // the same files size.mjs counts
+    const rel = own ? path.relative(own.root, sourceDir).split(path.sep).join('/') : '';
+    const files = listSource(sourceDir).filter((f) => !skipReason(f) && (!own || own.paths.has(rel ? `${rel}/${f}` : f))); // the same files size.mjs counts
     const counts = files.map((f) => lineCount(path.join(sourceDir, f)));
     put('files', files.length);
     put('lines', counts.reduce((a, b) => a + b, 0));
@@ -283,7 +286,7 @@ export function areaIds(runDir) {
 
 // Counted source lines of each area of the original (the weight of its result); falls back to equal weights when nothing is counted.
 export function areaWeights(runDir, ids) {
-  const v = validate(readJson(path.join(runDir, 'areas.json')), scan(path.join(runDir, 'work')).counted);
+  const v = validate(readJson(path.join(runDir, 'areas.json')), scan(path.join(runDir, 'work'), readOwn(runDir)).counted);
   const lines = Object.fromEntries(v.areas.map((a) => [a.id, a.lines]));
   const total = ids.reduce((n, i) => n + (lines[i] || 0), 0);
   return Object.fromEntries(ids.map((i) => [i, { lines: lines[i] || 0, weight: total ? (lines[i] || 0) / total : 1 / ids.length }]));
@@ -356,10 +359,16 @@ export function collate(runDir, rubricFile) {
 if (process.argv[1] && path.resolve(process.argv[1]) === new URL(import.meta.url).pathname) {
   const args = process.argv.slice(2);
   const opt = (n) => { const i = args.indexOf(`--${n}`); return i >= 0 ? args.splice(i, 2)[1] : undefined; };
-  const run = opt('run'), rubricOpt = opt('rubric'), seed = opt('seed'), labelsOut = opt('labels');
+  const ownRun = opt('own-run'), ownSide = opt('side'), run = opt('run'), rubricOpt = opt('rubric'), seed = opt('seed'), labelsOut = opt('labels');
   const [cmd, a, b, c] = args;
   if (cmd === 'measure') {
-    const m = measure(path.resolve(a), path.resolve(b), { run, rubric: rubricOpt ? readJson(rubricOpt) : undefined });
+    let own = null;
+    if (ownRun) { // code metrics count own code only when the run has an upstream base
+      const root = path.join(path.resolve(ownRun), ownSide === 'rebuild' ? 'project' : 'work');
+      const paths = ownSide === 'rebuild' ? (readOwn(path.resolve(ownRun)) ? ownSince(root) : null) : readOwn(path.resolve(ownRun));
+      if (paths) own = { root, paths };
+    }
+    const m = measure(path.resolve(a), path.resolve(b), { run, rubric: rubricOpt ? readJson(rubricOpt) : undefined, own });
     writeJson(c, m);
     console.log(JSON.stringify(m));
   } else if (cmd === 'source') console.log(sourceOf(a, b).source);

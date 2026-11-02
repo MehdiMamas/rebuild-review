@@ -6,5 +6,6 @@ stack.md has these sections:
 - Chosen stack: languages, frameworks, libraries, storage, build and test tools, each with a one-line reason. Include the backend.
 - Changes from the current stack: each change and the reason, or "none".
 - Considered and dropped: each option you looked at and why it lost.
+- Foundations, only when `input/foundations.md` exists: one line for every item marked `found` there (use its id order), saying how the rebuild keeps it (the same license notice, the same saved-data format and migrations, the same config file names, the same extension manifest, and so on). An item that cannot be kept is listed with the reason.
 
 Write behaviour and technology names only. No code blocks, no file paths of source files, no copied text.

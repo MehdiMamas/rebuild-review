@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { verdict, checkActions, render, parseCompare, esc } from './report.mjs';
+import { verdict, checkActions, checkFoundations, render, parseCompare, esc } from './report.mjs';
 
 const CLI = fileURLToPath(new URL('./report.mjs', import.meta.url));
 const T = { adoptOverall: 15, worseValue: -0.15, betterValue: 0.15 };
@@ -203,6 +203,7 @@ test('the CLI works from a folder with a space in its path', () => {
   fs.mkdirSync(path.join(base, 'scripts'));
   fs.copyFileSync(CLI, path.join(base, 'scripts/report.mjs'));
   fs.copyFileSync(new URL('./confidence.mjs', import.meta.url), path.join(base, 'scripts/confidence.mjs'));
+  fs.copyFileSync(new URL('./foundations.mjs', import.meta.url), path.join(base, 'scripts/foundations.mjs'));
   fs.copyFileSync(new URL('../rubric.json', import.meta.url), path.join(base, 'rubric.json'));
   const run = path.join(base, 'run');
   fs.mkdirSync(run);
@@ -227,4 +228,64 @@ test('no score renders confidence as not measured', () => {
   const d = makeRun();
   fs.rmSync(path.join(d, 'score/score.json'));
   assert.match(render(d), /Confidence:<\/strong> not measured/);
+});
+
+const FOUND = `## License and attribution
+- found: MIT notice must stay (evidence: LICENSE)
+- not found: no NOTICE file
+## Platforms and packaging
+- not applicable: web only
+## Extension and plugin APIs
+- not applicable: none
+## Saved user data
+- found: tasks saved in a local file with a schema version (evidence: storage notes)
+## Settings and config files
+- not applicable: none
+## External services
+- not applicable: none
+## Auth and accounts
+- not applicable: none
+## Telemetry and crash reporting
+- not applicable: none
+## Update channels and signing
+- not applicable: none
+`;
+
+test('Foundations section: checked status shows, a false citation reads "not checked" and is listed as dropped', () => {
+  const d = makeRun();
+  w(path.join(d, 'foundations.md'), FOUND);
+  w(path.join(d, 'project/NOTICE'), 'x\n');
+  w(path.join(d, 'report/foundations.proposed.json'), [
+    { item: 'license.1', status: 'kept', evidence: [{ kind: 'file', ref: 'project/NOTICE' }] },
+    { item: 'userdata.1', status: 'kept', evidence: [{ kind: 'file', ref: 'project/missing.js' }] },
+    { item: 'nope.9', status: 'kept', evidence: [{ kind: 'metric', ref: 'lcp' }] },
+  ]);
+  const r = checkFoundations(d);
+  assert.equal(r.kept.length, 1);
+  assert.equal(r.dropped.length, 2);
+  const html = render(d, { thresholds: T });
+  const sec = html.slice(html.indexOf('id="foundations"'), html.indexOf('id="unchecked"'));
+  assert.match(sec, /License and attribution/);
+  assert.match(sec, /<td>kept<\/td>/);
+  assert.match(sec, /<td>not checked<\/td>/);
+  assert.match(html.slice(html.indexOf('id="unchecked"')), /Dropped foundations status for userdata\.1/);
+});
+
+test('with no checked statuses every found item reads "not checked", never "kept"', () => {
+  const d = makeRun();
+  w(path.join(d, 'foundations.md'), FOUND);
+  const sec = (() => { const h = render(d, { thresholds: T }); return h.slice(h.indexOf('id="foundations"'), h.indexOf('id="unchecked"')); })();
+  assert.doesNotMatch(sec, /<td>kept<\/td>/);
+  assert.equal((sec.match(/<td>not checked<\/td>/g) || []).length, 2);
+});
+
+test('the base line names the upstream commit and how it was found; none says so', () => {
+  const d = makeRun();
+  w(path.join(d, 'base.json'), { kind: 'fork', upstream: { url: 'https://example.com/a/b', ref: 'v1', commit: 'a'.repeat(40) }, evidence: ['git remote "upstream" points to https://example.com/a/b'], ownPaths: ['x.js'], ownLines: 12 });
+  let html = render(d, { thresholds: T });
+  assert.match(html, /Base:<\/strong> fork, https:\/\/example.com\/a\/b at v1 \(commit aaaaaaaaaaaa\)/);
+  assert.match(html, /git remote &quot;upstream&quot;/);
+  w(path.join(d, 'base.json'), { kind: 'none', upstream: null, evidence: [], ownPaths: null, ownLines: null });
+  html = render(d, { thresholds: T });
+  assert.match(html, /Base:<\/strong> none/);
 });

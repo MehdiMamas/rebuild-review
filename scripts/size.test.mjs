@@ -95,3 +95,11 @@ test('addCost sums spend per phase and the total', () => {
   assert.equal(c.totalUsd, 7.5);
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(run, 'cost.json'), 'utf8')), c);
 });
+
+test('with a base only the own paths are counted', () => {
+  const d = repo({ 'own/a.js': lines(10), 'base/b.js': lines(500) });
+  const size = measure(d, new Set(['own/a.js']));
+  assert.equal(size.lines, 10);
+  assert.equal(size.counted, 1);
+  assert.equal(size.skipped.find((s) => s.path === 'base/b.js').reason, 'from the base');
+});

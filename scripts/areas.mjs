@@ -1,5 +1,5 @@
 // Areas: a big app is split into areas inside one run. See AGENTS.md ("Areas").
-//   node areas.mjs tree <workDir>                  prints "<lines> <path>" for every counted source file (no contents)
+//   node areas.mjs tree <workDir> [runDir]                prints "<lines> <path>" for every counted source file (no contents)
 //   node areas.mjs init <runDir>                   one unit of source: writes the single area "all" and prints single; else prints needs-proposal
 //   node areas.mjs check <runDir>                  checks <runDir>/areas.json against <runDir>/work; prints the areas; exit 1 on problems
 //   node areas.mjs renumber <runDir>               joins inventory-areas/<id>/features.md into features.md with global F-xxx and [area: id] tags
@@ -9,7 +9,7 @@
 //   node areas.mjs untested <runDir>               joins parity/untested-<id>.md into parity/untested.md
 import fs from 'node:fs';
 import path from 'node:path';
-import { scan, readPlan } from './size.mjs';
+import { scan, readPlan, readOwn } from './size.mjs';
 
 const norm = (p) => String(p).replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/+$/, '') || '.';
 const covers = (p, file) => { const n = norm(p); return n === '.' || file === n || file.startsWith(n + '/'); };
@@ -121,7 +121,7 @@ const tryJson = (f) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } 
 // What the run covered, per area, and everything it did not reach. Counts only; the reasons are the files the run already wrote.
 export function coverage(runDir) {
   const spec = tryJson(path.join(runDir, 'areas.json')) || SINGLE;
-  const v = validate(spec, scan(path.join(runDir, 'work')).counted);
+  const v = validate(spec, scan(path.join(runDir, 'work'), readOwn(runDir)).counted);
   const featuresMd = (() => { try { return fs.readFileSync(path.join(runDir, 'features.md'), 'utf8'); } catch { return ''; } })();
   const of = featuresMd ? featureAreas(featuresMd, spec) : {};
   const parity = tryJson(path.join(runDir, 'parity', 'parity.json')) || [];
@@ -161,7 +161,7 @@ export function coverage(runDir) {
 function main(argv) {
   const [cmd, a, b] = argv;
   if (cmd === 'tree') {
-    for (const f of scan(path.resolve(a)).counted) console.log(`${f.lines} ${f.path}`);
+    for (const f of scan(path.resolve(a), b ? readOwn(path.resolve(b)) : null).counted) console.log(`${f.lines} ${f.path}`);
     return 0;
   }
   const work = path.join(a || '', 'work');
@@ -171,7 +171,7 @@ function main(argv) {
     return 0;
   }
   if (cmd === 'check') {
-    const v = validate(readSpec(a), scan(work).counted);
+    const v = validate(readSpec(a), scan(work, readOwn(a)).counted);
     console.log(JSON.stringify(v));
     return v.ok ? 0 : 1;
   }

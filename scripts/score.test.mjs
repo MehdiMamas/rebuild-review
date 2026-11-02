@@ -223,3 +223,15 @@ test('collate over two areas keeps the per-judge deltas, and confidence agreemen
   assert.ok(a.inputs.judgeSpread && 'ux' in a.inputs.judgeSpread, JSON.stringify(a.inputs));
   assert.ok(a.percent > 0, `agreement was ${a.percent}`);
 });
+
+test('measure with a base counts only the own files for files, lines and longest-file', () => {
+  const d = tmp();
+  put(path.join(d, 'src/own.js'), '1\n2\n');
+  put(path.join(d, 'src/base.js'), '1\n'.repeat(100));
+  put(path.join(d, 'g/timings.json'), [{ name: 'root.lcp', value: 100 }]);
+  const m = measure(path.join(d, 'src'), path.join(d, 'g'), { own: { root: path.join(d, 'src'), paths: new Set(['own.js']) } });
+  assert.equal(m.files, 1);
+  assert.equal(m.lines, 2);
+  assert.equal(m['longest-file'], 2);
+  assert.equal(m.lcp, 100); // rendered metrics stay whole-app
+});

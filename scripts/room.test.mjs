@@ -307,3 +307,60 @@ test('childSpawn: no subagents or messaging tools, and background commands are w
   assert.equal(env.CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS, '0');
   assert.equal(args[args.indexOf('--settings') + 1].includes('.settings'), true);
 });
+
+// A run whose work copy is a fork of a generated upstream with one own commit.
+function makeForkRun() {
+  const root = fs.realpathSync(tmp());
+  const g = (cwd, ...a) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...a], { cwd, encoding: 'utf8' }).trim();
+  const up = path.join(root, 'up'); fs.mkdirSync(up);
+  g(up, 'init', '-q', '-b', 'main');
+  fs.writeFileSync(path.join(up, 'core.js'), 'upstream core\n');
+  g(up, 'add', '-A'); g(up, 'commit', '-qm', 'one');
+  const commit = g(up, 'rev-parse', 'HEAD');
+  const target = path.join(root, 'target'); fs.mkdirSync(target);
+  const runDir = path.join(root, 'run-1'); fs.mkdirSync(runDir);
+  const work = path.join(runDir, 'work');
+  g(root, 'clone', '-q', up, work);
+  fs.writeFileSync(path.join(work, 'own.js'), 'own app code\n');
+  g(work, 'add', '-A'); g(work, 'commit', '-qm', 'own');
+  fs.writeFileSync(path.join(runDir, 'features.md'), 'F-001 keep. A user sees a list.\n');
+  fs.writeFileSync(path.join(runDir, 'technology.md'), 'Plain text list of tools.\n');
+  const baseJson = (url, ownPaths = ['own.js'], at = commit) => fs.writeFileSync(path.join(runDir, 'base.json'), JSON.stringify({ kind: 'fork', upstream: { url, ref: 'main', commit: at }, evidence: [], ownPaths, ownLines: 1 }));
+  baseJson('file://' + up);
+  return { root, up, target, runDir, work, commit, baseJson };
+}
+
+test('prepareRoom starts project/ as the base in one commit and puts the tree in input/base', () => {
+  const { target, runDir, commit } = makeForkRun();
+  const room = prepareRoom({ runDir, target, inputs: ['features.md', 'technology.md', 'base'] });
+  assert.equal(fs.readFileSync(path.join(room, 'input', 'base', 'core.js'), 'utf8'), 'upstream core\n');
+  assert.equal(fs.existsSync(path.join(room, 'input', 'base', '.git')), false);
+  assert.equal(fs.existsSync(path.join(room, 'input', 'base', 'own.js')), false);
+  assert.equal(fs.readFileSync(path.join(room, 'project', 'core.js'), 'utf8'), 'upstream core\n');
+  assert.equal(execFileSync('git', ['rev-list', '--count', 'HEAD'], { cwd: path.join(room, 'project'), encoding: 'utf8' }).trim(), '1');
+  assert.ok(commit);
+  fs.rmSync(room, { recursive: true, force: true });
+});
+
+test('prepareRoom refuses a base that holds the target own commits, and leaves no room behind', () => {
+  const { target, runDir, work, commit, baseJson } = makeForkRun();
+  baseJson('file://' + work, ['own.js'], execFileSync('git', ['rev-parse', 'HEAD'], { cwd: work, encoding: 'utf8' }).trim());
+  const before = fs.readdirSync(os.tmpdir()).filter((f) => f.startsWith('rr-room-')).length;
+  assert.throws(() => prepareRoom({ runDir, target, inputs: ['features.md', 'technology.md', 'base'] }), /wall check/);
+  assert.equal(fs.readdirSync(os.tmpdir()).filter((f) => f.startsWith('rr-room-')).length, before);
+  assert.ok(commit);
+});
+
+test('the child network list never names the upstream host', () => {
+  const room = tmp();
+  writeSettings(room, { denyPaths: [], noWrite: [] });
+  const t = fs.readFileSync(path.join(room + '.settings', 'settings.json'), 'utf8');
+  assert.ok(!/github\.com/.test(t));
+  fs.rmSync(room, { recursive: true, force: true }); fs.rmSync(room + '.settings', { recursive: true, force: true });
+});
+
+test('prepareRoom checks foundations.md like the other inputs', () => {
+  const { target, runDir } = makeRun('F-001 A user sees a list.\n');
+  fs.writeFileSync(path.join(runDir, 'foundations.md'), '## License and attribution\n```\nconst a = 1;\n```\n');
+  assert.throws(() => prepareRoom({ runDir, target, inputs: ['features.md', 'technology.md', 'foundations.md'] }), /foundations.md fails the no-source check/);
+});
