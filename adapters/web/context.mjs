@@ -39,6 +39,9 @@ export function assertLocalhost(address) {
   return u;
 }
 
+// null for a URL that does not parse: an app can request one when a user types garbage into a server address field.
+const parseUrl = (raw) => { try { return new URL(raw); } catch { return null; } };
+
 // A request the app's own code made for data. Framework route prefetches and client navigation payloads are not.
 export function isDataRequest(request) {
   if (!['fetch', 'xhr'].includes(request.resourceType())) return false;
@@ -46,7 +49,7 @@ export function isDataRequest(request) {
   if (/prefetch/i.test(h['sec-purpose'] || '') || /prefetch/i.test(h['purpose'] || '')) return false;
   if (h['next-router-prefetch']) return false;
   if (h['rsc'] && !h['next-action']) return false;
-  if (new URL(request.url()).pathname.startsWith('/_next/data/')) return false;
+  if (parseUrl(request.url())?.pathname.startsWith('/_next/data/')) return false;
   return true;
 }
 const isApi = (r) => isDataRequest(r.request());
@@ -61,7 +64,7 @@ export async function makeContext(browser, origin, { viewport, colorScheme = 'li
   if (navTimeout) context.setDefaultNavigationTimeout(navTimeout);
   const rec = { blocked: [], har: [], console: [], pageErrors: [] };
   await context.route('**/*', async (route) => {
-    const o = new URL(route.request().url()).origin;
+    const o = parseUrl(route.request().url())?.origin;
     if (o !== origin && !allowOrigins.includes(o)) {
       rec.blocked.push(redactUrl(route.request().url()));
       if (onBlocked) onBlocked(redactUrl(route.request().url()));
@@ -95,7 +98,8 @@ export async function makeContext(browser, origin, { viewport, colorScheme = 'li
 }
 
 // Finds an element by accessible name or text; used by states.json steps and the probes.
-export async function locate(page, name) {
+// count() does not wait, and an app can still be starting after the load event, so it looks again until timeoutMs.
+export async function locate(page, name, timeoutMs = 20000) {
   const tries = [
     page.getByLabel(name, { exact: true }),
     page.getByPlaceholder(name, { exact: true }),
@@ -104,8 +108,10 @@ export async function locate(page, name) {
     page.getByText(name, { exact: true }),
     page.getByText(name),
   ];
-  for (const l of tries) if ((await l.count()) > 0) return l.first();
-  throw new Error(`nothing found by name or text: ${name}`);
+  for (const deadline = Date.now() + timeoutMs; ; await sleep(250)) {
+    for (const l of tries) if ((await l.count()) > 0) return l.first();
+    if (Date.now() > deadline) throw new Error(`nothing found by name or text: ${name}`);
+  }
 }
 
 export async function runStep(page, origin, step) {

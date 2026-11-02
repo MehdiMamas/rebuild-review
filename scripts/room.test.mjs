@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { platformNote, BUDGET_USD, filterGolden, prepareRoom, scanTranscript, wallTried, cloneProject, copyEnv, denyList, writeSettings, fixStack, stackFixPrompt, replaceProject, main } from './room.mjs';
+import { platformNote, BUDGET_USD, filterGolden, prepareRoom, scanTranscript, wallTried, cloneProject, copyEnv, denyList, writeSettings, fixStack, stackFixPrompt, replaceProject, main, childSpawn } from './room.mjs';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'room-test-'));
 
@@ -298,4 +298,12 @@ test('platformNote names the original platform and is empty without a run file',
   assert.equal(platformNote(d), '');
   fs.writeFileSync(path.join(d, 'run.json'), JSON.stringify({ platform: 'electron' }));
   assert.match(platformNote(d), /platform "electron"[\s\S]*same platform/);
+});
+
+test('childSpawn: no subagents or messaging tools, and background commands are waited for (#68)', () => {
+  const { args, env } = childSpawn({ room: os.tmpdir(), model: 'haiku', maxBudgetUsd: 1 });
+  const disallowed = args.slice(args.indexOf('--disallowedTools') + 1, args.indexOf('--disable-slash-commands'));
+  for (const t of ['WebFetch', 'WebSearch', 'Agent', 'Task', 'Workflow', 'SendMessage', 'RemoteTrigger']) assert.ok(disallowed.includes(t), `expected ${t} in --disallowedTools, got ${disallowed.join(' ')}`);
+  assert.equal(env.CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS, '0');
+  assert.equal(args[args.indexOf('--settings') + 1].includes('.settings'), true);
 });

@@ -158,3 +158,7 @@ what it renders, then scores the rebuild against the original. See README.md.
 - Tests: `node --test adapters/web/test/check.test.mjs`; `cd adapters/web && npm test` check 9 runs it on the benchmark (exit 1, D2 D3 D5 D6 D7 flagged, under 120 s), a 5 s budget, a dead port, a redirect, a field that cannot be clicked, a hanging route, an icon-only Delete button and the screenshots. A thrown error in a probe group becomes `notChecked` (never a fail); uncaught errors exit 3.
 - Gotcha: a test that serves from the test process cannot use `spawnSync` on the command; the server blocks with it. Run the server as a child process.
 - Not counted as a data request by the fault probes (`isDataRequest` in `context.mjs`): prefetches (`sec-purpose`/`purpose` containing prefetch, `next-router-prefetch`), `rsc` requests without `next-action`, and `/_next/data/` paths. A slow client navigation with no feedback is therefore not flagged.
+
+## Run fixes from the big-app run (#68)
+- `context.mjs`: a request to a URL that does not parse is treated as another origin (blocked, listed in `rec.blocked`), never a crash; `locate()` retries for up to 20 s (only `runStep`, i.e. `states.json` steps, calls it). Test: `cd adapters/web && node --test test/context.test.mjs`.
+- `room.mjs` `childSpawn`: the builder child cannot start subagents or send messages, and runs with `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0`; `prompts/build.md` asks it to work in the foreground, so background work is not lost uncommitted.
