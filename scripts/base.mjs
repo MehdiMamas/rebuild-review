@@ -1,5 +1,5 @@
 // Upstream base of a target: a fork, a framework or a template the app is built on. See AGENTS.md ("Upstream base").
-//   node base.mjs detect <workDir> <runDir>   writes <runDir>/base.json { kind, upstream: {url, ref, commit} | null, evidence, ownPaths, ownLines }
+//   node base.mjs detect <workDir> <runDir>   writes <runDir>/base.json { kind, upstream: {url, ref, commit} | null, evidence, ownPaths, ownLines, ownLineChanges }
 //   node base.mjs pin <runDir> <url@ref|none> saves the user's answer as run.json "base" ("none" or {url, ref}); a pinned base wins over a detected one
 // Evidence comes from code (git remotes, merge commits, manifests, vendored trees), never from a model.
 import fs from 'node:fs';
@@ -7,8 +7,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { scan, readOwn } from './size.mjs';
-export { readOwn };
+import { readOwn, readOwnChanges, skipReason } from './size.mjs';
+export { readOwn, readOwnChanges };
 
 const ENV = { ...process.env, GIT_ALLOW_PROTOCOL: 'file:https:http:git:ssh', GIT_TERMINAL_PROMPT: '0' };
 const URL_OK = /^(https?:\/\/|file:\/\/|git:\/\/|ssh:\/\/|git@)/;
@@ -48,6 +48,22 @@ export function ownSince(projectDir) {
   const root = roots.out.split('\n').pop();
   const d = git(projectDir, 'diff', '--name-only', '-z', '--diff-filter=ACMR', root, 'HEAD');
   return d.ok ? new Set(d.raw.split('\0').filter(Boolean)) : null;
+}
+
+// Added plus deleted lines per path between two commits of a repo (git numstat, no rename detection). Binary and skipped files count 0.
+// paths (a Set or array) limits the result; a path with no change is absent.
+export function changedLines(repoDir, fromCommit, toRef, paths = null) {
+  const r = git(repoDir, 'diff', '--numstat', '-z', '--no-renames', fromCommit, toRef);
+  if (!r.ok) throw new Error(`cannot diff ${fromCommit} and ${toRef}: ${r.err}`);
+  const want = paths ? new Set(paths) : null;
+  const out = {};
+  for (const e of r.raw.split('\0').filter(Boolean)) {
+    const [a, d, ...rest] = e.split('\t');
+    const p = rest.join('\t');
+    if ((want && !want.has(p)) || skipReason(p) || !/^\d+$/.test(a) || !/^\d+$/.test(d)) continue;
+    out[p] = Number(a) + Number(d);
+  }
+  return out;
 }
 
 // path -> blob hash of a commit's tree.
@@ -167,20 +183,47 @@ function resolvePin(pin) {
 
 // Files of the target (git-tracked) that are not in the upstream commit, or differ from it. The upstream commit is read from the work repo
 // when it is there, else from a shallow fetch into a temporary folder.
+// Also returns the changed lines of each own path against the base (see changedLines); a file that is new on top of the base counts all its lines.
 function ownPathsOf(workDir, upstream) {
-  let blobs;
-  if (git(workDir, 'cat-file', '-e', `${upstream.commit}^{commit}`).ok) blobs = treeBlobs(workDir, upstream.commit);
-  else {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-base-'));
-    try { fetchBase({ url: upstream.url, commit: upstream.commit, dest: tmp }); blobs = treeBlobs(tmp, 'HEAD'); } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
-  }
+  let blobs, changes;
   const own = [];
-  for (const e of git(workDir, 'ls-files', '-s', '-z').raw.split('\0').filter(Boolean)) {
-    const t = e.indexOf('\t');
-    const p = e.slice(t + 1);
-    if (blobs.get(p) !== e.slice(0, t).split(' ')[1]) own.push(p);
+  const ownOf = () => {
+    for (const e of git(workDir, 'ls-files', '-s', '-z').raw.split('\0').filter(Boolean)) {
+      const t = e.indexOf('\t');
+      const p = e.slice(t + 1);
+      if (blobs.get(p) !== e.slice(0, t).split(' ')[1]) own.push(p);
+    }
+  };
+  if (git(workDir, 'cat-file', '-e', `${upstream.commit}^{commit}`).ok) {
+    blobs = treeBlobs(workDir, upstream.commit);
+    ownOf();
+    changes = changedLines(workDir, upstream.commit, 'HEAD', own);
+  } else {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-base-'));
+    try {
+      fetchBase({ url: upstream.url, commit: upstream.commit, dest: tmp });
+      blobs = treeBlobs(tmp, 'HEAD');
+      ownOf();
+      changes = {};
+      for (const p of own) {
+        if (skipReason(p)) continue;
+        const mine = path.join(workDir, p);
+        let n;
+        if (blobs.has(p)) {
+          const r = git(workDir, 'diff', '--no-index', '--numstat', '--', path.join(tmp, p), mine);
+          const m = /^(\d+)\t(\d+)\t/.exec(r.out);
+          if (!m) continue; // binary, unreadable or identical
+          n = Number(m[1]) + Number(m[2]);
+        } else {
+          let text;
+          try { text = fs.readFileSync(mine, 'utf8'); } catch { continue; }
+          n = text === '' ? 0 : text.split('\n').length - (text.endsWith('\n') ? 1 : 0);
+        }
+        if (n) changes[p] = n;
+      }
+    } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
   }
-  return own;
+  return { own, changes };
 }
 
 export function detect(workDir, runDir) {
@@ -202,12 +245,14 @@ export function detect(workDir, runDir) {
     else if (manifest || merged) kind = 'template';
   }
   if (pin === 'none') { kind = 'none'; upstream = null; }
-  let ownPaths = null, ownLines = null;
+  let ownPaths = null, ownLines = null, ownLineChanges = null;
   if (upstream) {
-    ownPaths = ownPathsOf(workDir, upstream);
-    ownLines = scan(workDir, new Set(ownPaths)).counted.reduce((n, c) => n + c.lines, 0);
+    const o = ownPathsOf(workDir, upstream);
+    ownPaths = o.own;
+    ownLineChanges = o.changes;
+    ownLines = Object.values(ownLineChanges).reduce((n, c) => n + c, 0);
   }
-  const out = { kind, upstream, evidence, ownPaths, ownLines };
+  const out = { kind, upstream, evidence, ownPaths, ownLines, ownLineChanges };
   fs.mkdirSync(runDir, { recursive: true });
   fs.writeFileSync(path.join(runDir, 'base.json'), JSON.stringify(out, null, 2));
   return out;
@@ -215,7 +260,7 @@ export function detect(workDir, runDir) {
 
 export function summary(b) {
   if (!b || b.kind === 'none') return 'no base found';
-  const u = b.upstream ? `${b.upstream.url} at ${b.upstream.ref} (${b.upstream.commit.slice(0, 12)}); own code: ${b.ownPaths.length} files, ${b.ownLines} source lines` : 'no upstream commit could be pinned';
+  const u = b.upstream ? `${b.upstream.url} at ${b.upstream.ref} (${b.upstream.commit.slice(0, 12)}); own code: ${b.ownPaths.length} files, ${b.ownLines} changed lines` : 'no upstream commit could be pinned';
   return `${b.kind}: ${u}. Evidence: ${b.evidence.join('; ') || 'none'}`;
 }
 
