@@ -27,11 +27,12 @@ export function skipReason(file) {
 const countLines = (text) => (text.length === 0 ? 0 : text.split('\n').length - (text.endsWith('\n') ? 1 : 0));
 
 // Every git-tracked file, split into counted source files (path, language, lines) and skipped ones with a reason.
-export function scan(workDir) {
+// With a Set of own paths (a run with an upstream base) every other file is skipped as coming from the base.
+export function scan(workDir, own = null) {
   const files = execFileSync('git', ['ls-files', '-z'], { cwd: workDir, maxBuffer: 1 << 28 }).toString().split('\0').filter(Boolean);
   const counted = [], skipped = [];
   for (const f of files) {
-    const reason = skipReason(f);
+    const reason = own && !own.has(f) ? 'from the base' : skipReason(f);
     if (reason) { skipped.push({ path: f, reason }); continue; }
     let text;
     try { text = fs.readFileSync(path.join(workDir, f), 'utf8'); } catch { skipped.push({ path: f, reason: 'unreadable' }); continue; }
@@ -40,8 +41,8 @@ export function scan(workDir) {
   return { files: files.length, counted, skipped };
 }
 
-export function measure(workDir) {
-  const { files, counted, skipped } = scan(workDir);
+export function measure(workDir, own = null) {
+  const { files, counted, skipped } = scan(workDir, own);
   const byLanguage = {};
   let lines = 0;
   for (const c of counted) { byLanguage[c.lang] = (byLanguage[c.lang] || 0) + c.lines; lines += c.lines; }
@@ -60,6 +61,14 @@ export function plan(size, scale) {
     maxButtons: Math.max(f.buttons, units * p.buttons),
     estimateUsd: { low: units * p.costLowUsd, high: units * p.costHighUsd },
   };
+}
+
+// Own paths from <runDir>/base.json (a Set), or null when the run has no upstream base.
+export function readOwn(runDir) {
+  try {
+    const b = JSON.parse(fs.readFileSync(path.join(runDir, 'base.json'), 'utf8'));
+    return b && b.upstream && Array.isArray(b.ownPaths) ? new Set(b.ownPaths) : null;
+  } catch { return null; }
 }
 
 const loadScale = () => JSON.parse(fs.readFileSync(new URL('../scale.json', import.meta.url), 'utf8'));
@@ -100,7 +109,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === new URL(import.meta.url
   const [workDir, runDir] = argv;
   if (!workDir || !runDir) { console.error('usage: node scripts/size.mjs <workDir> <runDir> [--max-usd N]'); process.exit(2); }
   const scale = loadScale();
-  const size = measure(path.resolve(workDir));
+  const size = measure(path.resolve(workDir), readOwn(path.resolve(runDir)));
   const out = { size, plan: plan(size, scale) };
   fs.mkdirSync(path.resolve(runDir), { recursive: true });
   fs.writeFileSync(path.join(path.resolve(runDir), 'size.json'), JSON.stringify(out, null, 2));
