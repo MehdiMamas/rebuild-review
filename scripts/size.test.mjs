@@ -103,3 +103,10 @@ test('with a base only the own paths are counted', () => {
   assert.equal(size.counted, 1);
   assert.equal(size.skipped.find((s) => s.path === 'base/b.js').reason, 'from the base');
 });
+
+test('with changed lines the size counts them in place of whole files', () => {
+  const d = repo({ 'own/a.js': lines(10), 'own/b.js': lines(500) });
+  const size = measure(d, new Set(['own/a.js', 'own/b.js']), { 'own/a.js': 10, 'own/b.js': 6 });
+  assert.equal(size.lines, 16);
+  assert.equal(size.counted, 2);
+});

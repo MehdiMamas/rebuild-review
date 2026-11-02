@@ -11,8 +11,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { scan, skipReason, readOwn } from './size.mjs';
-import { ownSince } from './base.mjs';
+import { scan, skipReason, readOwn, readOwnChanges } from './size.mjs';
+import { ownSince, changedLines, git } from './base.mjs';
 import { validate } from './areas.mjs';
 
 const readJson = (f) => JSON.parse(fs.readFileSync(f, 'utf8'));
@@ -114,7 +114,8 @@ function countDependencies(dir) {
   return found ? n : null;
 }
 
-// own: { root, paths } limits the code metrics to the app's own files (root is the git root holding sourceDir; paths are relative to it).
+// own: { root, paths, changes? } limits the code metrics to the app's own files (root is the git root holding sourceDir; paths are relative to it).
+// changes (path -> changed lines against the base) makes `lines` the sum of changed lines; files and longest-file stay whole-file.
 export function measure(sourceDir, goldenDir, { run, rubric = readJson(DEFAULT_RUBRIC), own = null } = {}) {
   const out = {};
   const better = {};
@@ -139,7 +140,7 @@ export function measure(sourceDir, goldenDir, { run, rubric = readJson(DEFAULT_R
     const files = listSource(sourceDir).filter((f) => !skipReason(f) && (!own || own.paths.has(rel ? `${rel}/${f}` : f))); // the same files size.mjs counts
     const counts = files.map((f) => lineCount(path.join(sourceDir, f)));
     put('files', files.length);
-    put('lines', counts.reduce((a, b) => a + b, 0));
+    put('lines', own && own.changes ? files.reduce((n, f) => n + (own.changes[rel ? `${rel}/${f}` : f] || 0), 0) : counts.reduce((a, b) => a + b, 0));
     put('longest-file', counts.length ? Math.max(...counts) : 0);
     put('dependencies', countDependencies(sourceDir));
   }
@@ -366,7 +367,14 @@ if (process.argv[1] && path.resolve(process.argv[1]) === new URL(import.meta.url
     if (ownRun) { // code metrics count own code only when the run has an upstream base
       const root = path.join(path.resolve(ownRun), ownSide === 'rebuild' ? 'project' : 'work');
       const paths = ownSide === 'rebuild' ? (readOwn(path.resolve(ownRun)) ? ownSince(root) : null) : readOwn(path.resolve(ownRun));
-      if (paths) own = { root, paths };
+      if (paths) {
+        let changes = null;
+        if (ownSide === 'rebuild') {
+          const first = git(root, 'rev-list', '--max-parents=0', 'HEAD').out.split('\n').pop();
+          changes = changedLines(root, first, 'HEAD', paths);
+        } else changes = readOwnChanges(path.resolve(ownRun));
+        own = { root, paths, changes };
+      }
     }
     const m = measure(path.resolve(a), path.resolve(b), { run, rubric: rubricOpt ? readJson(rubricOpt) : undefined, own });
     writeJson(c, m);

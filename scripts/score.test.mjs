@@ -235,3 +235,15 @@ test('measure with a base counts only the own files for files, lines and longest
   assert.equal(m['longest-file'], 2);
   assert.equal(m.lcp, 100); // rendered metrics stay whole-app
 });
+
+test('measure with changed lines makes lines the changed total while files and longest-file stay whole-file', () => {
+  const d = tmp();
+  put(path.join(d, 'src/own.js'), '1\n'.repeat(500));
+  put(path.join(d, 'src/new.js'), '1\n'.repeat(20));
+  put(path.join(d, 'src/base.js'), '1\n'.repeat(100));
+  const own = { root: path.join(d, 'src'), paths: new Set(['own.js', 'new.js']), changes: { 'own.js': 6, 'new.js': 20 } };
+  const m = measure(path.join(d, 'src'), path.join(d, 'g'), { own });
+  assert.equal(m.lines, 26);
+  assert.equal(m.files, 2);
+  assert.equal(m['longest-file'], 500);
+});

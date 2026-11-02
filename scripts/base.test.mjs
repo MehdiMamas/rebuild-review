@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { detect, fetchBase, checkWall, parsePin, ownSince, git } from './base.mjs';
+import { detect, fetchBase, checkWall, parsePin, ownSince, changedLines, git } from './base.mjs';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'rr-base-test-'));
 const G = ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false'];
@@ -43,7 +43,8 @@ test('detect finds the upstream commit and exactly the own paths', () => {
   assert.equal(b.upstream.ref, 'v1');
   assert.equal(b.upstream.url, up);
   assert.deepEqual([...b.ownPaths].sort(), ['core/a.js', 'own/feature.js', 'own/more.js']);
-  assert.equal(b.ownLines, 31 + 7 + 3);
+  assert.deepEqual(b.ownLineChanges, { 'core/a.js': 1, 'own/feature.js': 7, 'own/more.js': 3 }); // a.js grew from 30 to 31 lines
+  assert.equal(b.ownLines, 1 + 7 + 3);
   assert.ok(b.evidence.some((e) => /upstream/.test(e)));
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(run, 'base.json'), 'utf8')).ownPaths.sort(), b.ownPaths.sort());
 });
@@ -113,4 +114,47 @@ test('ownSince lists files changed after the first commit of a project', () => {
   write(d, { 'new.js': lines(2), 'base.js': lines(4) });
   sh(d, 'add', '-A'); sh(d, 'commit', '-q', '-m', 'own');
   assert.deepEqual([...ownSince(d)].sort(), ['base.js', 'new.js']);
+});
+
+test('own lines are changed lines against the base: 3 changed lines of a 500-line file plus a new 20-line file', () => {
+  const upDir = tmp();
+  sh(upDir, 'init', '-q', '-b', 'main');
+  const big = Array.from({ length: 500 }, (_, i) => `line ${i}`);
+  write(upDir, { 'core/big.js': big.join('\n') + '\n' });
+  sh(upDir, 'add', '-A'); sh(upDir, 'commit', '-q', '-m', 'base');
+  const commit = sh(upDir, 'rev-parse', 'HEAD');
+  const fork = tmp();
+  sh(fork, 'clone', '-q', upDir, '.');
+  sh(fork, 'remote', 'rename', 'origin', 'upstream');
+  const edited = big.map((l, i) => (i === 10 || i === 200 || i === 400 ? `changed ${i}` : l));
+  write(fork, { 'core/big.js': edited.join('\n') + '\n', 'own/new.js': lines(20) });
+  sh(fork, 'add', '-A'); sh(fork, 'commit', '-q', '-m', 'own');
+  // git numstat for the edited file says 3 added and 3 deleted
+  const expected = { 'core/big.js': 6, 'own/new.js': 20 };
+  assert.deepEqual(changedLines(fork, commit, 'HEAD', ['core/big.js', 'own/new.js']), expected);
+  const b = detect(fork, tmp());
+  assert.deepEqual(b.ownLineChanges, expected);
+  assert.equal(b.ownLines, 26);
+  // the base commit is not in the work repo: the same numbers come from a fetched copy
+  const clone = tmp();
+  sh(clone, 'init', '-q', '-b', 'main');
+  write(clone, { 'core/big.js': edited.join('\n') + '\n', 'own/new.js': lines(20) });
+  sh(clone, 'add', '-A'); sh(clone, 'commit', '-q', '-m', 'own');
+  sh(clone, 'remote', 'add', 'upstream', 'file://' + upDir);
+  const run = tmp();
+  fs.writeFileSync(path.join(run, 'run.json'), JSON.stringify({ base: { url: 'file://' + upDir, ref: commit } }));
+  const c = detect(clone, run);
+  assert.deepEqual(c.ownLineChanges, expected);
+  assert.equal(c.ownLines, 26);
+});
+
+test('changedLines counts nothing for binary and skipped files', () => {
+  const d = tmp();
+  sh(d, 'init', '-q', '-b', 'main');
+  write(d, { 'a.js': 'x\n' });
+  sh(d, 'add', '-A'); sh(d, 'commit', '-q', '-m', 'one');
+  const first = sh(d, 'rev-parse', 'HEAD');
+  write(d, { 'a.js': 'y\n', 'package-lock.json': lines(50), 'logo.png': 'a\0b\n' });
+  sh(d, 'add', '-A'); sh(d, 'commit', '-q', '-m', 'two');
+  assert.deepEqual(changedLines(d, first, 'HEAD'), { 'a.js': 2 });
 });

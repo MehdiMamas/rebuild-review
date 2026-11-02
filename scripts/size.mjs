@@ -41,11 +41,15 @@ export function scan(workDir, own = null) {
   return { files: files.length, counted, skipped };
 }
 
-export function measure(workDir, own = null) {
+// changes (path -> changed lines against the base, from base.json) replaces whole-file counts when given.
+export function measure(workDir, own = null, changes = null) {
   const { files, counted, skipped } = scan(workDir, own);
   const byLanguage = {};
   let lines = 0;
-  for (const c of counted) { byLanguage[c.lang] = (byLanguage[c.lang] || 0) + c.lines; lines += c.lines; }
+  for (const c of counted) {
+    if (changes) c.lines = changes[c.path] || 0;
+    byLanguage[c.lang] = (byLanguage[c.lang] || 0) + c.lines; lines += c.lines;
+  }
   return { files, counted: counted.length, lines, byLanguage, skipped };
 }
 
@@ -68,6 +72,14 @@ export function readOwn(runDir) {
   try {
     const b = JSON.parse(fs.readFileSync(path.join(runDir, 'base.json'), 'utf8'));
     return b && b.upstream && Array.isArray(b.ownPaths) ? new Set(b.ownPaths) : null;
+  } catch { return null; }
+}
+
+// Changed lines per own path from <runDir>/base.json, or null when the run has none.
+export function readOwnChanges(runDir) {
+  try {
+    const b = JSON.parse(fs.readFileSync(path.join(runDir, 'base.json'), 'utf8'));
+    return b && b.upstream && b.ownLineChanges && typeof b.ownLineChanges === 'object' ? b.ownLineChanges : null;
   } catch { return null; }
 }
 
@@ -109,7 +121,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === new URL(import.meta.url
   const [workDir, runDir] = argv;
   if (!workDir || !runDir) { console.error('usage: node scripts/size.mjs <workDir> <runDir> [--max-usd N]'); process.exit(2); }
   const scale = loadScale();
-  const size = measure(path.resolve(workDir), readOwn(path.resolve(runDir)));
+  const size = measure(path.resolve(workDir), readOwn(path.resolve(runDir)), readOwnChanges(path.resolve(runDir)));
   const out = { size, plan: plan(size, scale) };
   fs.mkdirSync(path.resolve(runDir), { recursive: true });
   fs.writeFileSync(path.join(path.resolve(runDir), 'size.json'), JSON.stringify(out, null, 2));
