@@ -51,7 +51,7 @@ export function checkText(text, srcTexts = []) {
 }
 
 export function trackedTexts(workDir) {
-  const files = execFileSync('git', ['ls-files', '-z'], { cwd: workDir }).toString().split('\0').filter(Boolean);
+  const files = execFileSync('git', ['ls-files', '-z'], { cwd: workDir, maxBuffer: 1 << 30 }).toString().split('\0').filter(Boolean);
   const out = [];
   for (const f of files) {
     let buf;

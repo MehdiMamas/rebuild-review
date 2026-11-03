@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { checkText } from './check-features.mjs';
+import { checkText, trackedTexts } from './check-features.mjs';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 
 const src = [{ name: 'a.js', content: 'function computeTheTotalOfAllTheItemsInTheCart(items) { return 1 }' }];
 const bad = (t, s = []) => assert.ok(checkText(t, s).length > 0, t);
@@ -22,3 +26,16 @@ test('still fails on real .js paths', () => {
   }
 });
 test('passes on a "Not built (from the docs)" section', () => assert.deepEqual(checkText('F-001 keep. Search filters tasks.\n\n## Not built (from the docs)\n- Export to PDF is described in the docs but the app has no such control.', src), []));
+
+test('lists tracked files when git ls-files output is over 1 MB', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cf-big-'));
+  try {
+    execFileSync('git', ['init', '-q'], { cwd: dir });
+    const long = 'x'.repeat(200);
+    for (let i = 0; i < 6000; i++) fs.writeFileSync(path.join(dir, `${long}-${i}.txt`), 'a');
+    execFileSync('git', ['add', '-A'], { cwd: dir });
+    assert.equal(trackedTexts(dir).length, 6000);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
