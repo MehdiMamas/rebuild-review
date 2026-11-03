@@ -29,8 +29,18 @@ const tagClickables = (max) => `(() => {
   }
   return [...document.querySelectorAll('[data-rr-click]')].map((e) => (e.innerText || e.tagName).trim().slice(0, 30));
 })()`;
-const SNAP = `(() => { window.__rects = new Map(); for (const e of document.body.querySelectorAll('*')) { const r = e.getBoundingClientRect(); window.__rects.set(e, [r.left, r.top]); } })()`;
-const MOVED = `(() => {
+// Only elements the user can see are recorded: a hidden part (display none, visibility hidden or
+// opacity 0 on it or an ancestor, or an empty box) that moves before it is shown is no shift (#86).
+export const SNAP = `(() => {
+  window.__rects = new Map();
+  const seen = (e, r) => {
+    if (!r.width && !r.height) return false;
+    if (e.checkVisibility) return e.checkVisibility({ opacityProperty: true, visibilityProperty: true });
+    return getComputedStyle(e).visibility !== 'hidden' && e.getClientRects().length > 0;
+  };
+  for (const e of document.body.querySelectorAll('*')) { const r = e.getBoundingClientRect(); if (seen(e, r)) window.__rects.set(e, [r.left, r.top]); }
+})()`;
+export const MOVED = `(() => {
   let worst = { d: 0 };
   for (const [e, [x, y]] of window.__rects) {
     if (!e.isConnected) continue;
