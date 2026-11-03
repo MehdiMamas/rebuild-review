@@ -1,5 +1,5 @@
 // Start and stop an Electron app named by run.json, in an isolated profile, with the same network rules as the web adapter.
-// run.json: { platform: "electron", dir?, install?, build?, launch: { executablePath?, args?, schemes? } }
+// run.json: { platform: "electron", dir?, install?, build?, env?, launch: { executablePath?, args?, schemes? } }
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -8,6 +8,7 @@ import { createRequire } from 'node:module';
 import { execSync, spawnSync, spawn } from 'node:child_process';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { _electron } from 'playwright';
+import { linuxLibs } from './libs.mjs';
 import { redactUrl, redactHeaders, scrub, sleep, locate, runStep } from '../web/context.mjs';
 
 const DEAD_PROXY = '127.0.0.1:9';
@@ -22,6 +23,8 @@ export function workDirOf(run, appFile) {
   if (path.relative(base, workDir).startsWith('..')) throw new Error(`run.json "dir" must stay inside ${base}, got ${run.dir}`);
   return workDir;
 }
+
+let libsCache;
 
 // install and build run once per process, and not at all when a parent already did (RR_PREPARED=1). Returns { workDir, buildMs }.
 const prepared = new Map();
@@ -72,6 +75,8 @@ export async function launchApp(run, appFile, { theme = 'light' } = {}) {
   const env = {};
   for (const k of ENV_ALLOW) if (process.env[k] !== undefined) env[k] = process.env[k];
   for (const k of Object.keys(process.env)) if (/^LC_/.test(k)) env[k] = process.env[k];
+  // run.env (stand-in settings, see CONTRACT.md) comes after the allowlist copy; the isolation below still wins.
+  for (const [k, v] of Object.entries(run.env || {})) env[k] = String(v);
   Object.assign(env, {
     HOME: d.home, USERPROFILE: d.home, APPDATA: d.appdata, LOCALAPPDATA: d.localappdata,
     XDG_CONFIG_HOME: d['xdg-config'], XDG_CACHE_HOME: d['xdg-cache'], XDG_DATA_HOME: d['xdg-data'], CLAUDE_CONFIG_DIR: d.claude,
@@ -79,6 +84,10 @@ export async function launchApp(run, appFile, { theme = 'light' } = {}) {
     NO_PROXY: 'localhost,127.0.0.1,::1', no_proxy: 'localhost,127.0.0.1,::1', NODE_USE_ENV_PROXY: '1',
   });
   const executablePath = l.executablePath ? path.resolve(workDir, l.executablePath) : createRequire(path.join(workDir, 'package.json'))('electron');
+  if (process.platform === 'linux') {
+    try { libsCache ??= linuxLibs(executablePath, path.join(os.tmpdir(), `rr-electron-libs-${process.getuid()}`)); } catch (e) { fs.rmSync(tmp, { recursive: true, force: true }); throw e; }
+    if (libsCache) env.LD_LIBRARY_PATH = [libsCache, env.LD_LIBRARY_PATH].filter(Boolean).join(':');
+  }
   const mainLog = path.join(tmp, 'main.log');
   env.RR_MAIN_LOG = mainLog;
   const args = ['-r', fileURLToPath(new URL('./mainlog.cjs', import.meta.url)), ...(l.args || ['.']), `--user-data-dir=${d.profile}`, `--extensions-dir=${d.ext}`, `--proxy-server=${DEAD_PROXY}`, '--proxy-bypass-list=localhost;127.0.0.1;[::1]'];
@@ -201,7 +210,8 @@ export function electronOpener(run, appFile) {
     const session = await launchApp(run, appFile, { theme: colorScheme });
     await session.setSize(session.page, width, height).catch(() => {});
     return {
-      get page() { return session.page; },
+      // follows the current main window: when the app closes the one it had (a reload that opens a new window), the first window still open
+      get page() { if (session.page.isClosed() && session.windows.length) session.page = session.windows[0]; return session.page; },
       rec: session.rec, faults: session.faults, close: () => session.stop(),
       go: async () => { await replay(session, screen.steps || []); await session.setSize(session.page, width, height).catch(() => {}); },
     };

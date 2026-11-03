@@ -95,19 +95,22 @@ function setup(o) {
 // networkidle wait; idleMs (check only) caps it, since a polling app never goes idle.
 const idle = (c, page) => page.waitForLoadState('networkidle', c.idleMs ? { timeout: c.idleMs } : undefined).catch(() => {});
 
+// A page or window that closed under a probe (a click that closes the window or reloads the app into a new one) is not a failure of the app.
+export const closedReason = (e) => (/Target page, context or browser has been closed|Target closed/.test(String(e && e.message)) ? 'the window closed or reloaded after the click' : null);
+
 // Runs one probe group. A throw closes the group's contexts; with c.notChecked it becomes notChecked rows, else it is rethrown.
 async function guard(c, s, probes, what, fn) {
   const live = new Set();
   try { await fn({ ...c.env, track: live }); }
   catch (e) {
     if (!c.notChecked) throw e;
-    for (const probe of probes) c.notChecked.push({ probe, route: s.url, reason: `${what}${String(e.message).split('\n')[0]}` });
+    for (const probe of probes) c.notChecked.push({ probe, route: s.url || s.id, reason: `${what}${closedReason(e) || String(e.message).split('\n')[0]}` });
   } finally { for (const x of live) await x.close().catch(() => {}); }
 }
 
 const late = (c, s, probes, what = '') => {
   if (!c.deadline || Date.now() <= c.deadline) return false;
-  for (const probe of probes) c.notChecked?.push({ probe, route: s.url, reason: `${what}time budget used up` });
+  for (const probe of probes) c.notChecked?.push({ probe, route: s.url || s.id, reason: `${what}time budget used up` });
   return true;
 };
 
@@ -232,7 +235,7 @@ const MODE_PROBE = { repeat: 'repeat-requests', slow: 'no-feedback-slow', fail: 
 
 // Click every distinct clickable: repeat requests, then slow, then failing answers.
 async function clickScreen(c, s, add) {
-  if (c.noClicks) { for (const probe of Object.values(MODE_PROBE)) c.notChecked?.push({ probe, route: s.url, reason: `clicks not run: ${c.noClicks}` }); return; }
+  if (c.noClicks) { for (const probe of Object.values(MODE_PROBE)) c.notChecked?.push({ probe, route: s.url || s.id, reason: `clicks not run: ${c.noClicks}` }); return; }
   if (late(c, s, Object.values(MODE_PROBE), 'clicks: ')) return;
   const TAG = tagClickables(c.maxClickables);
   let names = [], texts = [];
@@ -265,8 +268,8 @@ async function clickScreen(c, s, add) {
           const before = await t.page.evaluate(() => document.body.innerHTML);
           const errBefore = await t.page.evaluate(ERRORISH);
           t.api.seen.length = 0;
-          try { await target.click({ timeout: 2000 }); } catch {
-            c.notChecked?.push({ probe: MODE_PROBE[mode], route: s.url, reason: `could not click "${names[i]}"` });
+          try { await target.click({ timeout: 2000 }); } catch (e) {
+            c.notChecked?.push({ probe: MODE_PROBE[mode], route: s.url || s.id, reason: closedReason(e) ? `click "${names[i]}": ${closedReason(e)}` : `could not click "${names[i]}"` });
             await t.context.close();
             return;
           }

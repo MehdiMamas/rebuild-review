@@ -69,7 +69,11 @@ function register(d, steps, from) {
 {
   const s0 = await launch('crawl');
   await sleep(500);
-  for (const w of [...s0.windows]) register(await describe(w), [{ open: kindOf(await w.title()) }], null);
+  for (const w of [...s0.windows]) {
+    // A window that shows nothing yet (a dev server still starting) would register as one empty screen.
+    if (!(await w.locator('body').innerText({ timeout: 500 }).catch(() => '')).trim()) notCaptured.push(`window "${await w.title().catch(() => '')}" had no content when first seen; the app may have still been loading`);
+    register(await describe(w), [{ open: kindOf(await w.title()) }], null);
+  }
   await finish(s0);
 }
 for (let qi = 0; qi < queue.length; qi++) {
@@ -162,8 +166,9 @@ if (statesFile) {
 // 4. Probes and measurements, each on a fresh isolated launch of the screen.
 const open = electronOpener(run, appFile);
 const widths = [SIZES.narrow.w, SIZES.wide.w];
-const probes = await runProbes({ openScreen: open, screens, timings, widths });
-const a11y = await measureScreens({ open, screens, timings, probes, widths });
+const notChecked = [];
+const probes = await runProbes({ notChecked, openScreen: open, screens, timings, widths });
+const a11y = await measureScreens({ notChecked, open, screens, timings, probes, widths });
 if (buildMs !== null) timings.push({ name: 'build-ms', value: buildMs, unit: 'ms' });
 if (launchMs !== null) timings.push({ name: 'launch-ms', value: launchMs, unit: 'ms' });
 
@@ -177,7 +182,7 @@ write(path.join(out, 'manifest.json'), {
   states: stateIds,
   blockedRequests: [...blocked].sort(),
   nativeDialogs: dialogs,
-  notCaptured,
+  notCaptured: [...notCaptured, ...notChecked.map((r) => scrub(`${r.probe} ${r.route}: ${r.reason}`))],
 });
 let harBytes = 0;
 const harKept = har.filter((e) => (harBytes += JSON.stringify(e).length) <= MAX_HAR_BYTES);
@@ -191,6 +196,7 @@ write(path.join(out, 'coverage.json'), {
 });
 write(path.join(out, 'timings.json'), timings);
 write(path.join(out, 'probes.json'), probes);
+write(path.join(out, 'probes-not-checked.json'), notChecked);
 write(path.join(out, 'a11y-violations.json'), a11y);
 write(path.join(out, 'console.log'), consoleLines.join('\n') + (consoleLines.length ? '\n' : ''));
 console.log(`captured ${screens.length} screens, ${stateIds.length} states, ${probes.filter((p) => !p.passed).length} probe flags -> ${out}`);

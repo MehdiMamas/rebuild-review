@@ -23,4 +23,4 @@ Platform `electron`. The app is a desktop program with windows and no address. `
 
 ## Running on Linux without a screen
 
-Under `xvfb-run -a` the app and the nine checks run with no visible window. Use a throwaway `HOME` for the test process; the adapter gives the app its own isolated home on top of that. `LD_LIBRARY_PATH` is the one loader variable the adapter passes to the app, for libraries installed without root.
+Under `xvfb-run -a` the app and the twelve checks run with no visible window. Use a throwaway `HOME` for the test process; the adapter gives the app its own isolated home on top of that. `LD_LIBRARY_PATH` is the one loader variable the adapter passes to the app. Libraries the Electron binary lacks are fetched without root by the adapter itself (`apt-get download` and `dpkg -x` into a cache under the temp folder, 300 MB cap); with no `apt-get`, no network or a library it has no package for, the run stops and names the libraries. `run.env` reaches the app too.
