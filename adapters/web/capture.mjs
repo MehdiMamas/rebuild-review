@@ -135,8 +135,9 @@ const open = async (s, { width = 1440, height = 900, colorScheme = 'light' } = {
   const page = await context.newPage();
   return { page, rec, faults, close: () => context.close(), go: () => page.goto(new URL(s.url, origin).toString(), { waitUntil: 'load' }) };
 };
-const probes = await runProbes({ browser, origin, screens, timings });
-const a11y = await measureScreens({ open, screens, timings, probes });
+const notChecked = [];
+const probes = await runProbes({ notChecked, browser, origin, screens, timings });
+const a11y = await measureScreens({ notChecked, open, screens, timings, probes });
 if (buildMs !== null) timings.push({ name: 'build-ms', value: buildMs, unit: 'ms' });
 await browser.close();
 stop();
@@ -148,7 +149,7 @@ write(path.join(out, 'manifest.json'), {
   screens: screens.map(({ id, url, title }) => ({ id, url, title })),
   states: stateIds,
   blockedRequests: [...blocked].sort(),
-  notCaptured,
+  notCaptured: [...notCaptured, ...notChecked.map((r) => scrub(`${r.probe} ${r.route}: ${r.reason}`))],
 });
 let harBytes = 0;
 const harKept = har.filter((e) => (harBytes += JSON.stringify(e).length) <= MAX_HAR_BYTES);
@@ -163,6 +164,7 @@ write(path.join(out, 'coverage.json'), {
 });
 write(path.join(out, 'timings.json'), timings);
 write(path.join(out, 'probes.json'), probes);
+write(path.join(out, 'probes-not-checked.json'), notChecked);
 write(path.join(out, 'a11y-violations.json'), a11y);
 write(path.join(out, 'console.log'), consoleLines.join('\n') + (consoleLines.length ? '\n' : ''));
 console.log(`captured ${screens.length} screens, ${stateIds.length} states, ${probes.filter((p) => !p.passed).length} probe flags -> ${out}`);

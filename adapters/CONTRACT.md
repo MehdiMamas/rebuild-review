@@ -12,7 +12,7 @@ produce the same layout.
 { "platform": "...", "dir": "path inside work/", "install": "...", "build": "...", "start": "...", "address": "..." }
 ```
 
-- `env` is optional: an object of environment variables the adapter adds when it starts the app (`{...process.env, ...env, PORT}`), so the original and the rebuild start with the same settings. `rebuild-run.json` gets the same `env`, copied from `run.json` after the build is delivered. Values are stand-ins only, never real secrets; they are never printed or put in the report.
+- `env` is optional: an object of environment variables the adapter adds when it starts the app (`{...process.env, ...env, PORT}`), so the original and the rebuild start with the same settings. `rebuild-run.json` gets the same `env`, copied from `run.json` after the build is delivered. Values are stand-ins only, never real secrets; they are never printed or put in the report. The Electron adapter applies `env` too (after its allowlist copy; the isolated home, profile folders and dead proxy still win).
 
 An Electron app has no address. Its `run.json` is `{ "platform": "electron", "dir", "install", "build", "launch": { "executablePath"?, "args", "schemes"? } }`: `args` start the app (usually `["."]`), `executablePath` overrides the Electron found in the app's own dependencies, `schemes` names the app's own URL schemes (allowed like `file:`). How an agent starts and drives each platform is in `adapters/<platform>/DRIVING.md`, which the workflow points the finders and the test writer to.
 
@@ -30,6 +30,7 @@ golden/screens/<id>/       render.* (the rendered structure and computed style),
 golden/network.har         every request and response, secrets removed
 golden/timings.json        list of { name, value, unit }
 golden/probes.json         list of { probe, screen, passed, evidence }; passed=false means the probe flagged a problem
+golden/probes-not-checked.json  list of { probe, route, reason }: probes and measurements that could not run on a screen (time budget, the window closed or reloaded after a click, a crash); each row is also a string `<probe> <route>: <reason>` in `manifest.json` `notCaptured`
 golden/console.log         errors the app printed
 golden/a11y-violations.json  optional: list of { screen, violations: [{ id, impact, nodes }] }
 golden/coverage.json       optional: screensReached, screensCut (distinct routes the screen cap stopped), sameRouteSkipped [{ route, count }] (same route, different data, left out by --max-per-route, default 2), buttonsSkipped, harEntriesSkipped

@@ -1,4 +1,4 @@
-// Nine checks for the Electron adapter, run against the fixture app in ./fixture. node test/run.mjs
+// Twelve checks for the Electron adapter, run against the fixture app in ./fixture. node test/run.mjs
 // The known answers are in answers.json; only this file reads them. A planted problem the probes miss is printed as MISS and
 // is not hidden or tuned away. A check fails only when the thing it protects is broken (a leak, a hang, a missing file, a false alarm on the clean screen).
 import fs from 'node:fs';
@@ -48,7 +48,7 @@ function makeRun(name, extraArgs = []) {
   fs.mkdirSync(dir, { recursive: true });
   fs.cpSync(path.join(here, 'fixture'), path.join(dir, 'work'), { recursive: true });
   const file = path.join(dir, 'run.json');
-  fs.writeFileSync(file, JSON.stringify({ platform: 'electron', launch: { executablePath: electronPath, args: ['.', `--outside=${outside}`, ...extraArgs] } }));
+  fs.writeFileSync(file, JSON.stringify({ platform: 'electron', env: { RR_FIXTURE_ENV: 'from-run-env' }, launch: { executablePath: electronPath, args: ['.', `--outside=${outside}`, ...extraArgs], schemes: ['rrapp'] } }));
   return { dir, file };
 }
 const env = (tmpRoot) => ({ ...process.env, HOME: realHome, USERPROFILE: realHome, RR_SECRET_PARENT: secret, RR_TMP_ROOT: tmpRoot });
@@ -219,6 +219,29 @@ try {
       spawnSync('pkill', ['-KILL', '-f', tr]);
     }
     check(9, 'no Electron process is left after a killed run', ok, lines);
+  }
+
+  // 10
+  {
+    const rows = readJson(path.join(golden, 'probes-not-checked.json'));
+    const closed = (Array.isArray(rows) ? rows : []).filter((r) => /the window closed or reloaded after the click/.test(r.reason || ''));
+    const has = (label) => closed.some((r) => (r.reason || '').includes(`click "${label}"`) && typeof r.probe === 'string' && typeof r.route === 'string');
+    const inManifest = (manifest.notCaptured || []).some((x) => /Close window/.test(x) && /closed or reloaded/.test(x));
+    check(10, 'a click that closes or replaces the window gives notChecked rows, not a crash', cap.code === 0 && Array.isArray(rows) && has('Reload window') && has('Close window') && inManifest,
+      [`exit ${cap.code}; ${Array.isArray(rows) ? rows.length : 'no'} row(s) in probes-not-checked.json, ${closed.length} with the closed reason; reload row: ${has('Reload window')}; close row: ${has('Close window')}; in manifest notCaptured: ${inManifest}`]);
+  }
+
+  // 11
+  {
+    const found = manifest.screens.some((s) => s.id === 'scheme-page');
+    const blockedScheme = (manifest.blockedRequests || []).filter((u) => /^rrapp:/.test(u));
+    check(11, 'a custom scheme named in launch.schemes is not blocked and its window is found', found && !blockedScheme.length, [`scheme page found: ${found}; blocked rrapp requests: ${blockedScheme.length}`]);
+  }
+
+  // 12
+  {
+    const log = fs.existsSync(path.join(golden, 'console.log')) ? fs.readFileSync(path.join(golden, 'console.log'), 'utf8') : '';
+    check(12, 'run.env reaches the app', /fixture-env: from-run-env/.test(log), [`the app reported: ${log.split('\n').find((l) => /fixture-env/.test(l)) || 'nothing'}`]);
   }
 } finally {
   server.close();

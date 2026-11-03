@@ -2,6 +2,7 @@
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import { sleep } from './context.mjs';
+import { closedReason } from './probes.mjs';
 
 const AXE = createRequire(import.meta.url).resolve('axe-core/axe.min.js');
 // LCP and CLS from the standard performance entries, no library.
@@ -16,7 +17,8 @@ const round = (v, d = 0) => Math.round(v * 10 ** d) / 10 ** d;
 // Per screen: lcp, cls, bytes, heap-mb (wide, light, uncached load) and overflow-narrow (narrow).
 // Also axe-core violations per screen and inp-ms from the typing probe rows. Pushes onto timings, returns the a11y rows.
 // open(screen, { width, height, colorScheme }) comes from the adapter and returns { page, close, go }; widths are [narrow, wide].
-export async function measureScreens({ open, screens, timings, probes = [], widths = [390, 1440] }) {
+// notChecked (optional array): a screen that cannot be measured (the window closed, the app died) adds { probe, route, reason } rows, like runProbes.
+export async function measureScreens({ open, screens, timings, probes = [], widths = [390, 1440], notChecked }) {
   const a11y = [];
   for (const s of screens) {
     {
@@ -47,8 +49,12 @@ export async function measureScreens({ open, screens, timings, probes = [], widt
         await page.evaluate(fs.readFileSync(AXE, 'utf8'));
         const res = await page.evaluate(() => axe.run());
         a11y.push({ screen: s.id, violations: res.violations.map((x) => ({ id: x.id, impact: x.impact, nodes: x.nodes.length })) });
-      } catch (e) { a11y.push({ screen: s.id, violations: [], error: String(e.message).split('\n')[0] }); }
-      if (t) await t.close();
+      } catch (e) {
+        const why = closedReason(e) || String(e.message).split('\n')[0];
+        a11y.push({ screen: s.id, violations: [], error: String(e.message).split('\n')[0] });
+        for (const probe of ['lcp', 'cls', 'bytes', 'heap-mb', 'axe']) notChecked?.push({ probe, route: s.url || s.id, reason: `measure: ${why}` });
+      }
+      if (t) await t.close().catch(() => {});
     }
     {
       let t;
@@ -58,8 +64,8 @@ export async function measureScreens({ open, screens, timings, probes = [], widt
         await t.page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
         const px = await t.page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
         timings.push({ name: `${s.id}.overflow-narrow`, value: Math.max(0, px), unit: 'px' });
-      } catch {}
-      if (t) await t.close();
+      } catch (e) { notChecked?.push({ probe: 'overflow-narrow', route: s.url || s.id, reason: `measure: ${closedReason(e) || String(e.message).split('\n')[0]}` }); }
+      if (t) await t.close().catch(() => {});
     }
   }
   // Stand-in for INP: the slowest input event in the typing probe (one run, not field INP).

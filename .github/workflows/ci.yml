@@ -34,6 +34,7 @@ jobs:
           node --test scripts/areas.test.mjs
           node --test scripts/long-run.test.mjs
           node --test adapters/web/test/crawl.test.mjs
+          node --test adapters/electron/test/libs.test.mjs
 
   web-adapter:
     runs-on: ubuntu-latest
@@ -76,6 +77,6 @@ jobs:
           (cd adapters/electron && npm install --no-audit --no-fund)
           sudo apt-get update
           sudo apt-get install -y xvfb libgtk-3-0 libnss3 libgbm1 libasound2t64 libxss1 libxtst6
-      - name: Adapter tests (nine checks, under a virtual display)
+      - name: Adapter tests (twelve checks, under a virtual display)
         working-directory: adapters/electron
         run: xvfb-run -a npm test
