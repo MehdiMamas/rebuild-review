@@ -14,6 +14,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { scan, skipReason, readOwn, readOwnChanges } from './size.mjs';
 import { ownSince, changedLines, git } from './base.mjs';
 import { validate } from './areas.mjs';
+import { tryEmit } from './events.mjs';
 
 const readJson = (f) => JSON.parse(fs.readFileSync(f, 'utf8'));
 const writeJson = (f, v) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, JSON.stringify(v, null, 2)); };
@@ -395,6 +396,11 @@ if (process.argv[1] && path.resolve(process.argv[1]) === new URL(import.meta.url
     writeJson(c, kept);
     writeJson(c.replace(/\.json$/, '.dropped.json'), dropped);
     console.log(`dropped ${dropped.length}`);
+    if (dropped.length) { // the run folder is the parent of the score/ folder that holds the checked file
+      let d = path.dirname(path.resolve(c));
+      while (d !== path.dirname(d) && path.basename(d) !== 'score') d = path.dirname(d);
+      if (path.basename(d) === 'score') tryEmit(path.dirname(d), { kind: 'decision', what: 'judge items dropped', choice: String(dropped.length), reason: 'a citation was not a real file, line or metric' });
+    }
   } else if (cmd === 'gaps') {
     const g = gaps(a, b);
     writeJson(path.join(a, 'score', 'gaps.json'), g);

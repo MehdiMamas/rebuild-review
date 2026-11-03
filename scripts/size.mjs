@@ -3,6 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { tryEmit } from './events.mjs';
 
 const LANGUAGES = {
   '.js': 'javascript', '.mjs': 'javascript', '.cjs': 'javascript', '.jsx': 'javascript',
@@ -112,6 +113,9 @@ export function addCost(runDir, phase, usd) {
   c.phases[phase] = { usd: e.usd + usd, runs: e.runs + 1 };
   c.totalUsd = Object.values(c.phases).reduce((a, x) => a + x.usd, 0);
   fs.writeFileSync(f, JSON.stringify(c, null, 2));
+  let maxUsd = null;
+  try { maxUsd = JSON.parse(fs.readFileSync(path.join(runDir, 'size.json'), 'utf8')).maxUsd ?? null; } catch { /* no size.json */ }
+  tryEmit(runDir, { kind: 'cost', phase, usd: usd, totalUsd: c.totalUsd, maxUsd });
   return c;
 }
 
@@ -123,7 +127,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === new URL(import.meta.url
   if (!workDir || !runDir) { console.error('usage: node scripts/size.mjs <workDir> <runDir> [--max-usd N]'); process.exit(2); }
   const scale = loadScale();
   const size = measure(path.resolve(workDir), readOwn(path.resolve(runDir)), readOwnChanges(path.resolve(runDir)));
-  const out = { size, plan: plan(size, scale) };
+  const out = { size, plan: plan(size, scale), ...(Number(maxUsd) > 0 ? { maxUsd: Number(maxUsd) } : {}) };
   fs.mkdirSync(path.resolve(runDir), { recursive: true });
   fs.writeFileSync(path.join(path.resolve(runDir), 'size.json'), JSON.stringify(out, null, 2));
   console.log(`${size.lines} source lines in ${size.counted} files (${size.skipped.length} skipped) -> ${out.plan.units} unit(s), build $${out.plan.buildUsd}, ${out.plan.maxScreens} screens`);
@@ -131,6 +135,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === new URL(import.meta.url
   else {
     const est = checkBudget(out.plan, maxUsd);
     console.log(est.reason);
+    tryEmit(path.resolve(runDir), { kind: 'decision', what: 'estimate', choice: est.ok ? 'go' : 'stop', reason: est.reason });
     if (!est.ok) process.exit(3);
   }
 }

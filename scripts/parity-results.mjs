@@ -6,6 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { readPlan } from './size.mjs';
+import { tryEmit } from './events.mjs';
 
 // Map of feature ID to keep or defect, from lines that start with "F-xxx keep" or "F-xxx defect".
 export function kinds(featuresMd) {
@@ -159,9 +160,12 @@ if (process.argv[1] && path.resolve(process.argv[1]) === new URL(import.meta.url
   } else if (cmd === 'settle') {
     const n = settle(x, y);
     console.log(`moved ${n.length}${n.length ? '\n' + n.join('\n') : ''}`);
+    tryEmit(path.resolve(x, '..'), { kind: 'decision', what: 'settle', choice: `moved ${n.length}`, reason: n.length ? `to removed/: ${n.join(' ')}` : 'no test moved' });
   } else if (cmd === 'merge') {
     console.log(`parity.json: ${merge(x, y).length} features`);
   } else if (cmd === 'loop') {
-    console.log(JSON.stringify(loop(x, y, z)));
+    const d = loop(x, y, z);
+    console.log(JSON.stringify(d));
+    tryEmit(path.resolve(z), { kind: 'decision', what: 'loop', choice: d.action, reason: `${d.reason}; failing ${Array.isArray(d.failing) ? d.failing.length : d.failing}` });
   } else { console.error('usage: parity-results.mjs wrong|settle|merge|loop ...'); process.exit(2); }
 }
