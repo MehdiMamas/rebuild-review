@@ -22,6 +22,20 @@ It only runs when you call it. The target is never changed: each run writes to i
 `<target>-rebuild-review/<run-id>/`, next to the target. A web target needs Chromium
 (`npx playwright install chromium`); adapter packages install themselves on the first run.
 
+### Run unattended
+
+On a machine with no one at the keyboard (a build server, over ssh), use the launcher in the
+plugin folder instead of `claude -p` directly:
+
+```
+scripts/unattended.sh <target-path> --max-usd <dollars> [--base url@ref|none|keep] [--run-dir <run folder>] [-- <extra claude flags>]
+```
+
+It never asks a question (the detected base is kept unless `--base` says otherwise), refuses to
+start without a spending limit, and sets `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0`: without it,
+`claude -p` stops the review 10 minutes after its last turn. `--run-dir` resumes an earlier run;
+finished phases are skipped. On Linux with no display, put `xvfb-run -a` in front.
+
 ## What goes in
 
 - **Words:** every feature, written as behaviour someone can check.

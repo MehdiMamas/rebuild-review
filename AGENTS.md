@@ -7,6 +7,7 @@ what it renders, then scores the rebuild against the original. See README.md.
 
 - Install: `claude plugin marketplace add MehdiMamas/rebuild-review`, then `claude plugin install rebuild-review@rebuild-review`.
 - Run: `/rebuild-review:rebuild-review <target-path>`. It makes `<target>-rebuild-review/<run-id>/` next to the target and starts the workflow `rebuild-review:rebuild-review-run`. Phases not described below are stubs that write `<Phase>.done`; finished phases are skipped on a rerun with the same run folder.
+- Unattended: `scripts/unattended.sh <target> --max-usd N [--base url@ref|none|keep] [--run-dir dir] [-- claude flags]` (#79): sets `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0`, passes `unattended=1` so the skill never asks, refuses without a limit.
 - Validate: `claude plugin validate .`
 - Test without installing: `claude -p "/rebuild-review:rebuild-review <path>" --plugin-dir <this checkout> --permission-mode bypassPermissions`, against a throwaway git repo; its `git status` must stay clean.
 - Gotcha: the skill and the workflow must not share a name. With both called `rebuild-review:rebuild-review`, the call goes straight to the workflow and the skill text never runs.
