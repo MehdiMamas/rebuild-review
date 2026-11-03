@@ -79,6 +79,10 @@ Measured so far:
 
 A big app is split into areas inside the run; the run still covers the whole app. Each area is inventoried, tested, rebuilt and judged on its own, and the scores are weighed by lines of code. The report has a Coverage section: features found, tested and rebuilt per area, screens reached, what was not reached and what was excluded (with the reason).
 
+## Watch a run
+
+`node scripts/watch.mjs <run folder>` serves a live page for a run on 127.0.0.1 and prints its link (the link holds a random token; every route needs it). It shows the phases, the decisions made so far, what is running now, what has been made (features, tests, screens) and the verdict. It reads the run folder only. With `scripts/unattended.sh --run-dir <dir> --watch [port]` it starts by itself and prints the link and an `ssh -L` line for opening it from another machine. The server ends 30 minutes after the run finishes or stops.
+
 ## Reading the report
 
 The run ends with one page, `report/index.html`, with no scripts and its images embedded.

@@ -10,6 +10,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { scan, readPlan, readOwn } from './size.mjs';
+import { tryEmit } from './events.mjs';
 
 const norm = (p) => String(p).replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/+$/, '') || '.';
 const covers = (p, file) => { const n = norm(p); return n === '.' || file === n || file.startsWith(n + '/'); };
@@ -173,6 +174,7 @@ function main(argv) {
   if (cmd === 'check') {
     const v = validate(readSpec(a), scan(work, readOwn(a)).counted);
     console.log(JSON.stringify(v));
+    tryEmit(path.resolve(a), { kind: 'decision', what: 'areas', choice: v.ok ? 'accepted' : 'refused', reason: `${readSpec(a).areas.length} area(s)` });
     return v.ok ? 0 : 1;
   }
   if (cmd === 'renumber') {

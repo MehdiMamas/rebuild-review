@@ -8,6 +8,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { readOwn, readOwnChanges, skipReason } from './size.mjs';
+import { tryEmit } from './events.mjs';
 export { readOwn, readOwnChanges };
 
 const ENV = { ...process.env, GIT_ALLOW_PROTOCOL: 'file:https:http:git:ssh', GIT_TERMINAL_PROMPT: '0' };
@@ -276,6 +277,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       fs.mkdirSync(path.dirname(f), { recursive: true });
       fs.writeFileSync(f, JSON.stringify(run, null, 2) + '\n');
       console.log(`run.json base: ${JSON.stringify(run.base)}`);
+      tryEmit(path.resolve(a), { kind: 'decision', what: 'base', choice: run.base === 'none' ? 'none' : `${run.base.url}@${run.base.ref}`, reason: 'pinned' });
     } else { console.error('usage: base.mjs detect <workDir> <runDir> | pin <runDir> <url@ref|none>'); process.exit(2); }
   } catch (e) { console.error(String(e.message || e)); process.exit(1); }
 }

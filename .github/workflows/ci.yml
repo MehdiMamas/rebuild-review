@@ -33,6 +33,8 @@ jobs:
           node --test scripts/workflow-parse.test.mjs
           node --test scripts/areas.test.mjs
           node --test scripts/long-run.test.mjs
+          node --test scripts/events.test.mjs
+          node --test scripts/watch.test.mjs
           node --test adapters/web/test/crawl.test.mjs
           node --test adapters/electron/test/libs.test.mjs
 

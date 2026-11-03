@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { confidence } from './confidence.mjs';
+import { tryEmit } from './events.mjs';
 import { items as foundationItems, CATEGORIES } from './foundations.mjs';
 
 const readJson = (f) => JSON.parse(fs.readFileSync(f, 'utf8'));
@@ -317,6 +318,7 @@ if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import
   if (cmd === 'verdict') {
     const v = verdict(tryJson(path.join(runDir, 'score', 'score.json')));
     console.log(JSON.stringify(v));
+    tryEmit(path.resolve(runDir), { kind: 'decision', what: 'verdict', choice: v.verdict, reason: v.why });
   } else if (cmd === 'check-actions') {
     const r = checkActions(runDir);
     console.log(`kept ${r.kept.length}, dropped ${r.dropped.length}`);
@@ -325,7 +327,11 @@ if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import
     console.log(`kept ${r.kept.length}, dropped ${r.dropped.length}`);
   } else if (cmd === 'render') {
     const i = process.argv.indexOf('--stopped');
-    render(runDir, i > 0 ? { stopped: process.argv.slice(i + 1).join(' ') } : {});
+    const stopped = i > 0 ? process.argv.slice(i + 1).join(' ') : '';
+    render(runDir, stopped ? { stopped } : {});
+    // The watch page reads this to show a failed phase; a later finished render removes it.
+    const sf = path.join(runDir, 'report', 'stopped.txt');
+    if (stopped) fs.writeFileSync(sf, stopped + '\n'); else fs.rmSync(sf, { force: true });
     console.log(`wrote ${path.join(runDir, 'report', 'index.html')}`);
   } else { console.error('usage: report.mjs verdict|check-actions|check-foundations|render <runDir>'); process.exit(2); }
 }
