@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { statusOf, exitCodeOf } from '../check-result.mjs';
+import { statusOf, exitCodeOf, endedOn } from '../check-result.mjs';
 
 const f = [{ probe: 'p', route: '/', evidence: 'e' }], n = [{ probe: 'p', route: '/', reason: 'r' }];
 
@@ -13,6 +13,12 @@ test('exit codes', () => {
   assert.deepStrictEqual(['pass', 'fail', 'incomplete', 'error'].map(exitCodeOf), [0, 1, 2, 3]);
   assert.strictEqual(exitCodeOf('whatever'), 3);
 });
+
+const allow = ['http://127.0.0.1:48000'];
+test('the same path is reached', () => assert.strictEqual(endedOn('http://127.0.0.1:47999/hub/', 'http://127.0.0.1:47999/hub', allow), null));
+test('a redirect to an allowed origin is reached', () => assert.strictEqual(endedOn('http://127.0.0.1:47999/hub', 'http://127.0.0.1:48000/', allow), null));
+test('a redirect to an unlisted origin is not reached', () => assert.strictEqual(endedOn('http://127.0.0.1:47999/hub', 'http://127.0.0.1:48001/', allow), 'ended on http://127.0.0.1:48001/ instead'));
+test('a same-origin redirect to another path is not reached', () => assert.strictEqual(endedOn('http://127.0.0.1:47999/old', 'http://127.0.0.1:47999/login', allow), 'ended on /login instead'));
 
 const check = path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'check.mjs');
 const run = (...a) => spawnSync('node', [check, ...a], { encoding: 'utf8' });

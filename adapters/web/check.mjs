@@ -5,7 +5,7 @@ import path from 'node:path';
 import { chromium } from 'playwright';
 import { makeContext } from './context.mjs';
 import { loadProbes, clickProbes } from './probes.mjs';
-import { statusOf, exitCodeOf } from './check-result.mjs';
+import { statusOf, exitCodeOf, endedOn } from './check-result.mjs';
 
 const t0 = Date.now();
 // A throw nobody handled is an error (3), never a failed check (1).
@@ -33,20 +33,28 @@ const local = ['localhost', '127.0.0.1', '[::1]'].includes(base.hostname);
 
 if (!(await fetch(origin).then(() => true, () => false))) die(`app does not answer on ${origin}`);
 let browser;
-try { browser = await chromium.launch(); } catch (e) { die(`browser could not start: ${String(e.message).split('\n')[0]}`); }
+try { browser = await chromium.launch({ args: ['--disable-gpu', '--disable-software-rasterizer'] }); } catch (e) { die(`browser could not start: ${String(e.message).split('\n')[0]}`); }
 
 const slug = (u) => u.replace(/^\//, '').replace(/[^A-Za-z0-9]+/g, '_') || 'root';
 const blocked = new Set(), notChecked = [], reached = [], screenshots = [];
 // A polling app never goes idle: cap each idle wait; other waits fail fast instead of eating the budget.
 const env = { storageState, allowOrigins, onBlocked: (u) => blocked.add(u), timeout: 5000, navTimeout: 15000 };
 
-// A route that ends on another path (a redirect to login) is not checked.
+// Headless needs no GPU or software GL; with them the first screenshots can stall for tens of seconds (seen under WSL). WebGL is off.
+// Warm the browser once with one throwaway shot so the routes' screenshots do not pay for a cold start.
+{
+  const { context } = await makeContext(browser, origin, { viewport: { width: 1440, height: 900 }, ...env });
+  await context.newPage().then(async (p) => { await p.goto(origin, { waitUntil: 'load', timeout: 15000 }); await p.screenshot({ timeout: 15000 }); }).catch(() => {});
+  await context.close();
+}
+
+// A route that ends on another path (a redirect to login) or an origin not allowed is not checked.
 for (const route of routes) {
   const { context } = await makeContext(browser, origin, { viewport: { width: 1440, height: 900 }, ...env });
   try {
     const page = await context.newPage();
     await page.goto(new URL(route, origin).toString(), { waitUntil: 'load', timeout: 15000 });
-    const want = new URL(route, origin).pathname.replace(/\/$/, ''), got = new URL(page.url()).pathname.replace(/\/$/, '');
+    const ended = endedOn(new URL(route, origin).toString(), page.url(), allowOrigins);
     // Screenshots come first for every route, before any probe, so a cut budget never loses them.
     if (out) {
       await page.waitForLoadState('networkidle', { timeout: 3000 }).catch(() => {});
@@ -54,12 +62,12 @@ for (const route of routes) {
         try {
           await page.setViewportSize({ width, height: 900 });
           const file = `${slug(route)}-${width}.png`;
-          await page.screenshot({ path: path.join(out, file), fullPage: true });
+          await page.screenshot({ path: path.join(out, file), fullPage: true, timeout: 15000 });
           screenshots.push({ route, width, file });
         } catch (e) { notChecked.push({ probe: 'screenshot', route, reason: `${width} px: ${String(e.message).split('\n')[0]}` }); }
       }
     }
-    if (want !== got) notChecked.push({ probe: 'all', route, reason: `ended on ${got || '/'} instead` });
+    if (ended) notChecked.push({ probe: 'all', route, reason: ended });
     else reached.push({ id: slug(route), url: route });
   } catch (e) {
     if (out) for (const width of [1440, 390]) notChecked.push({ probe: 'screenshot', route, reason: `${width} px: route did not load` });
