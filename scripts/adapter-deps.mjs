@@ -11,8 +11,13 @@ function missing(dir) {
   return names.filter(n => !fs.existsSync(path.join(dir, 'node_modules', n, 'package.json')))
 }
 
+// pnpm when it is on PATH; otherwise the version pinned in package.json through npx, so a machine without pnpm still installs.
 function pnpmInstall(dir) {
-  const r = spawnSync('pnpm', ['install'], { cwd: dir, encoding: 'utf8' })
+  let r = spawnSync('pnpm', ['install'], { cwd: dir, encoding: 'utf8' })
+  if (r.error && r.error.code === 'ENOENT') {
+    const pin = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')).packageManager || 'pnpm'
+    r = spawnSync('npx', ['-y', pin, 'install'], { cwd: dir, encoding: 'utf8' })
+  }
   return r.status === 0 ? null : (r.stderr || r.stdout || `pnpm exited ${r.status}`).trim().split('\n').slice(-5).join('\n')
 }
 
