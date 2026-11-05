@@ -312,12 +312,100 @@ async function clickScreen(c, s, add) {
 
 const finish = (c, timings) => { if (c.state.worstMs !== null) timings.push({ name: 'script-ms-per-key', value: Math.round(c.state.worstMs * 10) / 10, unit: 'ms' }); };
 
+// Safe area: an iPhone's status bar, notch and home indicator cover part of the screen, and a control there cannot be tapped.
+// Emulates 390x844 with touch and insets top 47 / bottom 34, in browser mode and in standalone (installed web app) mode.
+// Fails on a visible interactive element that overlaps either band, or whose centre point is not the element or a descendant.
+export const SAFE_AREA = { width: 390, height: 844, top: 47, bottom: 34 };
+// CDP can set the insets (env() follows them) but not the display mode, so standalone is shimmed in JS (matchMedia, navigator.standalone).
+// A CSS @media (display-mode) rule cannot be shimmed this way; the probe says so in its evidence.
+const STANDALONE_SHIM = `(() => {
+  const orig = window.matchMedia.bind(window);
+  const yes = (q) => ({ matches: true, media: q, onchange: null, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {}, dispatchEvent() { return false; } });
+  window.matchMedia = (q) => (/display-mode:\\s*standalone/.test(q) ? yes(q) : orig(q));
+  Object.defineProperty(navigator, 'standalone', { get: () => true, configurable: true });
+})()`;
+const SAFE_EVAL = `(() => {
+  const W = ${SAFE_AREA.width}, H = ${SAFE_AREA.height}, T = ${SAFE_AREA.top}, B = ${SAFE_AREA.bottom};
+  const sel = 'a[href],button,input:not([type=hidden]),select,textarea,summary,[role=button],[role=link],[role=tab],[role=menuitem],[role=checkbox],[role=switch],[role=option],[tabindex]:not([tabindex="-1"])';
+  const name = (el) => el.tagName.toLowerCase() + (el.id ? '#' + el.id : '') + (typeof el.className === 'string' && el.className.trim() ? '.' + el.className.trim().split(/\\s+/)[0] : '') + ' "' +(el.innerText || el.getAttribute('aria-label') || '').trim().replace(/\\s+/g, ' ').slice(0, 30) + '"';
+  // The part of an element's box that its scrolling ancestors let show.
+  const clip = (el, r) => {
+    let t = r.top, b = r.bottom, l = r.left, rt = r.right;
+    for (let p = el.parentElement; p; p = p.parentElement) {
+      const s = getComputedStyle(p);
+      if (s.overflowX === 'visible' && s.overflowY === 'visible') continue;
+      const q = p.getBoundingClientRect();
+      t = Math.max(t, q.top); b = Math.min(b, q.bottom); l = Math.max(l, q.left); rt = Math.min(rt, q.right);
+    }
+    return { top: t, bottom: b, left: l, right: rt };
+  };
+  // Without viewport-fit=cover (the default, auto) Safari lays the page out inside the insets, so only a page that opts in can sit under them.
+  const meta = document.querySelector('meta[name=viewport]');
+  const cover = !!meta && /viewport-fit\\s*=\\s*cover/.test(meta.getAttribute('content') || '');
+  const problems = []; let checked = 0;
+  for (const el of document.querySelectorAll(sel)) {
+    const cs = getComputedStyle(el);
+    if (cs.display === 'none' || cs.visibility !== 'visible' || cs.pointerEvents === 'none' || Number(cs.opacity) === 0) continue;
+    if (el.closest('[hidden],[aria-hidden=true],[inert]')) continue;
+    const r = el.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) continue;
+    const c = clip(el, r);
+    if (c.bottom <= c.top || c.right <= c.left) continue;
+    if (c.bottom <= 0 || c.top >= H || c.right <= 0 || c.left >= W) continue; // not on screen
+    checked++;
+    if (cover && c.top < T && c.bottom > 0) problems.push(name(el) + ' sits in the top inset (y ' + Math.round(c.top) + '-' + Math.round(c.bottom) + ', inset 0-' + T + ')');
+    if (cover && c.bottom > H - B && c.top < H) problems.push(name(el) + ' sits in the bottom inset (y ' + Math.round(c.top) + '-' + Math.round(c.bottom) + ', inset ' + (H - B) + '-' + H + ')');
+    const mx = (Math.max(c.left, 0) + Math.min(c.right, W)) / 2, my = (Math.max(c.top, 0) + Math.min(c.bottom, H)) / 2;
+    const hit = document.elementFromPoint(mx, my);
+    if (hit && hit !== el && !el.contains(hit)) problems.push(name(el) + ' is covered at its centre by ' + name(hit));
+  }
+  const probe = document.createElement('div'); probe.style.paddingTop = 'env(safe-area-inset-top)'; document.body.append(probe);
+  const env = parseFloat(getComputedStyle(probe).paddingTop); probe.remove();
+  return { checked, problems, env, cover };
+})()`;
+
+// One screen, both modes. A failed probe (no CDP support, a page error) becomes notChecked via guard.
+async function safeAreaScreen(c, s, add) {
+  for (const mode of ['browser', 'standalone']) {
+    if (late(c, s, ['safe-area'], `${mode}: `)) return;
+    await guard(c, s, ['safe-area'], `${mode}: `, async (env) => {
+      const url = new URL(s.url, c.origin).toString();
+      const { context } = await makeContext(c.browser, c.origin, { viewport: { width: SAFE_AREA.width, height: SAFE_AREA.height }, mobile: true, touch: true, ...env, faults: {} });
+      try {
+        if (mode === 'standalone') await context.addInitScript(STANDALONE_SHIM);
+        const page = await context.newPage();
+        const cdp = await context.newCDPSession(page);
+        await cdp.send('Emulation.setSafeAreaInsetsOverride', { insets: { top: SAFE_AREA.top, bottom: SAFE_AREA.bottom, left: 0, right: 0 } });
+        await page.goto(url, { waitUntil: 'load' });
+        await idle(c, page);
+        const r = await page.evaluate(SAFE_EVAL);
+        const shown = r.problems.slice(0, 3).join('; ');
+        const notes = [];
+        if (!r.cover) notes.push('page lacks viewport-fit=cover, so its bands were not checked');
+        if (r.env !== SAFE_AREA.top) notes.push(`env(safe-area-inset-top) is ${r.env}px`);
+        if (mode === 'standalone') notes.push('display mode shimmed in JS; a CSS display-mode rule is not emulated');
+        const note = notes.length ? `; ${notes.join('; ')}` : '';
+        add('safe-area', `${s.id}:${mode}`, r.problems.length === 0, r.problems.length ? `${r.problems.length} problem(s): ${shown}${note}` : `${r.checked} control(s) clear of the insets${note}`);
+      } finally { await context.close().catch(() => {}); }
+    });
+  }
+}
+
 // Load probes (console errors, typing, script cost, layout shift, slow and failed answers at load) on each screen.
 export async function loadProbes({ browser, origin, screens, timings = [], ...opts }) {
   const c = setup({ browser, origin, ...opts }), out = [];
   const add = (probe, screen, passed, evidence, extra) => out.push({ probe, screen, passed, evidence, ...extra });
   for (const s of screens) await loadScreen(c, s, add);
+  for (const s of screens) await safeAreaScreen(c, s, add);
   finish(c, timings);
+  return out;
+}
+
+// The safe-area probe alone (for tests and for callers that want only it).
+export async function safeAreaProbes({ browser, origin, screens, ...opts }) {
+  const c = setup({ browser, origin, ...opts }), out = [];
+  const add = (probe, screen, passed, evidence, extra) => out.push({ probe, screen, passed, evidence, ...extra });
+  for (const s of screens) await safeAreaScreen(c, s, add);
   return out;
 }
 

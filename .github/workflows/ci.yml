@@ -59,7 +59,7 @@ jobs:
           pnpm exec playwright install --with-deps chromium
       - name: Context tests (URLs that do not parse, locate waits)
         working-directory: adapters/web
-        run: node --test test/context.test.mjs test/layout-shift.test.mjs
+        run: node --test test/context.test.mjs test/layout-shift.test.mjs test/safe-area.test.mjs
       - name: Adapter tests
         working-directory: adapters/web
         run: pnpm test
