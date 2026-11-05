@@ -253,7 +253,7 @@ try {
 
   // 14
   {
-    const { launchApp } = await import(pathToFileURL(path.join(adapter, 'launch.mjs')).href);
+    const { launchApp, windowOfKind } = await import(pathToFileURL(path.join(adapter, 'launch.mjs')).href);
     const { closedReason } = await import(pathToFileURL(path.join(adapter, '..', 'web', 'probes.mjs')).href);
     const r = makeRun('run-live');
     const tr = path.join(base, 'tmp-live'); fs.mkdirSync(tr);
@@ -262,8 +262,11 @@ try {
     let ok = false;
     const s = await launchApp(JSON.parse(fs.readFileSync(r.file, 'utf8')), r.file);
     try {
+      // hold the main window, not the helper that closes itself at launch
+      s.page = await windowOfKind(s, 'workbench');
       await s.page.getByRole('button', { name: 'Settings' }).click();
-      await s.page.getByRole('button', { name: 'Close window' }).click();
+      // the window may close before the click returns; that is the event under test
+      await s.page.getByRole('button', { name: 'Close window' }).click().catch((e) => { if (!closedReason(e)) throw e; });
       const t0 = Date.now();
       try { const p = await s.livePage(); ok = !p.isClosed(); outcome = ok ? 'an open window was handed over' : 'a closed window was returned'; }
       catch (e) { ok = closedReason(e) !== null; outcome = `threw "${e.message}", closedReason ${ok ? 'maps it to the closed reason' : 'gives null'}`; }
