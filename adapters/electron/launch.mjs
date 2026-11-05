@@ -129,7 +129,9 @@ export async function launchApp(run, appFile, { theme = 'light' } = {}) {
   };
   const faults = {};
   const context = app.context();
-  await context.route('**/*', async (route) => {
+  // A helper window that closes while this runs can fail the call once: try again.
+  const routeAll = async (handler) => { for (let i = 0; ; i++) { try { return await context.route('**/*', handler); } catch (e) { if (i >= 3 || !/has been closed/.test(String(e.message))) throw e; await sleep(400); } } };
+  await routeAll(async (route) => {
     if (!allowed(route.request().url())) { rec.blocked.push(clean(redactUrl(route.request().url()))); return route.abort('blockedbyclient'); }
     return route.fallback();
   });
