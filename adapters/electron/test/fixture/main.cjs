@@ -44,7 +44,7 @@ app.whenReady().then(async () => {
   });
   ipcMain.handle('open-inspector', () => { open('Inspector', 'inspector.html', 600, 500); });
   // A helper window like the ones a Code-OSS app opens: it is the first window and closes itself 300 ms later.
-  const helper = open('Helper', 'inspector.html', 300, 200);
+  const helper = open('Helper', 'helper.html', 300, 200);
   setTimeout(() => { if (!helper.isDestroyed()) helper.close(); }, 300);
   open('Workbench', 'index.html');
   // What the app can see of the machine it runs on: reported, never read by the adapter.
