@@ -181,15 +181,39 @@ export async function launchApp(run, appFile, { theme = 'light' } = {}) {
     cleanup();
     process.off('exit', cleanup);
   }
-  const session = { app, page, rec, faults, windows, dialogs, setTheme, setSize, stop: stopNow, buildMs, tmp };
+  // session.page never hands out a closed window: a helper window that closes by itself (a Code-OSS app opens some) is replaced by the first live one.
+  let current = page;
+  const session = {
+    app, rec, faults, windows, dialogs, setTheme, setSize, stop: stopNow, buildMs, tmp,
+    get page() { if (current.isClosed()) current = pickLive(app, windows) || current; return current; },
+    set page(p) { current = p; },
+  };
   return session;
+}
+
+// The first window of the app that is not closed; closed ones are dropped from the list on the way.
+function pickLive(app, windows) {
+  for (let i = windows.length - 1; i >= 0; i--) if (windows[i].isClosed()) windows.splice(i, 1);
+  return windows.find((w) => !w.isClosed()) || app.windows().find((w) => !w.isClosed()) || null;
+}
+
+// Waits up to timeout ms for a window that is not closed (the one held now if it is still open). None: throws the text probes.mjs reads as a closed window.
+export async function liveWindow(session, timeout = 5000) {
+  const end = Date.now() + timeout;
+  for (;;) {
+    if (!session.page.isClosed()) return session.page;
+    const w = pickLive(session.app, session.windows);
+    if (w) { session.page = w; return w; }
+    if (Date.now() > end) throw new Error('Target page, context or browser has been closed: the window closed or reloaded after the click');
+    await sleep(150);
+  }
 }
 
 // The window whose title kind matches, waiting for it to open.
 export async function windowOfKind(session, kind, timeout = 8000) {
   const end = Date.now() + timeout;
   for (;;) {
-    for (const w of session.windows) { if (!w.isClosed() && kindOf(await w.title().catch(() => '')) === kind) return w; }
+    for (const w of [...session.windows]) { if (!w.isClosed() && kindOf(await w.title().catch(() => '')) === kind) return w; }
     if (Date.now() > end) throw new Error(`no window of kind "${kind}" opened`);
     await sleep(150);
   }
@@ -199,7 +223,7 @@ export async function windowOfKind(session, kind, timeout = 8000) {
 export async function replay(session, steps, settleMs = 300) {
   for (const step of steps) {
     if ('open' in step) session.page = await windowOfKind(session, step.open);
-    else { await runStep(session.page, null, step); if ('click' in step || 'type' in step || 'press' in step) await sleep(settleMs); }
+    else { await runStep(await liveWindow(session), null, step); if ('click' in step || 'type' in step || 'press' in step) await sleep(settleMs); }
   }
 }
 
@@ -208,12 +232,12 @@ export async function replay(session, steps, settleMs = 300) {
 export function electronOpener(run, appFile) {
   return async (screen, { width = SIZES.wide.w, height = SIZES.wide.h, colorScheme = 'light' } = {}) => {
     const session = await launchApp(run, appFile, { theme: colorScheme });
-    await session.setSize(session.page, width, height).catch(() => {});
+    await session.setSize(await liveWindow(session).catch(() => session.page), width, height).catch(() => {});
     return {
       // follows the current main window: when the app closes the one it had (a reload that opens a new window), the first window still open
-      get page() { if (session.page.isClosed() && session.windows.length) session.page = session.windows[0]; return session.page; },
+      get page() { return session.page; },
       rec: session.rec, faults: session.faults, close: () => session.stop(),
-      go: async () => { await replay(session, screen.steps || []); await session.setSize(session.page, width, height).catch(() => {}); },
+      go: async () => { await replay(session, screen.steps || []); await session.setSize(await liveWindow(session), width, height).catch(() => {}); },
     };
   };
 }
