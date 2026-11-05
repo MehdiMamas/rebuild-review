@@ -1,6 +1,6 @@
 {
   "name": "rebuild-review",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Rebuilds the full project from its behaviour and what it renders, then scores it against the original.",
   "license": "MIT",
   "author": { "name": "MehdiMamas" }
