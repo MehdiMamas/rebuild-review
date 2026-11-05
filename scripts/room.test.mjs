@@ -4,7 +4,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { platformNote, BUDGET_USD, filterGolden, prepareRoom, scanTranscript, wallTried, cloneProject, copyEnv, denyList, writeSettings, fixStack, stackFixPrompt, replaceProject, main, childSpawn } from './room.mjs';
+import { platformNote, BUDGET_USD, filterGolden, prepareRoom, scanTranscript, wallTried, cloneProject, copyEnv, denyList, writeSettings, fixStack, stackFixPrompt, replaceProject, main, childSpawn, wallEvent, checkChild } from './room.mjs';
+import { read as readEvents } from './events.mjs';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'room-test-'));
 
@@ -363,4 +364,16 @@ test('prepareRoom checks foundations.md like the other inputs', () => {
   const { target, runDir } = makeRun('F-001 A user sees a list.\n');
   fs.writeFileSync(path.join(runDir, 'foundations.md'), '## License and attribution\n```\nconst a = 1;\n```\n');
   assert.throws(() => prepareRoom({ runDir, target, inputs: ['features.md', 'technology.md', 'foundations.md'] }), /foundations.md fails the no-source check/);
+});
+
+test('wall events: held and refused rows carry fixed sentences, no paths (#88)', () => {
+  const run = tmp(), target = tmp();
+  wallEvent(run, 'wall', true, 'canary read refused, sandbox started');
+  const tr = path.join(run, 't.jsonl');
+  fs.writeFileSync(tr, JSON.stringify({ message: { content: [{ type: 'text', text: 'read ' + target + '/x' }] } }) + '\n');
+  assert.throws(() => checkChild({}, tr, run, target), /forbidden path/);
+  const rows = readEvents(run, 0).events.filter((e) => e.kind === 'decision');
+  assert.deepEqual(rows.map((e) => [e.what, e.choice]), [['wall', 'held'], ['wall', 'refused']]);
+  assert.equal(rows[1].reason, 'a target or run folder path appeared in the builder transcript');
+  assert.ok(!JSON.stringify(rows).includes(target));
 });

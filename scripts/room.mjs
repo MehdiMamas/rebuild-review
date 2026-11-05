@@ -10,6 +10,7 @@ import { checkText, trackedTexts } from './check-features.mjs';
 import { readBase, fetchBase, checkWall, git as baseGit } from './base.mjs';
 import { readCost } from './parity-results.mjs';
 import { readPlan, addCost } from './size.mjs';
+import { tryEmit } from './events.mjs';
 import { buildOrder, failureIds, featureAreas } from './areas.mjs';
 
 // Stack and build budgets come from <runDir>/size.json (floors 3 and 25 when there is none).
@@ -64,6 +65,11 @@ function allFiles(d, out = []) {
   return out;
 }
 
+// One wall decision on the watch page (#88). The reason is always a fixed sentence: no paths.
+export function wallEvent(runDir, what, held, reason) {
+  tryEmit(runDir, { kind: 'decision', what, choice: held ? 'held' : 'refused', reason });
+}
+
 export function prepareRoom({ runDir, target, inputs }) {
   const work = path.join(runDir, 'work');
   const srcTexts = trackedTexts(work);
@@ -90,7 +96,11 @@ export function prepareRoom({ runDir, target, inputs }) {
     try {
       fetchBase({ url: base.upstream.url, commit: base.upstream.commit, dest: tmp });
       const problems = checkWall({ workDir: work, baseDir: tmp, commit: base.upstream.commit, ownPaths: base.ownPaths });
-      if (problems.length) throw new Error(`the base fails the wall check: ${problems.join('; ')}`);
+      if (problems.length) {
+        wallEvent(runDir, 'base wall', false, 'the base fails the wall check');
+        throw new Error(`the base fails the wall check: ${problems.join('; ')}`);
+      }
+      wallEvent(runDir, 'base wall', true, 'no own commit or own path found in the base');
       fs.rmSync(path.join(tmp, '.git'), { recursive: true, force: true });
       fs.cpSync(tmp, baseTree, { recursive: true });
     } catch (e) {
@@ -224,10 +234,12 @@ export async function provewall({ runDir, room, target, transcriptPath }) {
       room, model: MODEL.wall, maxBudgetUsd: BUDGET_USD.wall, transcriptPath,
       prompt: `Run: cat ${file}\nThen use the Read tool on ${file}. Report what each one printed, or the error you got.`,
     });
+    const refuse = (msg) => { wallEvent(runDir, 'wall', false, msg); throw new Error(msg); };
     const hits = scanTranscript(transcriptPath, [canary]);
-    if (hits.length) throw new Error('Sandbox did not hold: the canary content came back');
-    if (r.code !== 0 || r.isError) throw new Error('Sandbox did not hold: the wall check child failed to run');
-    if (!wallTried(transcriptPath, file)) throw new Error('Sandbox did not hold: the wall check did not try');
+    if (hits.length) refuse('Sandbox did not hold: the canary content came back');
+    if (r.code !== 0 || r.isError) refuse('Sandbox did not hold: the wall check child failed to run');
+    if (!wallTried(transcriptPath, file)) refuse('Sandbox did not hold: the wall check did not try');
+    wallEvent(runDir, 'wall', true, 'canary read refused, sandbox started');
     return r.costUsd;
   } finally {
     fs.rmSync(file, { force: true });
@@ -300,9 +312,12 @@ export const areaStackNote = (ids, counts) => `\n\nThis app is split into areas:
 
 export const areaBuildNote = (id, featureIds, order, isRound, failing) => `\n\nThis app is built area by area, in this order: ${order.join(', ')}. You build only the area "${id}": its features are the entries of input/features.md tagged [area: ${id}] (${featureIds.join(', ')}). project/ may already hold earlier areas: keep them working, follow the Build order and Shared contracts in input/stack.md, and do not rewrite other areas. Keep project/rebuild-run.json valid for everything built so far.${isRound ? ` Fix only failures listed for these features: ${featureIds.filter((f) => failing && failing.has(f)).join(', ')}.` : ''} Commit when done.`;
 
-function checkChild(r, transcript, runDir, target, where = '') {
+export function checkChild(r, transcript, runDir, target, where = '') {
   const hits = scanTranscript(transcript, scanPaths(runDir, target));
-  if (hits.length) throw new Error(`transcript names a forbidden path (${hits[0].forbidden})${where}`);
+  if (hits.length) {
+    wallEvent(runDir, 'wall', false, 'a target or run folder path appeared in the builder transcript');
+    throw new Error(`transcript names a forbidden path (${hits[0].forbidden})${where}`);
+  }
   if (r.code !== 0 || r.isError) throw new Error(`child failed${where}: ${(r.text || r.error || 'exit ' + r.code).slice(0, 300)}`);
 }
 
