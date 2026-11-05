@@ -181,7 +181,32 @@ export async function launchApp(run, appFile, { theme = 'light' } = {}) {
     cleanup();
     process.off('exit', cleanup);
   }
-  const session = { app, page, rec, faults, windows, dialogs, setTheme, setSize, stop: stopNow, buildMs, tmp };
+  // session.page is the window being driven. When it closes on its own (a helper window that lives for a moment), the first
+  // window still open takes over, then any the app has but we have not watched yet.
+  let current = page;
+  const session = { app, rec, faults, windows, dialogs, setTheme, setSize, stop: stopNow, buildMs, tmp };
+  Object.defineProperty(session, 'page', {
+    enumerable: true,
+    get() {
+      if (current.isClosed()) {
+        app.windows().forEach(watch);
+        const next = windows.find((w) => !w.isClosed());
+        if (next) current = next;
+      }
+      return current;
+    },
+    set(p) { current = p; },
+  });
+  // Waits up to timeoutMs for a window that is open and returns it.
+  session.livePage = async (timeoutMs = 5000) => {
+    const end = Date.now() + timeoutMs;
+    for (;;) {
+      const p = session.page;
+      if (!p.isClosed()) return p;
+      if (Date.now() > end) throw new Error('Target closed: no window of the app is open');
+      await sleep(150);
+    }
+  };
   return session;
 }
 
@@ -208,12 +233,12 @@ export async function replay(session, steps, settleMs = 300) {
 export function electronOpener(run, appFile) {
   return async (screen, { width = SIZES.wide.w, height = SIZES.wide.h, colorScheme = 'light' } = {}) => {
     const session = await launchApp(run, appFile, { theme: colorScheme });
-    await session.setSize(session.page, width, height).catch(() => {});
+    await session.setSize(await session.livePage(), width, height).catch(() => {});
     return {
       // follows the current main window: when the app closes the one it had (a reload that opens a new window), the first window still open
-      get page() { if (session.page.isClosed() && session.windows.length) session.page = session.windows[0]; return session.page; },
+      get page() { return session.page; },
       rec: session.rec, faults: session.faults, close: () => session.stop(),
-      go: async () => { await replay(session, screen.steps || []); await session.setSize(session.page, width, height).catch(() => {}); },
+      go: async () => { await replay(session, screen.steps || []); await session.setSize(await session.livePage(), width, height).catch(() => {}); },
     };
   };
 }

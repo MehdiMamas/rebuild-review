@@ -1,4 +1,4 @@
-// Twelve checks for the Electron adapter, run against the fixture app in ./fixture. node test/run.mjs
+// Fourteen checks for the Electron adapter, run against the fixture app in ./fixture. node test/run.mjs
 // The known answers are in answers.json; only this file reads them. A planted problem the probes miss is printed as MISS and
 // is not hidden or tuned away. A check fails only when the thing it protects is broken (a leak, a hang, a missing file, a false alarm on the clean screen).
 import fs from 'node:fs';
@@ -8,7 +8,7 @@ import http from 'node:http';
 import crypto from 'node:crypto';
 import { createRequire } from 'node:module';
 import { spawn, spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const adapter = path.resolve(here, '..');
@@ -242,6 +242,36 @@ try {
   {
     const log = fs.existsSync(path.join(golden, 'console.log')) ? fs.readFileSync(path.join(golden, 'console.log'), 'utf8') : '';
     check(12, 'run.env reaches the app', /fixture-env: from-run-env/.test(log), [`the app reported: ${log.split('\n').find((l) => /fixture-env/.test(l)) || 'nothing'}`]);
+  }
+
+  // 13
+  {
+    const first = manifest.screens[0];
+    check(13, 'a helper window that closes by itself at launch does not stop the capture; the main window is the first screen', cap.code === 0 && !!readJson(path.join(golden, 'manifest.json')) && !!first && first.window === 'workbench' && !manifest.screens.some((x) => x.window === 'rr-helper'),
+      [`first screen: ${first ? `${first.id} (window ${first.window})` : 'none'}; ${manifest.screens.length} screens`]);
+  }
+
+  // 14
+  {
+    const { launchApp } = await import(pathToFileURL(path.join(adapter, 'launch.mjs')).href);
+    const { closedReason } = await import(pathToFileURL(path.join(adapter, '..', 'web', 'probes.mjs')).href);
+    const r = makeRun('run-live');
+    const tr = path.join(base, 'tmp-live'); fs.mkdirSync(tr);
+    process.env.RR_TMP_ROOT = tr;
+    let outcome = 'nothing happened';
+    let ok = false;
+    const s = await launchApp(JSON.parse(fs.readFileSync(r.file, 'utf8')), r.file);
+    try {
+      await s.page.getByRole('button', { name: 'Settings' }).click();
+      await s.page.getByRole('button', { name: 'Close window' }).click();
+      const t0 = Date.now();
+      try { const p = await s.livePage(); ok = !p.isClosed(); outcome = ok ? 'an open window was handed over' : 'a closed window was returned'; }
+      catch (e) { ok = closedReason(e) !== null; outcome = `threw "${e.message}", closedReason ${ok ? 'maps it to the closed reason' : 'gives null'}`; }
+      outcome += ` after ${Math.round((Date.now() - t0) / 1000)} s`;
+      ok = ok && Date.now() - t0 < 6000;
+    } catch (e) { outcome = `the check itself failed: ${String(e.message).split('\n')[0]}`; }
+    finally { await s.stop(); delete process.env.RR_TMP_ROOT; }
+    check(14, 'after the held window is closed by a click, livePage hands over an open window or throws the closed reason', ok, [outcome]);
   }
 } finally {
   server.close();

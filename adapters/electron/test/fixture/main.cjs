@@ -43,6 +43,10 @@ app.whenReady().then(async () => {
     setTimeout(() => { open('Workbench', 'index.html'); reloading = false; }, 3000);
   });
   ipcMain.handle('open-inspector', () => { open('Inspector', 'inspector.html', 600, 500); });
+  // A helper window that opens first and closes itself, the way an editor's helper process does. No buttons, no problems.
+  const helper = new BrowserWindow({ width: 300, height: 200, show: true, title: 'rr-helper' });
+  helper.loadURL('data:text/html,<title>rr-helper</title>');
+  setTimeout(() => { if (!helper.isDestroyed()) helper.close(); }, 300);
   open('Workbench', 'index.html');
   // What the app can see of the machine it runs on: reported, never read by the adapter.
   const tokenFile = path.join(os.homedir(), '.fake-token');
