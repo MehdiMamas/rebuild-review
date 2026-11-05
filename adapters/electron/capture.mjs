@@ -79,6 +79,7 @@ function register(d, steps, from) {
 for (let qi = 0; qi < queue.length; qi++) {
   const screen = queue[qi];
   let s = await launch(`crawl ${screen.kind}: ${screen.heading}`, screen.steps);
+  await s.livePage();
   const names = await s.page.locator(CONTROLS).evaluateAll((els) => els.filter((e) => { const r = e.getBoundingClientRect(); return r.width && r.height && !e.disabled; })
     .map((e) => (e.getAttribute('aria-label') || e.innerText || e.title || e.value || '').trim().replace(/\s+/g, ' ')));
   const unique = [...new Set(names.filter(Boolean))];
@@ -116,7 +117,7 @@ for (const s of screens) {
   let sess;
   try {
     sess = await launch(`capture ${s.id}`, s.steps);
-    const page = sess.page;
+    const page = await sess.livePage();
     fs.mkdirSync(dir, { recursive: true });
     for (const size of [SIZES.narrow, SIZES.wide]) {
       const got = await sess.setSize(page, size.w, size.h).catch(() => null);
@@ -151,7 +152,7 @@ if (statesFile) {
     let sess;
     try {
       sess = await launch(`state ${st.id}`, st.steps);
-      await sess.setSize(sess.page, SIZES.wide.w, SIZES.wide.h).catch(() => {});
+      await sess.setSize(await sess.livePage(), SIZES.wide.w, SIZES.wide.h).catch(() => {});
       const dir = path.join(out, 'screens', st.id);
       fs.mkdirSync(dir, { recursive: true });
       fs.writeFileSync(path.join(dir, `${SIZES.wide.w}-light.png`), await sess.page.screenshot());
