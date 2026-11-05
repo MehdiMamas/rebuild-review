@@ -4,7 +4,10 @@
 # --watch starts the watch page (scripts/watch.mjs) in the background and needs --run-dir; the page ends by itself 30 minutes after the run.
 # Example: unattended.sh ~/work/app --max-usd 300 -- --dangerously-skip-permissions
 # Without CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0, claude -p stops the background workflow
-# 10 minutes after its last turn; this script sets it.
+# 10 minutes after its last turn; this script sets it. It also sets
+# CLAUDE_CODE_DISABLE_BG_SHELL_PRESSURE_REAP=1: otherwise, under memory pressure, Claude Code stops
+# background shells while the idle main session waits, which ends the run (#101). Cap memory from
+# outside instead (e.g. systemd-run --user -p MemoryHigh=... -p MemoryMax=...).
 set -euo pipefail
 
 usage() { echo "usage: $0 <target> --max-usd N [--base url@ref|none|keep] [--run-dir dir] [--watch [port]] [-- extra claude flags]" >&2; exit 2; }
@@ -57,4 +60,5 @@ if [ -n "$watch" ]; then
 fi
 
 export CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0
+export CLAUDE_CODE_DISABLE_BG_SHELL_PRESSURE_REAP=1
 exec claude -p "$prompt" "$@"
