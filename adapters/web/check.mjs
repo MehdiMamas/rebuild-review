@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { chromium } from 'playwright';
 import { makeContext } from './context.mjs';
+import { launchChromium } from './browser.mjs';
 import { loadProbes, clickProbes } from './probes.mjs';
 import { statusOf, exitCodeOf, endedOn, notesOf } from './check-result.mjs';
 
@@ -35,7 +36,7 @@ const local = ['localhost', '127.0.0.1', '[::1]'].includes(base.hostname);
 
 if (!(await fetch(origin).then(() => true, () => false))) die(`app does not answer on ${origin}`);
 let browser;
-try { browser = await chromium.launch({ args: ['--disable-gpu', '--disable-software-rasterizer'] }); } catch (e) { die(`browser could not start: ${String(e.message).split('\n')[0]}`); }
+try { browser = await launchChromium(chromium, { args: ['--disable-gpu', '--disable-software-rasterizer'] }); } catch (e) { die(`browser could not start: ${e.message}`); }
 
 const slug = (u) => u.replace(/^\//, '').replace(/[^A-Za-z0-9]+/g, '_') || 'root';
 const blocked = new Set(), notChecked = [], reached = [], screenshots = [], notes = [];

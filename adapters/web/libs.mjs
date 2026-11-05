@@ -1,4 +1,4 @@
-// Linux preflight: shared libraries the Electron binary needs, fetched without root. No dependencies, so it is unit-tested alone.
+// Linux preflight: shared libraries a browser or Electron binary needs, fetched without root. No dependencies, so it is unit-tested alone.
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -23,11 +23,12 @@ export function packagesFor(libs) {
 }
 const libDirs = (cacheDir) => ['usr/lib/x86_64-linux-gnu', 'lib/x86_64-linux-gnu', 'usr/lib', 'lib'].map((d) => path.join(cacheDir, 'root', d)).filter((d) => fs.existsSync(d));
 const dirSize = (d) => { let n = 0; for (const e of fs.existsSync(d) ? fs.readdirSync(d, { withFileTypes: true }) : []) { const p = path.join(d, e.name); n += e.isDirectory() ? dirSize(p) : fs.statSync(p).size; } return n; };
-// Linux only, never with sudo: when ldd reports libraries missing for the Electron binary, downloads their packages with
+// Linux only, never with sudo: when ldd reports libraries missing for the binary (deps.label names it in errors), downloads their packages with
 // apt-get download, unpacks them with dpkg -x into cacheDir and returns a LD_LIBRARY_PATH value for them ('' when nothing is missing).
 // Stops with the missing names and the first error line when apt-get or the network is not there, a library has no entry in the package map,
 // or the cache would pass 300 MB. deps.run(cmd, args, opts) is spawnSync-like, for tests.
 export function linuxLibs(executablePath, cacheDir, deps = {}) {
+  const what = deps.label || 'the Electron binary';
   if (process.platform !== 'linux' && !deps.run) return '';
   const run = deps.run || ((c, a, o) => spawnSync(c, a, { encoding: 'utf8', ...o }));
   const find = () => {
@@ -38,9 +39,9 @@ export function linuxLibs(executablePath, cacheDir, deps = {}) {
   const missing = find();
   if (!missing.length) return libDirs(cacheDir).join(':');
   const { packages, unmapped } = packagesFor(missing);
-  if (unmapped.length) throw new Error(`the Electron binary needs libraries this machine does not have and the adapter does not know their packages: ${unmapped.join(', ')}. Install them as system packages.`);
+  if (unmapped.length) throw new Error(`${what} needs libraries this machine does not have and the adapter does not know their packages: ${unmapped.join(', ')}. Install them as system packages.`);
   fs.mkdirSync(cacheDir, { recursive: true });
-  const fail = (what, r) => new Error(`the Electron binary needs libraries this machine does not have (${missing.join(', ')}); ${what}: ${String((r && (r.stderr || (r.error && r.error.message))) || 'unknown error').trim().split('\n')[0]}`);
+  const fail = (step, r) => new Error(`${what} needs libraries this machine does not have (${missing.join(', ')}); ${step}: ${String((r && (r.stderr || (r.error && r.error.message))) || 'unknown error').trim().split('\n')[0]}`);
   for (const pkg of packages) {
     let r = run('apt-get', ['download', pkg], { cwd: cacheDir });
     if (r.status !== 0) r = run('apt-get', ['download', `${pkg}t64`], { cwd: cacheDir });
@@ -53,6 +54,6 @@ export function linuxLibs(executablePath, cacheDir, deps = {}) {
   }
   if (dirSize(cacheDir) > LIB_CACHE_CAP) { fs.rmSync(cacheDir, { recursive: true, force: true }); throw fail('the library cache would pass 300 MB', null); }
   const still = find();
-  if (still.length) throw new Error(`the Electron binary still lacks libraries after unpacking their packages: ${still.join(', ')}`);
+  if (still.length) throw new Error(`${what} still lacks libraries after unpacking their packages: ${still.join(', ')}`);
   return libDirs(cacheDir).join(':');
 }
