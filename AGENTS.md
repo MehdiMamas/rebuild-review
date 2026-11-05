@@ -116,6 +116,7 @@ what it renders, then scores the rebuild against the original. See README.md.
 ## Conventions
 
 - Releases: bump `.claude-plugin/plugin.json` in a PR, merge it, then tag that merge commit `v<version>`. The `tag` workflow (`scripts/tag-version.mjs`) fails a tag whose version differs from `plugin.json`. Test: `node --test scripts/tag-version.test.mjs`.
+- Contributing: see CONTRIBUTING.md for setup, the checks CI runs and how to file a bug.
 
 - Any kind of project, not only web. Nothing outside a platform adapter may assume HTML,
   a browser or React; a platform-specific need means the adapter contract changes.

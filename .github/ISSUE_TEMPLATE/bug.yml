@@ -1,0 +1,38 @@
+name: Bug report
+description: Something did not work as described
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Plugin version
+      description: The version in .claude-plugin/plugin.json
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Target platform
+      description: Web or Electron, and your operating system
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: What you ran
+      description: The command or skill call, and the phase it stopped in
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened
+      description: Paste the error lines. Remove local paths, secrets and private app names first.
+    validations:
+      required: true

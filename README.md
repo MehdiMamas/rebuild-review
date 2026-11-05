@@ -1,5 +1,11 @@
 # rebuild-review
 
+Rebuild your project from what it does and how it looks, then see if the rebuild beats the original.
+
+![Top of the example report: verdict, confidence and scores](docs/example-report.png)
+
+Built with [Playwright](https://playwright.dev), [axe-core](https://github.com/dequelabs/axe-core) and [Electron](https://www.electronjs.org).
+
 A one-shot, expensive review for a project that has grown by piling on features.
 It does not read a diff. It takes the project apart into what it does and what it
 looks like, rebuilds the full project the best and simplest way, and scores the two.
@@ -97,8 +103,6 @@ The run ends with one page, `report/index.html`, with no scripts and its images 
 ## Example report
 
 [`docs/example-report.html`](docs/example-report.html) is the report from one run on the planted fixture; download it and open it in a browser. Its link to the project does not work outside the run folder.
-
-![Top of the example report: verdict, confidence and scores](docs/example-report.png)
 
 ## Known limits
 
