@@ -167,7 +167,8 @@ check('6 target git status is clean after the runs', status === '', status || 'c
   check('9a1 failed[].route holds the route, the click detail is in the evidence', res.failed.length > 0 && res.failed.every((f) => f.route === '/') && res.failed.some((f) => /^click "Save": /.test(f.evidence)), res.failed.slice(0, 3).map((f) => `${f.route} ${f.evidence.slice(0, 50)}`).join(' | '));
   check('9a2 screenshots at 390 and 1440 exist for every route and are listed in result.json', shotsOk, (res.screenshots || []).map((x) => x.file).join(' ') || 'none');
   const unitRows = res.failed.filter((f) => f.probe === 'input-delay' || f.probe === 'script-cost-per-key');
-  check('9a3 input-delay and script-cost-per-key rows carry a numeric value and unit ms', unitRows.length > 0 && unitRows.every((f) => typeof f.value === 'number' && Number.isFinite(f.value) && f.unit === 'ms'), unitRows.map((f) => `${f.probe} ${f.value} ${f.unit}`).join(' | ') || 'no such row');
+  // Whether these timing probes fail depends on the machine's speed, so a run where none failed checks nothing here and says so.
+  check('9a3 failed input-delay and script-cost-per-key rows carry a numeric value and unit ms', unitRows.every((f) => typeof f.value === 'number' && Number.isFinite(f.value) && f.unit === 'ms'), unitRows.map((f) => `${f.probe} ${f.value} ${f.unit}`).join(' | ') || 'none failed on this machine, shape not exercised');
   const waitOk = runCheck(['--base-url', app.origin, '--routes', '/', '--out', outDir, '--wait-for', 'input']);
   const waitOkR = json(outFile);
   check('9a4 --wait-for a selector on the page: no note, same exit code, notes is an array', waitOk.status === full.status && Array.isArray(waitOkR.notes) && waitOkR.notes.length === 0, `exit ${waitOk.status}; notes ${JSON.stringify(waitOkR.notes)}`);

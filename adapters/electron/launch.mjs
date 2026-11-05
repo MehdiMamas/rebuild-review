@@ -8,7 +8,7 @@ import { createRequire } from 'node:module';
 import { execSync, spawnSync, spawn } from 'node:child_process';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { _electron } from 'playwright';
-import { linuxLibs } from './libs.mjs';
+import { linuxLibs } from '../web/libs.mjs';
 import { redactUrl, redactHeaders, scrub, sleep, locate, runStep } from '../web/context.mjs';
 
 const DEAD_PROXY = '127.0.0.1:9';

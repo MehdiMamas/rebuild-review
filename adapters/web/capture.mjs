@@ -3,6 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { chromium } from 'playwright';
+import { launchChromium } from './browser.mjs';
 import { makeContext, runStep, sleep, scrub } from './context.mjs';
 import { startApp } from './app.mjs';
 import { runProbes } from './probes.mjs';
@@ -27,7 +28,7 @@ let cutScreens = [], sameRouteSkipped = [];
 const slug = (u) => { const p = new URL(u).pathname.replace(/^\/|\/$/g, '').replace(/[^\w-]+/g, '-'); return p || 'root'; };
 const write = (f, data) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, typeof data === 'string' ? data : JSON.stringify(data, null, 2)); };
 
-const browser = await chromium.launch();
+const browser = await launchChromium(chromium);
 const har = [], consoleLines = [], blocked = new Set(), timings = [];
 const shot = async (page, dir, name) => { fs.mkdirSync(dir, { recursive: true }); await page.screenshot({ path: path.join(dir, `${name}.png`) }); };
 async function settle(page) { await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {}); }
