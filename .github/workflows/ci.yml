@@ -31,6 +31,7 @@ jobs:
           node --test scripts/confidence.test.mjs
           node --test scripts/report.test.mjs
           node --test scripts/size.test.mjs
+          node --test scripts/tag-version.test.mjs
           node --test scripts/base.test.mjs
           node --test scripts/foundations.test.mjs
           node --test scripts/workflow-parse.test.mjs
