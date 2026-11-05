@@ -129,11 +129,22 @@ export async function launchApp(run, appFile, { theme = 'light' } = {}) {
   };
   const faults = {};
   const context = app.context();
-  await context.route('**/*', async (route) => {
+  // Turning interception on touches every open window; one that closes just then (a helper window) fails the call. The handler is
+  // taken off again and the call repeated, so it is never registered twice.
+  const routeAll = async (handler) => {
+    for (let i = 0; ; i++) {
+      try { return await context.route('**/*', handler); } catch (e) {
+        if (i >= 4 || !/closed/i.test(e.message)) throw e;
+        await context.unroute('**/*', handler).catch(() => {});
+        await sleep(150);
+      }
+    }
+  };
+  await routeAll(async (route) => {
     if (!allowed(route.request().url())) { rec.blocked.push(clean(redactUrl(route.request().url()))); return route.abort('blockedbyclient'); }
     return route.fallback();
   });
-  await context.route('**/*', async (route) => {
+  await routeAll(async (route) => {
     if (!['fetch', 'xhr'].includes(route.request().resourceType()) || !(faults.slowMs || faults.failApi)) return route.fallback();
     if (faults.slowMs) await sleep(faults.slowMs);
     if (faults.failApi) return route.fulfill({ status: 500, contentType: 'application/json', body: '{"error":"simulated failure"}' });
