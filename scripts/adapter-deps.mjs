@@ -11,13 +11,18 @@ function missing(dir) {
   return names.filter(n => !fs.existsSync(path.join(dir, 'node_modules', n, 'package.json')))
 }
 
-function npmInstall(dir) {
-  const r = spawnSync('npm', ['install'], { cwd: dir, encoding: 'utf8' })
-  return r.status === 0 ? null : (r.stderr || r.stdout || `npm exited ${r.status}`).trim().split('\n').slice(-5).join('\n')
+// pnpm when it is on PATH; otherwise the version pinned in package.json through npx, so a machine without pnpm still installs.
+function pnpmInstall(dir) {
+  let r = spawnSync('pnpm', ['install'], { cwd: dir, encoding: 'utf8' })
+  if (r.error && r.error.code === 'ENOENT') {
+    const pin = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')).packageManager || 'pnpm'
+    r = spawnSync('npx', ['-y', pin, 'install'], { cwd: dir, encoding: 'utf8' })
+  }
+  return r.status === 0 ? null : (r.stderr || r.stdout || `pnpm exited ${r.status}`).trim().split('\n').slice(-5).join('\n')
 }
 
 // install(dir) returns null on success or a reason string.
-export function ensureDeps(adaptersDir, install = npmInstall) {
+export function ensureDeps(adaptersDir, install = pnpmInstall) {
   const problems = []
   const installed = []
   if (!fs.existsSync(adaptersDir)) return { installed, problems }
@@ -26,7 +31,7 @@ export function ensureDeps(adaptersDir, install = npmInstall) {
     if (!fs.existsSync(path.join(dir, 'package.json'))) continue
     if (missing(dir).length === 0) continue
     const why = install(dir)
-    if (why) problems.push(`adapter ${name}: npm install failed: ${why}`)
+    if (why) problems.push(`adapter ${name}: pnpm install failed: ${why}`)
     else installed.push(name)
   }
   return { installed, problems }
