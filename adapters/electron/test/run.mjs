@@ -1,4 +1,4 @@
-// Twelve checks for the Electron adapter, run against the fixture app in ./fixture. node test/run.mjs
+// Fourteen checks for the Electron adapter, run against the fixture app in ./fixture. node test/run.mjs
 // The known answers are in answers.json; only this file reads them. A planted problem the probes miss is printed as MISS and
 // is not hidden or tuned away. A check fails only when the thing it protects is broken (a leak, a hang, a missing file, a false alarm on the clean screen).
 import fs from 'node:fs';
@@ -242,6 +242,27 @@ try {
   {
     const log = fs.existsSync(path.join(golden, 'console.log')) ? fs.readFileSync(path.join(golden, 'console.log'), 'utf8') : '';
     check(12, 'run.env reaches the app', /fixture-env: from-run-env/.test(log), [`the app reported: ${log.split('\n').find((l) => /fixture-env/.test(l)) || 'nothing'}`]);
+  }
+
+  // 13
+  {
+    const startsAsHelper = /Helper/.test(fs.readFileSync(path.join(run.dir, 'work', 'main.cjs'), 'utf8'));
+    const uncaught = /Target page, context or browser has been closed|Unhandled|TypeError/.test(cap.text) && cap.code !== 0;
+    const main = manifest.screens.some((s) => s.window === 'workbench') && manifest.screens.length > 1;
+    const helperScreen = manifest.screens.some((s) => s.window === 'helper');
+    check(13, 'a helper window that closes by itself before the first screen does not stop the capture', startsAsHelper && cap.code === 0 && !uncaught && main && !helperScreen && fs.existsSync(path.join(golden, 'manifest.json')),
+      [`exit ${cap.code}; ${manifest.screens.length} screens; Workbench screens found: ${main}; a screen taken from the closed helper: ${helperScreen}`]);
+  }
+
+  // 14
+  {
+    const rows = readJson(path.join(golden, 'probes-not-checked.json')) || [];
+    const closed = rows.filter((r) => /the window closed or reloaded after the click/.test(r.reason || ''));
+    const noted = (manifest.notCaptured || []).filter((x) => /closed or reloaded/.test(x));
+    const after = manifest.screens.some((s) => s.id === 'scheme-page') && manifest.screens.some((s) => s.window === 'inspector');
+    const crashed = /page\.evaluate: Target page, context or browser has been closed/.test(cap.text);
+    check(14, 'the window the adapter holds is closed by a click: the next screens still capture, the probe is a notChecked row, not a crash', cap.code === 0 && !crashed && closed.length > 0 && noted.length > 0 && after,
+      [`exit ${cap.code}; ${closed.length} closed-window row(s), ${noted.length} in manifest notCaptured; screens after the closing clicks captured: ${after}; uncaught evaluate error in the output: ${crashed}`]);
   }
 } finally {
   server.close();
