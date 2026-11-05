@@ -1,11 +1,11 @@
 // Per-change check of a running web app. Exit: 0 pass, 1 fail, 2 incomplete (something not checked), 3 error.
-// node check.mjs --base-url <url> --routes /a,/b [--out dir] [--budget-seconds 110] [--storage-state file] [--allow-origin https://x,...]
+// node check.mjs --base-url <url> --routes /a,/b [--out dir] [--budget-seconds 110] [--storage-state file] [--allow-origin https://x,...] [--wait-for <css selector>]
 import fs from 'node:fs';
 import path from 'node:path';
 import { chromium } from 'playwright';
 import { makeContext } from './context.mjs';
 import { loadProbes, clickProbes } from './probes.mjs';
-import { statusOf, exitCodeOf, endedOn } from './check-result.mjs';
+import { statusOf, exitCodeOf, endedOn, notesOf } from './check-result.mjs';
 
 const t0 = Date.now();
 // A throw nobody handled is an error (3), never a failed check (1).
@@ -25,6 +25,8 @@ if (!(budget > 0)) die(`bad --budget-seconds ${arg('budget-seconds')}`);
 const storageState = arg('storage-state');
 if (storageState && !fs.existsSync(storageState)) die(`--storage-state ${storageState} not found`);
 const allowOrigins = (arg('allow-origin') || '').split(',').map((o) => o.trim()).filter(Boolean);
+const waitFor = arg('wait-for');
+if (waitFor !== undefined && !waitFor.trim()) die('bad --wait-for: empty');
 const out = arg('out');
 if (out) fs.mkdirSync(out, { recursive: true });
 const deadline = t0 + budget * 1000;
@@ -36,7 +38,7 @@ let browser;
 try { browser = await chromium.launch({ args: ['--disable-gpu', '--disable-software-rasterizer'] }); } catch (e) { die(`browser could not start: ${String(e.message).split('\n')[0]}`); }
 
 const slug = (u) => u.replace(/^\//, '').replace(/[^A-Za-z0-9]+/g, '_') || 'root';
-const blocked = new Set(), notChecked = [], reached = [], screenshots = [];
+const blocked = new Set(), notChecked = [], reached = [], screenshots = [], notes = [];
 // A polling app never goes idle: cap each idle wait; other waits fail fast instead of eating the budget.
 const env = { storageState, allowOrigins, onBlocked: (u) => blocked.add(u), timeout: 5000, navTimeout: 15000 };
 
@@ -57,7 +59,19 @@ for (const route of routes) {
     const ended = endedOn(new URL(route, origin).toString(), page.url(), allowOrigins);
     // Screenshots come first for every route, before any probe, so a cut budget never loses them.
     if (out) {
-      await page.waitForLoadState('networkidle', { timeout: 3000 }).catch(() => {});
+      const idleLeft = Math.min(10000, deadline - Date.now());
+      if (idleLeft > 0) await page.waitForLoadState('networkidle', { timeout: idleLeft }).catch(() => {});
+      if (waitFor) {
+        const left = Math.min(10000, deadline - Date.now());
+        if (left <= 0) notes.push({ route, note: `wait-for ${waitFor} not waited for: no time left before the deadline; shots taken anyway` });
+        else {
+          try { await page.waitForSelector(waitFor, { state: 'visible', timeout: left }); } catch (e) {
+            const first = String(e.message).split('\n')[0];
+            if (e?.name === 'TimeoutError') notes.push({ route, note: `wait-for ${waitFor} not visible after ${Math.round(left / 1000)} s; shots taken anyway` });
+            else die(`bad --wait-for: ${first}`);
+          }
+        }
+      }
       for (const width of [1440, 390]) {
         try {
           await page.setViewportSize({ width, height: 900 });
@@ -91,11 +105,12 @@ const routeOf = (screen) => {
   const hit = reached.filter((r) => screen === r.id || screen.startsWith(r.id + ':') || screen.startsWith(r.id + '@')).sort((a, b) => b.id.length - a.id.length)[0];
   return hit ? { route: hit.url, rest: screen.slice(hit.id.length).replace(/^:/, '') } : { route: screen, rest: '' };
 };
-const failed = rows.filter((r) => !r.passed).map((r) => { const { route, rest } = routeOf(r.screen); return { probe: r.probe, route, evidence: rest ? `${rest}: ${r.evidence}` : r.evidence }; });
+const failed = rows.filter((r) => !r.passed).map((r) => { const { route, rest } = routeOf(r.screen); return { probe: r.probe, route, evidence: rest ? `${rest}: ${r.evidence}` : r.evidence, ...(r.value !== undefined && { value: r.value, unit: r.unit }) }; });
 const status = statusOf({ failed, notChecked });
-const result = { version: 1, status, baseUrl, routes, screenshots, elapsedMs: Date.now() - t0, passed: rows.length - failed.length, failed, notChecked, blockedOrigins: [...new Set([...blocked].map((u) => { try { return new URL(u).origin; } catch { return u; } }))].sort() };
+const result = { version: 1, status, baseUrl, routes, screenshots, elapsedMs: Date.now() - t0, passed: rows.length - failed.length, failed, notChecked, notes: notesOf(notes), blockedOrigins: [...new Set([...blocked].map((u) => { try { return new URL(u).origin; } catch { return u; } }))].sort() };
 if (out) fs.writeFileSync(path.join(out, 'result.json'), JSON.stringify(result, null, 2));
 for (const f of failed) console.log(`FAIL ${f.probe} ${f.route}: ${f.evidence}`);
+for (const n of notes) console.log(`NOTE ${n.route}: ${n.note}`);
 for (const n of notChecked) console.log(`NOT CHECKED ${n.probe} ${n.route}: ${n.reason}`);
 console.log(`${status}: ${result.passed} passed, ${failed.length} failed, ${notChecked.length} not checked, ${blocked.size} blocked origin request(s), ${(result.elapsedMs / 1000).toFixed(1)} s`);
 process.exit(exitCodeOf(status));

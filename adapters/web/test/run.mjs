@@ -166,6 +166,17 @@ check('6 target git status is clean after the runs', status === '', status || 'c
   const shotsOk = ['1440', '390'].every((w) => (res.screenshots || []).some((x) => x.route === '/' && x.width === Number(w) && x.file === `root-${w}.png` && fs.statSync(path.join(outDir, x.file)).size > 0));
   check('9a1 failed[].route holds the route, the click detail is in the evidence', res.failed.length > 0 && res.failed.every((f) => f.route === '/') && res.failed.some((f) => /^click "Save": /.test(f.evidence)), res.failed.slice(0, 3).map((f) => `${f.route} ${f.evidence.slice(0, 50)}`).join(' | '));
   check('9a2 screenshots at 390 and 1440 exist for every route and are listed in result.json', shotsOk, (res.screenshots || []).map((x) => x.file).join(' ') || 'none');
+  const unitRows = res.failed.filter((f) => f.probe === 'input-delay' || f.probe === 'script-cost-per-key');
+  check('9a3 input-delay and script-cost-per-key rows carry a numeric value and unit ms', unitRows.length > 0 && unitRows.every((f) => typeof f.value === 'number' && Number.isFinite(f.value) && f.unit === 'ms'), unitRows.map((f) => `${f.probe} ${f.value} ${f.unit}`).join(' | ') || 'no such row');
+  const waitOk = runCheck(['--base-url', app.origin, '--routes', '/', '--out', outDir, '--wait-for', 'input']);
+  const waitOkR = json(outFile);
+  check('9a4 --wait-for a selector on the page: no note, same exit code, notes is an array', waitOk.status === full.status && Array.isArray(waitOkR.notes) && waitOkR.notes.length === 0, `exit ${waitOk.status}; notes ${JSON.stringify(waitOkR.notes)}`);
+  const waitNo = runCheck(['--base-url', app.origin, '--routes', '/', '--out', outDir, '--wait-for', '#never-appears']);
+  const waitNoR = json(outFile);
+  const shotsBoth = ['1440', '390'].every((w) => (waitNoR.screenshots || []).some((x) => x.width === Number(w) && fs.existsSync(path.join(outDir, x.file))));
+  check('9a5 --wait-for a selector that never appears: a note, both shots, exit code unchanged, not in notChecked', waitNo.status === full.status && waitNoR.notes.length === 1 && /wait-for #never-appears not visible after \d+ s; shots taken anyway/.test(waitNoR.notes[0].note) && waitNoR.notes[0].route === '/' && shotsBoth && !waitNoR.notChecked.some((n) => n.probe === 'wait-for'), `exit ${waitNo.status}; ${waitNoR.notes.map((n) => n.note).join(' | ')}`);
+  const waitBad = runCheck(['--base-url', app.origin, '--routes', '/', '--out', outDir, '--wait-for', 'div[']);
+  check('9a6 an invalid --wait-for selector exits 3 as a usage error', waitBad.status === 3 && /^error: bad --wait-for/.test(waitBad.stderr), `exit ${waitBad.status}; ${waitBad.stderr.trim().slice(0, 100)}`);
   const small = runCheck(['--base-url', app.origin, '--routes', '/', '--budget-seconds', '5', '--out', outDir]);
   const rs5 = json(outFile);
   check('9b a 5 second budget gives notChecked rows and exit 2 or 1, never 0', [1, 2].includes(small.status) && rs5.notChecked.length > 0 && rs5.status !== 'pass',
