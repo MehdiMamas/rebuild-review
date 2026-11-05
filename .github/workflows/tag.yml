@@ -1,0 +1,12 @@
+name: tag
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: plugin.json version matches the tag
+        run: node scripts/tag-version.mjs "$GITHUB_REF_NAME"
