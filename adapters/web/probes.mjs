@@ -159,7 +159,7 @@ async function loadScreen(c, s, add) {
       if (evt > worst) { worst = evt; worstField = label; }
     }
     add('focus-lost', s.id, lost.length === 0, lost.length ? lost.join('; ') : `${count} field(s) kept focus while typing`);
-    add('input-delay', s.id, worst < 50, `slowest input event ${Math.round(worst)} ms at 4x CPU slowdown${worstField ? ` in ${worstField}` : ''}; budget 50 ms`);
+    add('input-delay', s.id, worst < 50, `slowest input event ${Math.round(worst)} ms at 4x CPU slowdown${worstField ? ` in ${worstField}` : ''}; budget 50 ms`, { value: Math.round(worst), unit: 'ms' });
     await t.context.close();
   });
 
@@ -192,7 +192,7 @@ async function loadScreen(c, s, add) {
       for (const ch of 'abcde') { await t.page.keyboard.type(ch); await sleep(100); }
       const ms = ((await script()) - before) * 1000 / 5;
       c.state.worstMs = Math.max(c.state.worstMs ?? 0, ms);
-      add('script-cost-per-key', `${s.id}:${label}`, ms <= 16, `${ms.toFixed(1)} ms of script per keystroke at 4x CPU slowdown in ${label}; budget 16 ms`);
+      add('script-cost-per-key', `${s.id}:${label}`, ms <= 16, `${ms.toFixed(1)} ms of script per keystroke at 4x CPU slowdown in ${label}; budget 16 ms`, { value: Number(ms.toFixed(1)), unit: 'ms' });
       await t.context.close();
     }
   });
@@ -315,7 +315,7 @@ const finish = (c, timings) => { if (c.state.worstMs !== null) timings.push({ na
 // Load probes (console errors, typing, script cost, layout shift, slow and failed answers at load) on each screen.
 export async function loadProbes({ browser, origin, screens, timings = [], ...opts }) {
   const c = setup({ browser, origin, ...opts }), out = [];
-  const add = (probe, screen, passed, evidence) => out.push({ probe, screen, passed, evidence });
+  const add = (probe, screen, passed, evidence, extra) => out.push({ probe, screen, passed, evidence, ...extra });
   for (const s of screens) await loadScreen(c, s, add);
   finish(c, timings);
   return out;
@@ -324,7 +324,7 @@ export async function loadProbes({ browser, origin, screens, timings = [], ...op
 // Click probes on each screen.
 export async function clickProbes({ browser, origin, screens, ...opts }) {
   const c = setup({ browser, origin, ...opts }), out = [];
-  const add = (probe, screen, passed, evidence) => out.push({ probe, screen, passed, evidence });
+  const add = (probe, screen, passed, evidence, extra) => out.push({ probe, screen, passed, evidence, ...extra });
   for (const s of screens) await clickScreen(c, s, add);
   return out;
 }
@@ -332,7 +332,7 @@ export async function clickProbes({ browser, origin, screens, ...opts }) {
 // Both, screen by screen: what capture runs.
 export async function runProbes({ browser, origin, screens, timings = [], ...opts }) {
   const c = setup({ browser, origin, ...opts }), out = [];
-  const add = (probe, screen, passed, evidence) => out.push({ probe, screen, passed, evidence });
+  const add = (probe, screen, passed, evidence, extra) => out.push({ probe, screen, passed, evidence, ...extra });
   for (const s of screens) { await loadScreen(c, s, add); await clickScreen(c, s, add); }
   finish(c, timings);
   return out;

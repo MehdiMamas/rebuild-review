@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { statusOf, exitCodeOf, endedOn } from '../check-result.mjs';
+import { statusOf, exitCodeOf, endedOn, notesOf } from '../check-result.mjs';
 
 const f = [{ probe: 'p', route: '/', evidence: 'e' }], n = [{ probe: 'p', route: '/', reason: 'r' }];
 
@@ -12,6 +12,12 @@ test('nothing failed and nothing skipped is a pass', () => assert.strictEqual(st
 test('exit codes', () => {
   assert.deepStrictEqual(['pass', 'fail', 'incomplete', 'error'].map(exitCodeOf), [0, 1, 2, 3]);
   assert.strictEqual(exitCodeOf('whatever'), 3);
+});
+
+test('notes are always an array and never change the status', () => {
+  assert.deepStrictEqual(notesOf(undefined), []);
+  assert.deepStrictEqual(notesOf([{ route: '/', note: 'n' }]), [{ route: '/', note: 'n' }]);
+  assert.strictEqual(statusOf({ failed: [], notChecked: [] }), 'pass');
 });
 
 const allow = ['http://127.0.0.1:48000'];
@@ -28,6 +34,7 @@ for (const [name, args] of [
   ['bad url', ['--base-url', 'nope', '--routes', '/']],
   ['route without a slash', ['--base-url', 'http://127.0.0.1:1', '--routes', 'a']],
   ['bad budget', ['--base-url', 'http://127.0.0.1:1', '--routes', '/', '--budget-seconds', 'x']],
+  ['empty wait-for', ['--base-url', 'http://127.0.0.1:1', '--routes', '/', '--wait-for', ' ']],
   ['missing storage state', ['--base-url', 'http://127.0.0.1:1', '--routes', '/', '--storage-state', '/nonexistent.json']],
 ]) test(`argument error exits 3: ${name}`, () => { const r = run(...args); assert.strictEqual(r.status, 3); assert.match(r.stderr, /^error:/); });
 

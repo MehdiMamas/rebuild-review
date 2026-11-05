@@ -20,3 +20,6 @@ export function endedOn(startUrl, finalUrl, allowOrigins = []) {
   if (allowOrigins.includes(end.origin)) return null;
   return `ended on ${end.origin}${end.pathname} instead`;
 }
+
+// Notes (a wait-for that timed out) are information, never a failure or a gap: always an array, never counted in the status.
+export const notesOf = (notes) => (Array.isArray(notes) ? notes : []);
