@@ -58,8 +58,8 @@ const isApi = (r) => isDataRequest(r.request());
 // faults (mutable): { slowMs: delay every fetch/xhr, failApi: answer every fetch/xhr with 500 }
 // storageState: a Playwright storage state file (a signed-in session). allowOrigins: other origins let through.
 // onBlocked(url): called for each blocked request (the url is redacted). timeout / navTimeout: context defaults in ms.
-export async function makeContext(browser, origin, { viewport, colorScheme = 'light', faults = {}, storageState, allowOrigins = [], onBlocked, timeout, navTimeout } = {}) {
-  const context = await browser.newContext({ viewport, colorScheme, ...(storageState ? { storageState } : {}) });
+export async function makeContext(browser, origin, { viewport, colorScheme = 'light', faults = {}, storageState, allowOrigins = [], onBlocked, timeout, navTimeout, mobile = false, touch = false } = {}) {
+  const context = await browser.newContext({ viewport, colorScheme, isMobile: mobile, hasTouch: touch, ...(storageState ? { storageState } : {}) });
   if (timeout) context.setDefaultTimeout(timeout);
   if (navTimeout) context.setDefaultNavigationTimeout(navTimeout);
   const rec = { blocked: [], har: [], console: [], pageErrors: [] };
