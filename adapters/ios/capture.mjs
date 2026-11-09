@@ -56,7 +56,7 @@ async function main() {
   sim.boot(dev.udid); sim.overrideStatusBar(dev.udid);
   sim.install(dev.udid, ctx.appPath);
   const log = sim.startLog(dev.udid, bundle);
-  const driver = await drv.startDriver(dev.udid, bundle);
+  let driver = await drv.startDriver(dev.udid, bundle);
 
   const tapAt = async (e) => { const c = drv.center(e); await drv.tap(c.x, c.y); };
   const findByStep = (els, step) => {
@@ -65,8 +65,13 @@ async function main() {
   };
   // Launch fresh and replay steps; returns the settled hierarchy.
   async function open(udid, steps) {
-    sim.launch(udid, bundle, { args: launchArgs, env: launchEnv });
-    let h = await drv.settled(bundle);
+    let h;
+    for (let a = 0; a < 4; a++) { // the driver sometimes reports the home screen instead of the app right after a launch: launch again
+      sim.launch(udid, bundle, { args: launchArgs, env: launchEnv });
+      h = await drv.settled(bundle);
+      if (h.elements.length && !/^springboard$/i.test(h.app?.label || '')) break;
+      sim.terminate(udid, bundle); await sleep(1500);
+    }
     for (const st of steps) {
       if (st.click !== undefined) { const e = findByStep(h.elements, st); if (!e) throw new Error(`"${st.click}" was not found on the screen`); await tapAt(e); await sleep(900); h = await drv.settled(bundle); }
       else if (st.type) { const e = h.elements.find((x) => nameOf(x) === st.type.into); if (!e) throw new Error(`field "${st.type.into}" was not found`); await tapAt(e); await sleep(400); await drv.typeText(bundle, st.type.text); await sleep(400); h = await drv.settled(bundle); }
@@ -126,7 +131,9 @@ async function main() {
         await sleep(1000);
         if (!sim.isRunning(dev.udid, bundle)) {
           taps.push({ screen: item.id, name: name || '(no label)', crashed: true, report: sim.crashReport(exe, t0 - 1000) });
-          at = false; continue;
+          at = false;
+          driver.stop(); driver = await drv.startDriver(dev.udid, bundle); // the driver ends when the app it drives crashes
+          continue;
         }
         const h2 = await drv.settled(bundle);
         const ms = Date.now() - t0;
