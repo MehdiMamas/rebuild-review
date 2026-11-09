@@ -1,0 +1,9 @@
+{
+  "name": "fixture-lib",
+  "version": "1.0.0",
+  "type": "module",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
+    "./noisy": { "types": "./dist/noisy.d.ts", "import": "./dist/noisy.js" }
+  }
+}

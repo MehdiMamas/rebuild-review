@@ -1,0 +1,12 @@
+{
+  "note": "Written before the probes were run. Only run.mjs reads this file; the fixture and the adapter never do.",
+  "problems": [
+    { "id": "L1", "what": "throwString throws a string, not an Error", "probe": "throws-non-error", "screen": "throwstring" },
+    { "id": "L2", "what": "fillOpts changes the object it is given", "probe": "mutates-argument", "screen": "fillopts" },
+    { "id": "L3", "what": "floatReject leaves a rejection nobody handles", "probe": "unhandled-rejection", "screen": "floatreject" },
+    { "id": "L4", "what": "leakTimer leaves a timer that keeps the process alive", "probe": "process-hang", "screen": "leaktimer" },
+    { "id": "L5", "what": "importing ./noisy prints a line and starts a timer", "probe": "import-side-effects", "screen": "./noisy" }
+  ],
+  "clean": ["add", "add-noargs", "greet", "greet-noargs", "counter", "makeadder", "makecounter", "kindof", "echovalues", "kinds", "counter-flow"],
+  "symbols": ["add", "greet", "Counter", "makeAdder", "makeCounter", "kindOf", "echoValues", "readEnv", "oldAdd", "consume", "throwString", "fillOpts", "floatReject", "leakTimer", "writeHome", "fetchOut", "hold", "loud"]
+}

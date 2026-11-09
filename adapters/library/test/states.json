@@ -1,0 +1,10 @@
+[
+  { "id": "token", "steps": [{ "call": "readEnv", "args": ["FIXTURE_TOKEN"] }] },
+  { "id": "kinds", "steps": [
+    { "call": "kindOf", "args": [{ "$": "Date", "v": "2020-01-01T00:00:00.000Z" }] },
+    { "call": "kindOf", "args": [{ "$": "Map", "v": [] }] },
+    { "call": "kindOf", "args": [{ "$": "bigint", "v": "7" }] }
+  ] },
+  { "id": "counter-flow", "steps": [{ "new": "Counter", "as": "c", "args": [5] }, { "call": "c.inc" }, { "call": "c.inc" }] },
+  { "id": "parent-secret", "steps": [{ "call": "readEnv", "args": ["RR_SECRET_PARENT"] }] }
+]
