@@ -231,8 +231,18 @@ try {
     const dbGone = !fs.existsSync(path.join(fr.work, 'local.db'));
     const filesClean = !fr.git('status', '--porcelain').stdout.trim();
     await stop(fctx, { removeRoot: true });
-    const filesOk = kept.body && kept.body.rows === 2 && emptied.body && emptied.body.rows === 0 && emptied.body.seed === 5 && dbGone && filesClean;
-    lines.push(`work-copy files: rows kept by a plain restart ${kept.body && kept.body.rows}, after a fresh restart ${emptied.body && emptied.body.rows}; tracked file back to its commit: ${filesClean}`);
+    // a tracked file the build changed keeps the build's content after a fresh restart
+    const br = await makeRun('run-built', { build: `node -e "require('fs').writeFileSync('seed.txt','built-by-build\\n')"` });
+    const bctx = prepare(br.run, br.file);
+    await start(bctx);
+    await call(bctx, { method: 'POST', path: '/local' });
+    await restart(bctx, { fresh: true });
+    const rebuilt = await call(bctx, { path: '/local' });
+    await stop(bctx, { removeRoot: true });
+    const builtKept = rebuilt.body && rebuilt.body.seed === 15;
+    lines.push(`tracked file changed by the build: ${builtKept ? 'kept as built' : `not as built (seed length ${rebuilt.body && rebuilt.body.seed})`} after a fresh restart`);
+    const filesOk = builtKept && kept.body && kept.body.rows === 2 && emptied.body && emptied.body.rows === 0 && emptied.body.seed === 5 && dbGone && filesClean;
+    lines.push(`work-copy files: rows kept by a plain restart ${kept.body && kept.body.rows}, after a fresh restart ${emptied.body && emptied.body.rows}; tracked file back to how the build left it: ${filesClean}`);
     lines.push(`POST ${post.status}; save file in the temp home: ${inTempHome}; in the real home: ${inReal}; service home isolated, parent secret not seen: ${homeOk}; work copy: ${dirty ? `changed (${dirty})` : 'clean'}`);
     check(4, 'a fresh restart empties file stores in the work copy; the service ran with an isolated home: its file landed in the temp home, nothing in the real home or the work copy changed, no parent secret or home path in the golden', !leaks.length && filesOk && inTempHome && !inReal && !dirty && homeOk, [...leaks, ...lines]);
   }

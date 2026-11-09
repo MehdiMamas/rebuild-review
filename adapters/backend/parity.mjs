@@ -22,7 +22,7 @@ const pctx = prepare(run, appFile);
 // One baseline of untracked files for the whole run, taken before the first test, so each test's fresh start removes what earlier tests left.
 const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-backend-baseline-'));
 const baselineFile = path.join(baseDir, 'baseline.json');
-fs.writeFileSync(baselineFile, JSON.stringify(pctx.baseline ? [...pctx.baseline] : null));
+fs.writeFileSync(baselineFile, JSON.stringify(pctx.baseline ? { files: [...pctx.baseline], built: pctx.built } : null));
 const results = [];
 const TIMEOUT_MS = 120000;
 // Each test runs in its own process group with its own temp parent (RR_TMP_PARENT, used by start); both are removed afterwards.

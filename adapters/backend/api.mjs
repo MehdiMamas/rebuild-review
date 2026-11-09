@@ -92,10 +92,12 @@ export function prepare(run, runFile) {
     if (run.install) execSync(run.install, { cwd: workDir, stdio: 'inherit' });
     if (run.build) { const t = Date.now(); execSync(run.build, { cwd: workDir, stdio: 'inherit' }); buildMs = Date.now() - t; }
   }
-  let baseline = null;
-  if (process.env.RR_BASELINE) { try { baseline = JSON.parse(fs.readFileSync(process.env.RR_BASELINE, 'utf8')); } catch {} }
-  if (!baseline) baseline = untracked(workDir);
-  const ctx = { run, runFile: key, workDir, baseline: baseline && new Set(baseline), notes: [], origin, port: new URL(origin).port, buildMs, proc: null, worker: null, root: null, log: '', startupMs: null, readyMs: Number(process.env.RR_READY_MS) || 30000 };
+  let saved = null;
+  if (process.env.RR_BASELINE) { try { saved = JSON.parse(fs.readFileSync(process.env.RR_BASELINE, 'utf8')); } catch {} }
+  // The baseline is the work copy as the build left it: its untracked files, and a commit of its tracked files (null when the build changed none).
+  if (Array.isArray(saved)) saved = { files: saved, built: null };
+  const baseline = saved && saved.files ? saved : (() => { const files = untracked(workDir); return files && { files, built: builtState(workDir) }; })();
+  const ctx = { run, runFile: key, workDir, baseline: baseline && new Set(baseline.files), built: baseline && baseline.built, notes: [], origin, port: new URL(origin).port, buildMs, proc: null, worker: null, root: null, log: '', startupMs: null, readyMs: Number(process.env.RR_READY_MS) || 30000 };
   prepared.set(key, ctx);
   return ctx;
 }
@@ -176,7 +178,7 @@ export async function start(ctx) {
   const env = serviceEnv(ctx);
   let file = 'sh', argv = ['-c', ctx.run.start];
   if (networkMode() === 'namespace') { file = 'unshare'; argv = ['--user', '--net', '--map-root-user', '--', 'sh', '-c', `${LO_UP}; exec sh -c "$1"`, 'sh', ctx.run.start]; }
-  ctx.log = '';
+  if (ctx.log) ctx.log += '\n--- service started again ---\n';
   const t0 = Date.now();
   const child = spawn(file, argv, { cwd: ctx.workDir, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
   const groupsFile = process.env.RR_TMP_PARENT ? path.join(process.env.RR_TMP_PARENT, 'groups') : null;
@@ -225,7 +227,12 @@ function untracked(workDir) {
   if (r.status !== 0) return null;
   return r.stdout.split('\0').filter((f) => f && !f.split('/').includes('node_modules'));
 }
-// A fresh start also empties file stores in the work copy: untracked files that were not there after the build go, and tracked files return to their committed state. The target is never touched (this runs in the run's work copy only).
+// A commit of the tracked files as they are now (git stash create stores nothing and leaves the stash list alone); null when none changed.
+function builtState(workDir) {
+  const r = spawnSync('git', ['-C', workDir, 'stash', 'create'], { encoding: 'utf8' });
+  return r.status === 0 && r.stdout.trim() ? r.stdout.trim() : null;
+}
+// A fresh start also empties file stores in the work copy: untracked files that were not there after the build go, and tracked files return to how the build left them. The target is never touched (this runs in the run's work copy only).
 function resetWork(ctx) {
   if (!ctx.baseline) { const n = 'fresh restart: work copy is not a git repo, file stores not reset'; if (!ctx.notes.includes(n)) ctx.notes.push(n); return; }
   const now = untracked(ctx.workDir) || [];
@@ -234,7 +241,8 @@ function resetWork(ctx) {
     const p = path.resolve(ctx.workDir, f);
     if (inside(ctx.workDir, p)) fs.rmSync(p, { force: true });
   }
-  spawnSync('git', ['-C', ctx.workDir, 'checkout', '--', '.'], { stdio: 'ignore' });
+  // Tracked files go back to how the build left them, not to the commit, so build output that is tracked stays current.
+  spawnSync('git', ['-C', ctx.workDir, 'checkout', ...(ctx.built ? [ctx.built] : []), '--', '.'], { stdio: 'ignore' });
 }
 
 // fresh: true (default) starts again with an empty temp home and temp folder, so embedded stores start empty.
