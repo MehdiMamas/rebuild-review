@@ -171,8 +171,13 @@ export async function launchApp(run, appFile, { theme = 'light' } = {}) {
     page.on('close', () => { const i = windows.indexOf(page); if (i >= 0) windows.splice(i, 1); });
   };
   app.on('window', watch);
-  const page = await app.firstWindow({ timeout: 30000 }).catch(async (e) => { await stopNow(); throw new Error(`the app opened no window: ${scrub(e.message).split('\n')[0]}`); });
+  const first = await app.firstWindow({ timeout: 30000 }).catch(async (e) => { await stopNow(); throw new Error(`the app opened no window: ${scrub(e.message).split('\n')[0]}`); });
   app.windows().forEach(watch);
+  // A first window that closes within a second is a helper (a Code-OSS app opens some), not the app's window: take the next open one.
+  await first.waitForEvent('close', { timeout: 1000 }).catch(() => {});
+  app.windows().forEach(watch);
+  const page = first.isClosed() ? (windows.find((w) => !w.isClosed()) || await app.waitForEvent('window', { timeout: 30000 })) : first;
+  await page.waitForLoadState('domcontentloaded').catch(() => {});
 
   await app.evaluate(stubDialogs);
   const setTheme = (t) => app.evaluate(({ nativeTheme }, v) => { nativeTheme.themeSource = v; }, t);

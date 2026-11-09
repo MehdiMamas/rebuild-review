@@ -89,6 +89,6 @@ jobs:
           (cd adapters/electron && pnpm install --frozen-lockfile)
           sudo apt-get update
           sudo apt-get install -y xvfb libgtk-3-0 libnss3 libgbm1 libasound2t64 libxss1 libxtst6
-      - name: Adapter tests (twelve checks, under a virtual display)
+      - name: Adapter tests (fourteen checks, under a virtual display)
         working-directory: adapters/electron
         run: xvfb-run -a pnpm test
