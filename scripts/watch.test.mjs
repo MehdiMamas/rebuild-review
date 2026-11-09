@@ -6,7 +6,7 @@ import net from 'node:net';
 import path from 'node:path';
 import http from 'node:http';
 import { spawn, spawnSync } from 'node:child_process';
-import { PHASES, stopText } from './watch.mjs';
+import { PHASES, stopText, estimateStop, lastActivity, buildState } from './watch.mjs';
 
 const WATCH = new URL('./watch.mjs', import.meta.url).pathname;
 const EVENTS = new URL('./events.mjs', import.meta.url).pathname;
@@ -251,5 +251,102 @@ test('a stop marker older than a long-step log is ignored; a newer one still sto
     assert.match(stopText(run), /wall check failed/);
     fs.appendFileSync(path.join(run, 'events.jsonl'), JSON.stringify({ t: new Date().toISOString(), kind: 'phase', what: 'Stack' }) + '\n');
     assert.equal(stopText(run), null, 'a newer event should make the stop stale');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+const ev = (run, o) => fs.appendFileSync(path.join(run, 'events.jsonl'), JSON.stringify({ t: new Date().toISOString(), kind: 'decision', what: 'estimate', ...o }) + '\n');
+const age = (f, ms) => { const d = new Date(Date.now() - ms); fs.utimesSync(f, d, d); };
+const ageScore = (run) => age(path.join(run, 'score', '.labels.json'), 3600000);
+const calm = (run) => { // nothing running, every file older than the event about to be added
+  fs.rmSync(path.join(run, 'long', 'stack-1.pid'), { force: true });
+  fs.writeFileSync(path.join(run, 'long', 'stack-1.exit'), '0');
+  for (const n of fs.readdirSync(run)) if (n.endsWith('.done')) age(path.join(run, n), 60000);
+  for (const n of fs.readdirSync(path.join(run, 'long'))) age(path.join(run, 'long', n), 60000);
+};
+
+test('given the run stops at Estimate, the page reads stopped with the reason, nothing failed, and the exit timer starts', async () => {
+  const { root, run } = fixture();
+  calm(run);
+  ev(run, { choice: 'stop', reason: 'the high estimate is above the limit' });
+  const a = serve(run, [], { WATCH_LINGER_MS: '600' });
+  try {
+    const { port, k } = await a.ready;
+    const s = JSON.parse((await get(port, `/state?k=${k}`)).body);
+    assert.match(s.stopped, /^Estimate: the high estimate is above the limit/);
+    assert.equal(s.finished, true);
+    assert.ok(s.phases.every((p) => p.state !== 'failed' && p.state !== 'running'), 'no phase should read failed or running');
+    assert.deepEqual(s.phases.map((p) => p.state), ['done', 'done', 'not started', 'not started', 'not started', 'not started', 'not started']);
+    const code = await new Promise((resolve, reject) => { a.child.on('exit', resolve); setTimeout(() => reject(new Error('still running 6 s after the Estimate stop')), 6000).unref(); });
+    assert.equal(code, 0);
+  } finally { a.child.kill(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('an Estimate stop marks no phase failed even with nothing done', () => {
+  const { root, run } = fixture();
+  try {
+    for (const p of ['Capture', 'Inventory']) fs.rmSync(path.join(run, `${p}.done`));
+    calm(run);
+    ev(run, { choice: 'stop', reason: 'too high' });
+    const s = buildState(run);
+    assert.equal(s.stopped, 'Estimate: too high');
+    assert.ok(s.finished);
+    assert.ok(s.phases.every((p) => p.state === 'not started'));
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('given Parity is running across several long steps, it reads running until Parity.done', () => {
+  const { root, run } = fixture();
+  try {
+    for (const p of ['Stack', 'Rebuild']) fs.writeFileSync(path.join(run, `${p}.done`), 'done');
+    fs.rmSync(path.join(run, 'long', 'stack-1.pid'));
+    fs.writeFileSync(path.join(run, 'long', 'stack-1.exit'), '0');
+    ageScore(run);
+    // the events file and the logs are old; only the writer agent's test files are fresh
+    for (const n of ['events.jsonl', ...fs.readdirSync(run).filter((n) => n.endsWith('.done'))]) age(path.join(run, n), 3600000);
+    for (const n of fs.readdirSync(path.join(run, 'long'))) age(path.join(run, 'long', n), 3600000);
+    assert.equal(buildState(run).phases[4].state, 'not started', 'nothing fresh yet');
+    fs.mkdirSync(path.join(run, 'parity', 'tests'), { recursive: true });
+    fs.writeFileSync(path.join(run, 'parity', 'tests', 'F-001.test.mjs'), 'x');
+    assert.equal(buildState(run).phases[4].state, 'running');
+    fs.mkdirSync(path.join(run, 'parity', 'removed'), { recursive: true });
+    fs.writeFileSync(path.join(run, 'parity', 'removed', 'F-002.test.mjs'), 'x');
+    fs.writeFileSync(path.join(run, 'work', 'fresh'), 'x');
+    assert.equal(buildState(run).phases[4].state, 'running');
+    fs.writeFileSync(path.join(run, 'Parity.done'), 'done');
+    const s = buildState(run);
+    assert.equal(s.phases[4].state, 'done');
+    assert.equal(s.phases[5].state, 'running', 'the next phase reads running from the fresh marker');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('lastActivity ignores work/, room/ and project/, and does not follow a link', () => {
+  const { root, run } = fixture();
+  try {
+    for (const n of ['events.jsonl', 'Capture.done', 'Inventory.done']) age(path.join(run, n), 3600000);
+    for (const n of fs.readdirSync(path.join(run, 'long'))) age(path.join(run, 'long', n), 3600000);
+    ageScore(run);
+    fs.writeFileSync(path.join(run, 'work', 'fresh'), 'x');
+    fs.writeFileSync(path.join(run, 'project', 'fresh'), 'x');
+    fs.mkdirSync(path.join(run, 'parity'), { recursive: true });
+    fs.symlinkSync(path.join(run, 'work', 'fresh'), path.join(run, 'parity', 'link'));
+    assert.ok(Date.now() - lastActivity(run) > 3000000);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('given a rerun after the Estimate stop, the stale stop is ignored', () => {
+  const { root, run } = fixture();
+  try {
+    calm(run);
+    ev(run, { choice: 'stop', reason: 'too high' });
+    assert.match(estimateStop(run), /^Estimate: too high/);
+    fs.appendFileSync(path.join(run, 'events.jsonl'), JSON.stringify({ t: new Date().toISOString(), kind: 'cost', phase: 'Capture', usd: 1 }) + '\n');
+    assert.match(estimateStop(run), /^Estimate: too high/);
+    fs.writeFileSync(path.join(run, 'long', 'cap-2.log'), 'x'); // a long step ran after the stop
+    assert.equal(estimateStop(run), null);
+    fs.rmSync(path.join(run, 'long', 'cap-2.log'));
+    assert.match(estimateStop(run), /^Estimate/);
+    ev(run, { choice: 'go', reason: 'ok' });
+    assert.equal(estimateStop(run), null, 'a later go decision clears it');
+    assert.equal(buildState(run).stopped, null);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
