@@ -1,0 +1,12 @@
+{
+  "note": "Written before the probes were run. Only run.mjs reads this file; the fixture and the adapter never do.",
+  "problems": [
+    { "id": "C1", "what": "an unknown flag exits 0", "probe": "bad-flag-exit", "screen": "root" },
+    { "id": "C2", "what": "the unknown-flag error is printed on stdout", "probe": "error-to-stderr", "screen": "root" },
+    { "id": "C3", "what": "done with a bad id shows a stack trace", "probe": "stack-trace-shown", "screen": "done-bad-id" },
+    { "id": "C4", "what": "no arguments waits on stdin and prints nothing", "probe": "stdin-hang", "screen": "no-args" },
+    { "id": "C5", "what": "list prints colour although stdout is a pipe", "probe": "color-when-piped", "screen": "list-all" }
+  ],
+  "clean": ["version", "add-item", "help"],
+  "commands": ["add", "list", "done"]
+}
