@@ -6,7 +6,7 @@ import net from 'node:net';
 import path from 'node:path';
 import http from 'node:http';
 import { spawn, spawnSync } from 'node:child_process';
-import { PHASES } from './watch.mjs';
+import { PHASES, stopText } from './watch.mjs';
 
 const WATCH = new URL('./watch.mjs', import.meta.url).pathname;
 const EVENTS = new URL('./events.mjs', import.meta.url).pathname;
@@ -213,4 +213,43 @@ test('a second server for the same run folder is refused, and the server ends it
     assert.equal(code, 0);
     assert.ok(!fs.existsSync(path.join(run, 'watch.pid')));
   } finally { a.child.kill(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('a stop marker older than a finished phase is ignored: the run went on, and the server stays up', async () => {
+  const { root, run } = fixture();
+  const a = serve(run, [], { WATCH_LINGER_MS: '600' });
+  try {
+    const { port, k } = await a.ready;
+    fs.mkdirSync(path.join(run, 'report'), { recursive: true });
+    const stop = path.join(run, 'report', 'stopped.txt');
+    fs.writeFileSync(stop, 'Stack: the wall check failed\n');
+    fs.utimesSync(stop, new Date(Date.now() - 10000), new Date(Date.now() - 10000));
+    fs.writeFileSync(path.join(run, 'Stack.done'), 'done');
+    await new Promise((r) => setTimeout(r, 3000));
+    const s = JSON.parse((await get(port, `/state?k=${k}`)).body);
+    assert.equal(s.stopped, null);
+    assert.equal(s.finished, false);
+    assert.equal(a.child.exitCode, null, 'the server ended while the run went on');
+  } finally { a.child.kill(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('a stop marker older than a long-step log is ignored; a newer one still stops', () => {
+  const { root, run } = fixture();
+  try {
+    fs.mkdirSync(path.join(run, 'report'), { recursive: true });
+    fs.mkdirSync(path.join(run, 'long'), { recursive: true });
+    const stop = path.join(run, 'report', 'stopped.txt');
+    fs.writeFileSync(stop, 'Stack: the wall check failed\n');
+    const old = new Date(Date.now() - 10000);
+    fs.utimesSync(stop, old, old);
+    const older = new Date(Date.now() - 20000);
+    for (const n of fs.readdirSync(run)) if (n.endsWith('.done') || n === 'events.jsonl') fs.utimesSync(path.join(run, n), older, older);
+    for (const n of fs.readdirSync(path.join(run, 'long'))) fs.utimesSync(path.join(run, 'long', n), older, older);
+    fs.writeFileSync(path.join(run, 'long', 'stack-2.log'), 'running\n');
+    assert.equal(stopText(run), null);
+    fs.utimesSync(path.join(run, 'long', 'stack-2.log'), new Date(Date.now() - 20000), new Date(Date.now() - 20000));
+    assert.match(stopText(run), /wall check failed/);
+    fs.appendFileSync(path.join(run, 'events.jsonl'), JSON.stringify({ t: new Date().toISOString(), kind: 'phase', what: 'Stack' }) + '\n');
+    assert.equal(stopText(run), null, 'a newer event should make the stop stale');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });

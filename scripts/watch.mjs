@@ -61,6 +61,24 @@ function walkImages(dir, rel, depth, out) {
   }
 }
 
+// A stop marker is stale once the run went on after it was written (a rerun continues from the same folder): a phase
+// finished, a long step wrote its log, or an event was added later than the marker.
+export function stopText(runDir) {
+  const f = path.join(runDir, 'report', 'stopped.txt');
+  const st = tryStat(f);
+  if (!st) return null;
+  const later = [
+    ...PHASES.map((p) => path.join(runDir, `${p}.done`)),
+    path.join(runDir, 'events.jsonl'),
+    ...tryDir(path.join(runDir, 'long')).filter((n) => n.endsWith('.log')).map((n) => path.join(runDir, 'long', n)),
+  ];
+  for (const g of later) {
+    const d = tryStat(g);
+    if (d && d.mtimeMs > st.mtimeMs) return null;
+  }
+  return tryText(f);
+}
+
 export function buildState(runDir, clean = (s) => s) {
   const exists = (n) => fs.existsSync(path.join(runDir, n));
   const run = tryJson(path.join(runDir, 'run.json')); // only platform is read out of it; env is never put into the state
@@ -69,7 +87,7 @@ export function buildState(runDir, clean = (s) => s) {
   const cost = tryJson(path.join(runDir, 'cost.json'));
   const rounds = tryJson(path.join(runDir, 'parity', 'rounds.json'));
   const score = tryJson(path.join(runDir, 'score', 'score.json'));
-  const stopped = tryText(path.join(runDir, 'report', 'stopped.txt'));
+  const stopped = stopText(runDir);
   const evFile = tryStat(path.join(runDir, 'events.jsonl'));
 
   const long = tryDir(path.join(runDir, 'long')).filter((n) => /^[\w.-]+\.log$/.test(n)).sort().map((n) => {
@@ -315,7 +333,7 @@ function startServer({ runDir, port, open }) {
   });
   // The server ends by itself 30 minutes after the run finished (Report.done) or stopped.
   setInterval(() => {
-    const fin = fs.existsSync(path.join(runDir, 'Report.done')) || fs.existsSync(path.join(runDir, 'report', 'stopped.txt'));
+    const fin = fs.existsSync(path.join(runDir, 'Report.done')) || stopText(runDir) !== null;
     if (!fin) finishedAt = null;
     else if (finishedAt === null) finishedAt = Date.now();
     else if (Date.now() - finishedAt >= LINGER_MS) stop(0);
