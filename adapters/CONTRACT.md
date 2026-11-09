@@ -14,6 +14,8 @@ produce the same layout.
 
 - `env` is optional: an object of environment variables the adapter adds when it starts the app (`{...process.env, ...env, PORT}`), so the original and the rebuild start with the same settings. `rebuild-run.json` gets the same `env`, copied from `run.json` after the build is delivered. Values are stand-ins only, never real secrets; they are never printed or put in the report. The Electron adapter applies `env` too (after its allowlist copy; the isolated home, profile folders and dead proxy still win).
 
+A command-line tool has no address either. Its `run.json` is `{ "platform": "cli", "dir", "install", "build", "command": ["<exe>", "<fixed args>"...], "env"? }`: `command[0]` is a name on PATH or a path inside `work/<dir>` (an absolute path outside the work copy is refused; in a file named `rebuild-run.json`, `dir` is relative to that file's folder as below). A screen is one invocation; `states.json` steps for it are in `adapters/cli/DRIVING.md`.
+
 An Electron app has no address. Its `run.json` is `{ "platform": "electron", "dir", "install", "build", "launch": { "executablePath"?, "args", "schemes"? } }`: `args` start the app (usually `["."]`), `executablePath` overrides the Electron found in the app's own dependencies, `schemes` names the app's own URL schemes (allowed like `file:`). How an agent starts and drives each platform is in `adapters/<platform>/DRIVING.md`, which the workflow points the finders and the test writer to.
 
 - `dir` is relative, never absolute (the adapter throws otherwise): to `work/` next to `run.json`, except in a file named `rebuild-run.json`, where it is relative to that file's own folder.
@@ -36,7 +38,7 @@ golden/a11y-violations.json  optional: list of { screen, violations: [{ id, impa
 golden/coverage.json       optional: screensReached, screensCut (distinct routes the screen cap stopped), sameRouteSkipped [{ route, count }] (same route, different data, left out by --max-per-route, default 2), buttonsSkipped, harEntriesSkipped
 ```
 
-Screenshots are taken at a narrow and a wide size, in light and dark theme. Web: 390 and 1440 px wide. Electron: window content sizes 1024x700 and 1440x900; a window that refuses a size is noted in `manifest.json` `notCaptured`, as is a size where light and dark gave identical pixels ("theme did not change").
+Screenshots are taken at a narrow and a wide size, in light and dark theme. CLI: none; `manifest.json` `notCaptured` says "no screens or screenshots: command-line tool". Web: 390 and 1440 px wide. Electron: window content sizes 1024x700 and 1440x900; a window that refuses a size is noted in `manifest.json` `notCaptured`, as is a size where light and dark gave identical pixels ("theme did not change").
 
 `coverage.json` lists `screensReached`, `screensCut` (anything over `--max-screens`), `buttonsSkipped` and `harEntriesSkipped`. `manifest.json` also has `nativeDialogs` (Electron: each dialog the app asked for, answered "canceled").
 
@@ -47,6 +49,16 @@ A screen is the pair (window title kind, signature), where the signature is a ha
 ### What an Electron capture does not see
 
 Requests made by the main process are not observed (only windows are); the app runs with `--proxy-server` and the proxy variables pointed at a dead address, so they cannot leave the machine. This is measured by `adapters/electron/test/run.mjs` check 5 (a main-process `fetch` to a server on this machine's network address; the hit count must be 0). Requests over a custom protocol handled in the main process are invisible to the driver. Anything behind a sign-in is not reached: the profile is empty and isolated.
+
+## CLI
+
+`adapters/cli/` (`run.mjs`, `capture.mjs`, `probes.mjs`, `parity.mjs`, `DRIVING.md`). A screen is one invocation: no arguments, `--help`, `-h`, `help`, `--version`, then the subcommands named in the help text (lines indented two or more spaces that start with a lowercase word followed by two or more spaces or a tab), each with `--help`, one level deeper, up to `--max-screens` (30; the rest in `coverage.json` `screensCut`). `golden/screens/<id>/` holds `stdout.txt`, `stderr.txt` (absent when that stream was not text), `result.json` (`args`, `code`, `signal`, `ms`, `timedOut`, `written`) and the text files the run wrote under `out/` (`home/...` or `cwd/...`, up to 256 KB each); non-text output is kept as size and SHA-256 only (`stdoutBinary`, `stderrBinary` in `result.json`, each with `cut` when the stream passed 1 MB), because it cannot be scrubbed. Output is cut at 1 MB per stream and noted in `notCaptured`. `network.har` has no entries. Output and written files go through the same secret scrub as the web HAR.
+
+Every run is a new process in an empty working folder with an empty home, an allowlisted environment, `TERM=dumb`, `CI=1`, and no network. On Linux, when `unshare --user --net --map-root-user` is allowed, each run is inside such a namespace; otherwise the proxy variables point at a dead address (needs Node 24 for `NODE_USE_ENV_PROXY`) and `notCaptured` says "network blocked only for tools that honour proxy variables". `adapters/cli/test/run.mjs` check 5 measures it: a fetch from the fixture to a server on this machine's network address; the hit count must be 0. Isolation covers HOME, the working folder, the environment and the network only; it is not a filesystem sandbox (absolute paths and `TMPDIR` are reachable). A timeout kills the whole process group. Windows is refused ("CLI adapter: process-group kill is not supported on Windows").
+
+Probes (`probes.mjs`): `bad-flag-exit`, `error-to-stderr` (screen `root`: an unknown flag must exit non-zero with the message on stderr and nothing on stdout), `stack-trace-shown` and `color-when-piped` (every run), `stdin-hang` (screen `no-args`: stdin is an open pipe never written to; flagged when still running after 10 s and nothing was printed), `help-exit` (`--help` exits 0 with output on stdout), `slow-start` (a value only: `startup-ms`, the median of 5 `--help` runs, goes to `timings.json`). Per-screen `<id>.ms` is recorded and not scored; `build-ms` and `startup-ms` are scored. Web-only metrics read "not measured".
+
+Parity: each test gets `APP_RUN` (the run file) and `CLI_RUN_MODULE` (the path of `run.mjs`) and imports `prepare` and `runCli` from it; 120 seconds per test, each in its own process group (killed whole on a timeout) with its own temp parent that is removed afterwards.
 
 ## Score outputs (optional)
 
@@ -60,6 +72,7 @@ The score phase reads these `timings.json` names. An adapter that lacks one show
 | `<screen>.overflow-narrow` (px) | horizontal overflow at the narrow size, at least 0 |
 | `inp-ms` | stand-in for INP: the slowest input event in the typing probe. One typing run, not field INP |
 | `build-ms` | time of the `build` command (install is not timed) |
+| `startup-ms` | CLI: median time of 5 `--help` runs |
 | `script-ms-per-key` | see Probes |
 
 `a11y-violations.json` lists accessibility rule violations per screen. Compatibility is measured narrowly: Chromium only, so other browsers are reported as not checked.

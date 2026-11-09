@@ -1,0 +1,7 @@
+{
+  "name": "todo-fixture",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "bin": { "todo": "./bin.mjs" }
+}

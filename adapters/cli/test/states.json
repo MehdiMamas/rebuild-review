@@ -1,0 +1,6 @@
+[
+  { "id": "add-item", "steps": [{ "args": ["add", "buy", "milk"] }] },
+  { "id": "list-all", "steps": [{ "args": ["list"] }, { "env": { "FIXTURE_TOKEN": "tok_0123456789abcdef0123456789abcdef0123" } }] },
+  { "id": "blob-token", "steps": [{ "args": ["blob", "token"] }, { "env": { "FIXTURE_TOKEN": "tok_0123456789abcdef0123456789abcdef0123" } }] },
+  { "id": "done-bad-id", "steps": [{ "args": ["done", "999"] }] }
+]

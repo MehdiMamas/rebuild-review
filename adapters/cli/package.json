@@ -1,0 +1,9 @@
+{
+  "name": "rebuild-review-cli-adapter",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node test/run.mjs"
+  },
+  "packageManager": "pnpm@12.16.1"
+}
