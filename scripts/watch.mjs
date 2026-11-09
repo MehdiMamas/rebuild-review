@@ -79,6 +79,45 @@ export function stopText(runDir) {
   return tryText(f);
 }
 
+// The run stopped at the estimate (size.mjs exits 3, no stopped.txt is written): the last estimate decision is `stop`, and
+// nothing ran after it (no phase marker or long-step log newer than the event's own time). Names no phase.
+export function estimateStop(runDir) {
+  const ev = readEvents(runDir, 0).events.filter((e) => e.kind === 'decision' && e.what === 'estimate').pop();
+  if (!ev || ev.choice !== 'stop') return null;
+  const t = Date.parse(ev.t);
+  if (!Number.isFinite(t)) return null;
+  const later = [
+    ...PHASES.map((p) => path.join(runDir, `${p}.done`)),
+    ...tryDir(path.join(runDir, 'long')).filter((n) => n.endsWith('.log')).map((n) => path.join(runDir, 'long', n)),
+  ];
+  for (const g of later) {
+    const d = tryStat(g);
+    if (d && d.mtimeMs > t) return null;
+  }
+  return `Estimate: ${typeof ev.reason === 'string' && ev.reason ? ev.reason : 'the estimate is above the limit'}`;
+}
+
+// Newest mtime of the files that show the run is working: events, long-step logs, phase markers and the files steps write
+// at most two levels inside the output folders. Stat only, 5000 entries at most, links not followed, never work/ room/ project/.
+const ACTIVITY_DIRS = ['inventory', 'inventory-areas', 'parity', 'score', 'report', 'rebuild'];
+export function lastActivity(runDir) {
+  let newest = 0, budget = 5000;
+  const lstat = (f) => { try { return fs.lstatSync(f); } catch { return null; } };
+  const note = (f) => { budget--; const st = lstat(f); if (st && st.isFile() && st.mtimeMs > newest) newest = st.mtimeMs; return st; };
+  const walk = (dir, depth) => {
+    for (const n of tryDir(dir)) {
+      if (budget <= 0) return;
+      const f = path.join(dir, n), st = note(f);
+      if (st && st.isDirectory() && depth < 2) walk(f, depth + 1);
+    }
+  };
+  note(path.join(runDir, 'events.jsonl'));
+  for (const n of tryDir(runDir)) if (n.endsWith('.done') && budget > 0) note(path.join(runDir, n));
+  for (const n of tryDir(path.join(runDir, 'long'))) if (n.endsWith('.log') && budget > 0) note(path.join(runDir, 'long', n));
+  for (const d of ACTIVITY_DIRS) walk(path.join(runDir, d), 1);
+  return newest;
+}
+
 export function buildState(runDir, clean = (s) => s) {
   const exists = (n) => fs.existsSync(path.join(runDir, n));
   const run = tryJson(path.join(runDir, 'run.json')); // only platform is read out of it; env is never put into the state
@@ -87,8 +126,8 @@ export function buildState(runDir, clean = (s) => s) {
   const cost = tryJson(path.join(runDir, 'cost.json'));
   const rounds = tryJson(path.join(runDir, 'parity', 'rounds.json'));
   const score = tryJson(path.join(runDir, 'score', 'score.json'));
-  const stopped = stopText(runDir);
-  const evFile = tryStat(path.join(runDir, 'events.jsonl'));
+  const fileStop = stopText(runDir);
+  const stopped = fileStop ?? estimateStop(runDir);
 
   const long = tryDir(path.join(runDir, 'long')).filter((n) => /^[\w.-]+\.log$/.test(n)).sort().map((n) => {
     const name = n.slice(0, -4), st = tryStat(path.join(runDir, 'long', n));
@@ -96,7 +135,7 @@ export function buildState(runDir, clean = (s) => s) {
     return { name, state: ex === null ? 'running' : 'exited', code: ex === null ? null : Number(ex.trim()), size: st ? st.size : 0, mtime: st ? Math.round(st.mtimeMs) : 0 };
   });
   const anyRunning = long.some((l) => l.state === 'running');
-  const recent = !!evFile && Date.now() - evFile.mtimeMs < RUNNING_WINDOW_MS;
+  const recent = Date.now() - lastActivity(runDir) < RUNNING_WINDOW_MS;
   const exitFailed = !anyRunning && long.some((l) => l.state === 'exited' && l.code !== 0);
 
   const phases = PHASES.map((name) => ({ name, state: exists(`${name}.done`) ? 'done' : 'not started' }));
@@ -104,7 +143,8 @@ export function buildState(runDir, clean = (s) => s) {
   if (next) {
     const named = stopped && PHASES.find((p) => stopped.startsWith(`${p}:`));
     const failedPhase = named ? phases.find((p) => p.name === named && p.state !== 'done') || next : next;
-    if (stopped || exitFailed) failedPhase.state = 'failed';
+    if (fileStop !== null || exitFailed) failedPhase.state = 'failed';
+    else if (stopped) { /* an estimate stop names no phase: nothing failed */ }
     else if (anyRunning || recent) next.state = 'running';
   }
   const finished = exists('Report.done') || !!stopped;
@@ -333,7 +373,7 @@ function startServer({ runDir, port, open }) {
   });
   // The server ends by itself 30 minutes after the run finished (Report.done) or stopped.
   setInterval(() => {
-    const fin = fs.existsSync(path.join(runDir, 'Report.done')) || stopText(runDir) !== null;
+    const fin = fs.existsSync(path.join(runDir, 'Report.done')) || (stopText(runDir) ?? estimateStop(runDir)) !== null;
     if (!fin) finishedAt = null;
     else if (finishedAt === null) finishedAt = Date.now();
     else if (Date.now() - finishedAt >= LINGER_MS) stop(0);
