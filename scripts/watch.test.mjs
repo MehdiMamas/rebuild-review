@@ -214,3 +214,21 @@ test('a second server for the same run folder is refused, and the server ends it
     assert.ok(!fs.existsSync(path.join(run, 'watch.pid')));
   } finally { a.child.kill(); fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+test('a stop marker older than a finished phase is ignored: the run went on, and the server stays up', async () => {
+  const { root, run } = fixture();
+  const a = serve(run, [], { WATCH_LINGER_MS: '600' });
+  try {
+    const { port, k } = await a.ready;
+    fs.mkdirSync(path.join(run, 'report'), { recursive: true });
+    const stop = path.join(run, 'report', 'stopped.txt');
+    fs.writeFileSync(stop, 'Stack: the wall check failed\n');
+    fs.utimesSync(stop, new Date(Date.now() - 10000), new Date(Date.now() - 10000));
+    fs.writeFileSync(path.join(run, 'Stack.done'), 'done');
+    await new Promise((r) => setTimeout(r, 3000));
+    const s = JSON.parse((await get(port, `/state?k=${k}`)).body);
+    assert.equal(s.stopped, null);
+    assert.equal(s.finished, false);
+    assert.equal(a.child.exitCode, null, 'the server ended while the run went on');
+  } finally { a.child.kill(); fs.rmSync(root, { recursive: true, force: true }); }
+});
