@@ -109,6 +109,21 @@ test('filterGolden passes a backend golden through intact', () => {
   assert.equal(fs.existsSync(path.join(dest, 'run.json')), false);
 });
 
+test('filterGolden passes a library golden with surface.json and types intact', () => {
+  const src = tmp(), dest = path.join(tmp(), 'g');
+  const files = {
+    'manifest.json': '{"platform":"library"}',
+    'network.har': '{"log":{"version":"1.2","entries":[]}}',
+    'probes.json': '[]',
+    'surface.json': '{"symbols":[{"name":"add","kind":"function"}]}',
+    'types/index.d.ts': 'export declare function add(a: number, b: number): number;\n',
+    'screens/add/result.json': '{"value":3}',
+  };
+  for (const [f, t] of Object.entries(files)) { fs.mkdirSync(path.dirname(path.join(src, f)), { recursive: true }); fs.writeFileSync(path.join(src, f), t); }
+  filterGolden(src, dest);
+  for (const [f, t] of Object.entries(files)) assert.equal(fs.readFileSync(path.join(dest, f), 'utf8'), t, f);
+});
+
 function makeRun(features) {
   const base = fs.realpathSync(tmp());
   const target = path.join(base, 'mytarget'), runDir = path.join(base, 'run-1');

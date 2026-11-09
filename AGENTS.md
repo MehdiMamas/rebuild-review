@@ -50,6 +50,12 @@ what it renders, then scores the rebuild against the original. See README.md.
 - A store outside this machine (Postgres, Redis on another host) in `run.env` is refused. Windows is refused.
 - `scripts/room.mjs` `filterGolden` needs nothing special for a backend golden; `scripts/room.test.mjs` has a test for it.
 
+## Capture (library adapter)
+
+- `adapters/library/` (`run.mjs`, `harness.mjs`, `surface.mjs`, `capture.mjs`, `probes.mjs`, `parity.mjs`); contract: `adapters/CONTRACT.md` section "Library", driving notes: `adapters/library/DRIVING.md`. `run.json` is `{platform: "library", language: "node", dir, install, build, entry, env?}`. Node only; Python and Rust stop with a plain reason.
+- Calls run in a child (`harness.mjs`) with the CLI adapter's isolation (`networkMode`, caps imported from `adapters/cli/run.mjs`); steps and results are JSON with tagged values. Surface comes from the package's `.d.ts` (TypeScript compiler API, the one runtime dependency), JS-only packages from a real import. `surfaceMissing` compares two surfaces by assignability; it is not wired into `score.mjs` yet.
+- Setup and test: `cd adapters/library && pnpm install && pnpm test` (fifteen checks, light, no display; misses printed as MISS, `test/answers.json` read only by `test/run.mjs`). CI job `library-adapter` (Node 24).
+
 ## Inventory phase
 
 - Needs `<runDir>/work/` (clone of the target) and `<runDir>/run.json` (platform, install, build, start, address); `golden/` is used when present. The skill passes `pluginRoot` (`${CLAUDE_PLUGIN_ROOT}`) so the workflow can run `scripts/check-features.mjs`.
