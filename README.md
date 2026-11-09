@@ -10,10 +10,10 @@ A one-shot, expensive review for a project that has grown by piling on features.
 It does not read a diff. It takes the project apart into what it does and what it
 looks like, rebuilds the full project the best and simplest way, and scores the two.
 
-Works on any kind of project: web, Android, iOS, Flutter, desktop, CLI, library, backend. Web, Electron, CLI, backend and Node library are driven today.
+Works on any kind of project: web, Android, iOS, Flutter, desktop, CLI, library, backend. Web, Electron, CLI, backend, Node library and iOS (simulator, on a Mac) are driven today.
 The pipeline is the same, and only capture and the test driver change per platform.
 
-Platforms with a capture adapter: web (`adapters/web`), Electron (`adapters/electron`), command-line tools (`adapters/cli`) and HTTP services with no pages (`adapters/backend`). Setup for each is in AGENTS.md.
+Platforms with a capture adapter: web (`adapters/web`), Electron (`adapters/electron`), command-line tools (`adapters/cli`), HTTP services with no pages (`adapters/backend`), Node libraries (`adapters/library`) and iOS apps on the simulator (`adapters/ios`, macOS only). Setup for each is in AGENTS.md.
 
 ## Install and run
 
@@ -117,7 +117,7 @@ The run ends with one page, `report/index.html`, with no scripts and its images 
 ## Known limits
 
 - A dead route stays. A page reachable only by typing its address looks the same as a hidden feature that must survive, so the rebuild keeps it. On the planted fixture, rebuilds beat 14 of 15 items, and this is the miss ([#9](https://github.com/MehdiMamas/rebuild-review/issues/9)).
-- Capture exists for web, Electron, command-line tools and HTTP services only. A service whose data lives in a database server outside the machine is refused with the reason. Other platforms stop with a plain reason.
+- Capture exists for web, Electron, command-line tools, HTTP services, Node libraries and iOS apps (simulator, on a Mac) only. A service whose data lives in a database server outside the machine is refused with the reason. Other platforms stop with a plain reason.
 - Compatibility is narrow: accessibility violations and horizontal overflow at 390 px, in Chromium. Other browsers are not checked.
 - Screens are found by crawling and clicking, up to a cap (`--max-screens`, 30 by default). Screens cut by the cap are listed in Coverage, not hidden.
 - The app runs with stand-in settings (`env` in `run.json`), never real secrets, so anything behind a real external service is only as good as its stand-in.

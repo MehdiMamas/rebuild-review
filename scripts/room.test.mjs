@@ -418,6 +418,9 @@ test('platformNote names the original platform and is empty without a run file',
   assert.equal(platformNote(d), '');
   fs.writeFileSync(path.join(d, 'run.json'), JSON.stringify({ platform: 'electron' }));
   assert.match(platformNote(d), /platform "electron"[\s\S]*same platform/);
+  assert.doesNotMatch(platformNote(d), /xcodebuild/);
+  fs.writeFileSync(path.join(d, 'run.json'), JSON.stringify({ platform: 'ios' }));
+  assert.match(platformNote(d), /platform "ios"[\s\S]*xcodebuild[\s\S]*Mac/);
 });
 
 test('childSpawn: no subagents or messaging tools, and background commands are waited for (#68)', () => {

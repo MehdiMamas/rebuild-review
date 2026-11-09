@@ -49,6 +49,7 @@ jobs:
           node --test benchmark/calibrate.test.mjs
           node --test adapters/web/test/crawl.test.mjs adapters/web/test/widths.test.mjs
           node --test adapters/web/test/libs.test.mjs adapters/web/test/browser.test.mjs
+          node --test adapters/ios/test/sim.test.mjs
 
   web-adapter:
     runs-on: ubuntu-latest
@@ -142,3 +143,29 @@ jobs:
       - name: Adapter tests (fourteen checks, under a virtual display)
         working-directory: adapters/electron
         run: xvfb-run -a pnpm test
+
+  # The simulator cannot run in CI the way it runs on a Mac with a free desktop: this job runs the numbered checks on a hosted macOS runner.
+  ios-adapter:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.16.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - name: Install
+        run: |
+          (cd adapters/web && pnpm install --frozen-lockfile)
+          curl -fsSL -o maestro.zip https://github.com/mobile-dev-inc/maestro/releases/download/cli-2.12.1/maestro.zip
+          echo "54dbb0716425626604973cbb374c585ca30272375d9ce15177a1152765ddd9d7  maestro.zip" | shasum -a 256 -c -
+          mkdir -p "$HOME/.maestro-rr" && unzip -q maestro.zip -d "$HOME/.maestro-rr"
+      - name: Adapter tests (simulator, no window)
+        working-directory: adapters/ios
+        run: pnpm test

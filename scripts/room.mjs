@@ -438,12 +438,12 @@ export function replaceProject(runDir, n, roomProject) {
   }
 }
 
-// The rebuild stays on the platform of the original: a web app is rebuilt as a web app, an Electron app as an Electron app, a command-line tool as a command-line tool, an HTTP service with no pages as an HTTP service (platform "backend"), a package other code imports as a library (platform "library").
+// The rebuild stays on the platform of the original: a web app is rebuilt as a web app, an Electron app as an Electron app, a command-line tool as a command-line tool, an HTTP service with no pages as an HTTP service (platform "backend"), a package other code imports as a library (platform "library"), an iOS app as an iOS app built with xcodebuild for the simulator, on the Mac.
 export function platformNote(runDir) {
   let platform = '';
   try { platform = JSON.parse(fs.readFileSync(path.join(runDir, 'run.json'), 'utf8')).platform || ''; } catch {}
   if (!platform) return '';
-  return `\n\nThe original runs on the platform "${platform}". The rebuild must run on the same platform, so the review can drive it the same way. Do not change the platform.`;
+  return `\n\nThe original runs on the platform "${platform}". The rebuild must run on the same platform, so the review can drive it the same way. Do not change the platform.${platform === 'ios' ? ' Build it with xcodebuild for the iOS simulator (-sdk iphonesimulator, CODE_SIGNING_ALLOWED=NO); this runs on the Mac.' : ''}`;
 }
 
 export async function main(argv) {

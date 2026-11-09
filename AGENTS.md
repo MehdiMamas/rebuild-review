@@ -76,6 +76,16 @@ what it renders, then scores the rebuild against the original. See README.md.
 - Test: `node adapters/android/test/run.mjs [android] [flutter]` (about 15 minutes for both). Six checks per fixture on an init copy, a found/missed table, and the shared layout check `adapters/contract-check.mjs` (also run by the web test).
 - Gotchas: the app's debug or release build needs the INTERNET permission and cleartext HTTP (`benchmark-flutter/prepare-android.mjs` adds both after `flutter create`); HTTPS apps are not captured; Google background traffic shows up in `blockedRequests` and varies between runs.
 
+## Capture (iOS adapter)
+
+- `adapters/ios/` (`sim.mjs`, `driver.mjs`, `app.mjs`, `screen.mjs`, `capture.mjs`, `probes.mjs`, `parity.mjs`); contract: `adapters/CONTRACT.md` section "iOS", driving notes: `adapters/ios/DRIVING.md`. Simulator only, macOS only; any other system stops with a plain reason.
+- Setup: Xcode with at least one iOS simulator runtime, Java 17 or newer, and Maestro 2.12.1 (user scope: unzip the release into `~/.maestro-rr`, or set `RR_MAESTRO` to the binary). The fixture project is generated from `test/fixture/project.yml` with `xcodegen generate`; the generated `Fixture.xcodeproj` is committed.
+- Run: `node adapters/ios/capture.mjs --app <runDir>/run.json --out <runDir>/golden [--states states.json] [--max-screens N] [--max-buttons N] [--allow-network] [--single-size]`. Test: `cd adapters/ios && pnpm test` (macOS only, about 20 minutes; prints "skipped: not macOS" elsewhere); `node --test adapters/ios/test/sim.test.mjs` runs anywhere and is in the `validate` job. CI job `ios-adapter` runs `pnpm test` on a hosted Mac.
+- The capture makes its own device named `rr-<id>`, boots it without a window (`simctl` only, never Simulator.app) and deletes it at the end and on SIGINT or SIGTERM. Check with `xcrun simctl list devices | grep rr-`: nothing should be left. It never touches other devices or the `booted` alias.
+- Maestro starts the XCUITest driver, which listens on one fixed port (22087, `--driver-host-port`), so one device is driven at a time; a flow that waits for a label that never appears keeps the driver alive while the adapter reads the hierarchy and taps over HTTP. The driver stops when that Maestro process ends.
+- The network is not blocked (the simulator shares the host's). A launch setting naming a server that is not this machine is refused unless `--allow-network`.
+- Never run it on a desktop Mac the user is using; run where the machine is free.
+
 ## Inventory phase
 
 - Needs `<runDir>/work/` (clone of the target) and `<runDir>/run.json` (platform, install, build, start, address); `golden/` is used when present. The skill passes `pluginRoot` (`${CLAUDE_PLUGIN_ROOT}`) so the workflow can run `scripts/check-features.mjs`.
