@@ -1,6 +1,6 @@
 # Driving a command-line tool
 
-Platform `cli`. The tool has no server and no window. `run.json` is `{ "platform": "cli", "dir", "install", "build", "command": ["<exe>", "<fixed args>"...], "env"? }`. `command[0]` is either a name found on PATH (`node`) or a path inside `work/<dir>` (`./bin.mjs`, `target/release/tool`); an absolute path outside the work copy is refused. A fixed argument that names a file in the work copy is passed as its full path.
+Platform `cli`. The tool has no server and no window. `run.json` is `{ "platform": "cli", "dir", "install", "build", "command": ["<exe>", "<fixed args>"...], "env"? }`. `command[0]` is either a name found on PATH (`node`) or a path inside `work/<dir>` (`./bin.mjs`, `target/release/tool`); an absolute path outside the work copy is refused. A fixed argument that looks like a path (a slash, a leading dot or an extension) and names a file in the work copy is passed as its full path; a bare word such as a subcommand is passed as is.
 
 ## Run the tool
 - Never run it in the target folder or by hand. From a shell: `node <plugin>/adapters/cli/run.mjs --app <runDir>/run.json -- <args>` prints the result as JSON (`code`, `signal`, `stdout`, `stderr`, `ms`, `timedOut`, `written`).

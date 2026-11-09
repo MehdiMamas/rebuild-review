@@ -222,13 +222,20 @@ const ctx = prepare(JSON.parse(fs.readFileSync(process.env.APP_RUN, 'utf8')), pr
     let outsideRefused = false;
     try { locate({ command: ['/bin/ls'] }, main.file); } catch (e) { outsideRefused = /must stay inside/.test(e.message); }
     lines.push(`command outside the work copy refused: ${outsideRefused}`);
+    const lt = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-cli-locate-'));
+    fs.mkdirSync(path.join(lt, 'work'));
+    for (const f of ['test', 'data.txt']) fs.writeFileSync(path.join(lt, 'work', f), 'x');
+    const loc = locate({ command: ['node', 'test', 'data.txt'] }, path.join(lt, 'run.json'));
+    fs.rmSync(lt, { recursive: true, force: true });
+    const argsOk = loc.command[1] === 'test' && path.isAbsolute(loc.command[2]);
+    lines.push(`a bare word that is also a file stays as is, a file name with an extension becomes a full path: ${argsOk}`);
     let winRefused = false;
     const real = Object.getOwnPropertyDescriptor(process, 'platform');
     Object.defineProperty(process, 'platform', { value: 'win32' });
     try { await runCli(ctx, { args: ['--version'] }); } catch (e) { winRefused = /not supported on Windows/.test(e.message); } finally { Object.defineProperty(process, 'platform', real); }
     lines.push(`Windows refused with a reason: ${winRefused}`);
     check(8, 'a timeout kills the whole process group; output over 1 MB is cut and noted; binary output kept; outside command and Windows refused',
-      held.timedOut && pid > 0 && !alive && big.cut.stdout && big.stdout.length === OUTPUT_CAP && binOk && outsideRefused && winRefused, lines);
+      held.timedOut && pid > 0 && !alive && big.cut.stdout && big.stdout.length === OUTPUT_CAP && binOk && outsideRefused && argsOk && winRefused, lines);
   }
 } finally {
   server.close();

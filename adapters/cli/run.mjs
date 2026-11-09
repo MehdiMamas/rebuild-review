@@ -37,8 +37,10 @@ export function locate(run, runFile) {
     file = path.resolve(workDir, exe);
     if (!inside(base, file)) throw new Error(`run.json "command[0]" must stay inside ${base}, got ${exe}`);
   }
-  // A fixed argument that names a file in the work copy is given as that file's full path (the tool runs in a new folder).
-  const args = fixed.map((a) => { const p = path.resolve(workDir, a); return !path.isAbsolute(a) && !a.startsWith('-') && inside(base, p) && isFile(p) ? p : a; });
+  // A fixed argument that looks like a path (has a slash, starts with a dot or has an extension) and names a file in the
+  // work copy is given as that file's full path (the tool runs in a new folder); a bare word like a subcommand never is.
+  const pathLike = (a) => a.includes('/') || a.startsWith('.') || path.extname(a) !== '';
+  const args = fixed.map((a) => { const p = path.resolve(workDir, a); return !path.isAbsolute(a) && !a.startsWith('-') && pathLike(a) && inside(base, p) && isFile(p) ? p : a; });
   return { base, workDir, command: [file, ...args] };
 }
 

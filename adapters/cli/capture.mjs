@@ -105,7 +105,7 @@ for (const s of screens) {
   for (const n of ['stdout', 'stderr']) {
     if (r[`${n}B64`]) {
       const buf = Buffer.from(r[`${n}B64`], 'base64');
-      binary[n] = { bytes: buf.length, sha256: crypto.createHash('sha256').update(buf).digest('hex') };
+      binary[n] = { bytes: buf.length, sha256: crypto.createHash('sha256').update(buf).digest('hex'), cut: r.cut[n] };
       notCaptured.push(`${s.id}: ${n} is not text; only its size and hash are kept`);
     } else write(path.join(dir, `${n}.txt`), scrub(r[n]));
   }
