@@ -51,6 +51,12 @@ test('looksLikeCode: calls and assignments are code', () => {
   assert.equal(looksLikeCode('const total = items.reduce((a, b) => a + b'), true);
   assert.equal(looksLikeCode('set width = 100 for the box'), true);
   assert.equal(looksLikeCode('x.reduce(fn) and more words here'), true);
+  assert.equal(looksLikeCode('call render() then sum(a, b) twice'), true);
+  assert.equal(looksLikeCode('return value);'), true);
+});
+test('looksLikeCode: prose parentheses and semicolons are not code', () => {
+  assert.equal(looksLikeCode('Pick the item(s) you want to keep today'), false);
+  assert.equal(looksLikeCode('Save the list; then close the window now'), false);
 });
 test('prose copied from a markdown doc passes', () => {
   const t = 'File has New Agent and Open Agents Window';

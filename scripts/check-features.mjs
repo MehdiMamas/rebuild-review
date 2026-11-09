@@ -24,11 +24,12 @@ export function norm(s) {
   return s.replace(/\s+/g, ' ').trim();
 }
 
-// True when a 40-char window holds code: braces, `;`, `=>`, `::`, `&&`, `||`, `==`, a call like
-// `reduce(`, or an assignment like `width = 100` (not inside a markdown link).
+// True when a 40-char window holds code: braces, `=>`, `::`, `&&`, `||`, `==`, a `;` after a closing
+// bracket or quote, a call like `reduce(` (a plural like `item(s)` is not a call), or an assignment like `width = 100`
+// (not inside a markdown link). Prose like "item(s)" or "one; two" is not code.
 export function looksLikeCode(window) {
-  if (/[{};]|=>|::|&&|\|\||==/.test(window)) return true;
-  if (/\w\(/.test(window)) return true;
+  if (/[{}]|=>|::|&&|\|\||==|[)\]'"`]\s*;/.test(window)) return true;
+  if (/\w\((?!(?:s|es)\))/.test(window)) return true;
   return /\w\s*=\s*[\w'"\[{(]/.test(window.replace(/\[[^\]]*\]\([^)]*\)/g, ''));
 }
 
@@ -139,7 +140,7 @@ export function trackedTexts(workDir, opts = {}) {
       fs.mkdirSync(cacheDir, { recursive: true, mode: 0o700 });
       if (!cacheDirSafe(cacheDir)) throw new Error('cache folder is not ours');
       const json = JSON.stringify(out);
-      if (json.length <= FILE_CAP) {
+      if (Buffer.byteLength(json) <= FILE_CAP) {
         const tmp = `${cacheFile}.${process.pid}.${Date.now()}.tmp`;
         fs.writeFileSync(tmp, json, { mode: 0o600 });
         fs.renameSync(tmp, cacheFile);
