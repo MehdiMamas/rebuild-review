@@ -16,6 +16,8 @@ produce the same layout.
 
 A command-line tool has no address either. Its `run.json` is `{ "platform": "cli", "dir", "install", "build", "command": ["<exe>", "<fixed args>"...], "env"? }`: `command[0]` is a name on PATH or a path inside `work/<dir>` (an absolute path outside the work copy is refused; in a file named `rebuild-run.json`, `dir` is relative to that file's folder as below). A screen is one invocation; `states.json` steps for it are in `adapters/cli/DRIVING.md`.
 
+A service with an HTTP API and no pages has an address, as a web app, plus two optional keys. Its `run.json` is `{ "platform": "backend", "dir", "install", "build", "start", "address", "openapi"?, "readyPath"?, "env"? }`: `openapi` is a path inside `work/<dir>` or a path on the running service (such as `/openapi.json`); `readyPath` (default `/`) is the path polled at start, and any HTTP answer counts as up. `env` values that point at a store outside this machine (a `postgres://` or `redis://` address on another host, a `DB_HOST` that is not local) are refused with the reason. A screen is one operation plus one state; `states.json` steps are in `adapters/backend/DRIVING.md`.
+
 An Electron app has no address. Its `run.json` is `{ "platform": "electron", "dir", "install", "build", "launch": { "executablePath"?, "args", "schemes"? } }`: `args` start the app (usually `["."]`), `executablePath` overrides the Electron found in the app's own dependencies, `schemes` names the app's own URL schemes (allowed like `file:`). How an agent starts and drives each platform is in `adapters/<platform>/DRIVING.md`, which the workflow points the finders and the test writer to.
 
 - `dir` is relative, never absolute (the adapter throws otherwise): to `work/` next to `run.json`, except in a file named `rebuild-run.json`, where it is relative to that file's own folder.
@@ -38,7 +40,7 @@ golden/a11y-violations.json  optional: list of { screen, violations: [{ id, impa
 golden/coverage.json       optional: screensReached, screensCut (distinct routes the screen cap stopped), sameRouteSkipped [{ route, count }] (same route, different data, left out by --max-per-route, default 2), buttonsSkipped, harEntriesSkipped
 ```
 
-Screenshots are taken at a narrow and a wide size, in light and dark theme. CLI: none; `manifest.json` `notCaptured` says "no screens or screenshots: command-line tool". Web: 390 and 1440 px wide. Electron: window content sizes 1024x700 and 1440x900; a window that refuses a size is noted in `manifest.json` `notCaptured`, as is a size where light and dark gave identical pixels ("theme did not change").
+Screenshots are taken at a narrow and a wide size, in light and dark theme. Backend: none; `manifest.json` `notCaptured` says "no screens or screenshots: HTTP service". CLI: none; `manifest.json` `notCaptured` says "no screens or screenshots: command-line tool". Web: 390 and 1440 px wide. Electron: window content sizes 1024x700 and 1440x900; a window that refuses a size is noted in `manifest.json` `notCaptured`, as is a size where light and dark gave identical pixels ("theme did not change").
 
 `coverage.json` lists `screensReached`, `screensCut` (anything over `--max-screens`), `buttonsSkipped` and `harEntriesSkipped`. `manifest.json` also has `nativeDialogs` (Electron: each dialog the app asked for, answered "canceled").
 
@@ -60,6 +62,19 @@ Probes (`probes.mjs`): `bad-flag-exit`, `error-to-stderr` (screen `root`: an unk
 
 Parity: each test gets `APP_RUN` (the run file) and `CLI_RUN_MODULE` (the path of `run.mjs`) and imports `prepare` and `runCli` from it; 120 seconds per test, each in its own process group (killed whole on a timeout) with its own temp parent that is removed afterwards.
 
+
+## Backend
+
+`adapters/backend/` (`api.mjs`, `discover.mjs`, `capture.mjs`, `probes.mjs`, `parity.mjs`, `worker.mjs`, `DRIVING.md`). A screen is one operation plus one state (`GET /items`, `POST /items`). Operations come from the OpenAPI document (`run.json` `openapi`, then `/openapi.json`, `/openapi.yaml`, `/swagger.json`, `/v3/api-docs`, `/docs/json`, `/.well-known/openapi`), else by probing: `GET /`, `Link` headers and `href`/`url` fields in JSON, `OPTIONS` and `Allow` on each path found, `robots.txt`, and an introspection call to `POST /graphql` (one screen when it answers, else a note; per-operation GraphQL is not captured); `coverage.json` `surfaceKnown` is false when nothing is found. Request bodies come from the document's examples or the schema's smallest valid value; a mutating operation with no body to send, or a path parameter with no example, is listed in `coverage.json` `operationsSkipped` with the reason, and so is an operation that needs credentials (it is still called without any; the 401 is the behaviour recorded, and no credential is invented). Up to `--max-screens` (30); the rest in `screensCut`.
+
+Safe methods run first on a fresh store; each state and each mutating operation runs after a restart with empty temp storage. Each screen is captured twice, and a JSON value that differs becomes `"<varies>"` in `response.json`; the paths are in `manifest.json` `volatile`. `golden/screens/<id>/` holds `request.json`, `response.json` (`status`, allowlisted `headers`, `body`: JSON parsed when the content-type says so) and `result.json` (`ms`, `bytes`, `cut`, `error`). `network.har` is the full record of every call, including the probes' (this is the platform where the HAR is the behaviour). Bodies are cut at 1 MB and noted; a body that is not text is kept as its size only. Headers outside an allowlist (so `Set-Cookie` and `Authorization`) are dropped; strings go through the same secret scrub as the web HAR.
+
+Isolation as the CLI adapter: a new empty `HOME`, `XDG_*` and `TMPDIR` at every fresh start, an allowlisted environment plus `run.env`, and no network beyond loopback (a user and network namespace on Linux when `unshare` and `ip` are allowed, with the calls made through a helper that enters it; otherwise dead proxy variables and `notCaptured` says "network: proxy mode, raw connections not blocked"). The service and its children are one process group, killed on stop. Windows is refused. The target folder is never written. A store outside this machine is refused; the outbound calls of the service are blocked and not recorded.
+
+Probes: `server-error-on-valid`, `server-error-on-bad-input` (malformed JSON, an empty object, wrong types, a 100 KB string; 4xx passes), `stack-trace-in-body`, `error-not-json` (a 4xx/5xx body that is not JSON on a service that answers in JSON), `wrong-content-type`, `no-timeout` (still open at 10 s), `cors-wildcard-credentials`, `secret-in-response`, and `latency-ms` (a value only).
+
+Parity: each test gets `APP_RUN`, `API_MODULE` (the path of `api.mjs`) and `APP_URL`, and imports `prepare`, `call` and `restart` from the module; in a network namespace `APP_URL` is not reachable from the test, so calls go through `call`. 120 seconds per test, each in its own process group with its own temp parent, removed afterwards.
+
 ## Score outputs (optional)
 
 The score phase reads these `timings.json` names. An adapter that lacks one shows up as "not measured" in the score, never as 0. Per-screen names are `<screen>.<name>`; the score uses the worst across screens.
@@ -72,7 +87,8 @@ The score phase reads these `timings.json` names. An adapter that lacks one show
 | `<screen>.overflow-narrow` (px) | horizontal overflow at the narrow size, at least 0 |
 | `inp-ms` | stand-in for INP: the slowest input event in the typing probe. One typing run, not field INP |
 | `build-ms` | time of the `build` command (install is not timed) |
-| `startup-ms` | CLI: median time of 5 `--help` runs |
+| `startup-ms` | CLI: median time of 5 `--help` runs. Backend: time from starting the service to its first answer |
+| `latency-ms` | backend: median of 5 calls to the first GET screen that answered |
 | `script-ms-per-key` | see Probes |
 
 `a11y-violations.json` lists accessibility rule violations per screen. Compatibility is measured narrowly: Chromium only, so other browsers are reported as not checked.

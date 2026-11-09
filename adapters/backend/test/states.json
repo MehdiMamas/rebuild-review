@@ -1,0 +1,9 @@
+[
+  { "id": "create-then-read", "steps": [
+    { "method": "POST", "path": "/items", "body": { "name": "made" }, "save": { "id": "id" } },
+    { "method": "GET", "path": "/items/{id}" }
+  ] },
+  { "id": "with-auth", "steps": [
+    { "method": "GET", "path": "/items", "headers": { "Authorization": "Bearer harcheck-value", "Cookie": "sid=harcheck", "X-Trace": "keep-me" } }
+  ] }
+]

@@ -1,0 +1,65 @@
+{
+  "problems": [
+    {
+      "id": "P1",
+      "what": "an empty JSON object makes POST /items answer 500",
+      "probe": "server-error-on-bad-input",
+      "screen": "post-items"
+    },
+    {
+      "id": "P2",
+      "what": "a 404 body carries a stack trace",
+      "probe": "stack-trace-in-body",
+      "screen": "get-legacy-id"
+    },
+    {
+      "id": "P3",
+      "what": "a 404 is an HTML page on a JSON service",
+      "probe": "error-not-json",
+      "screen": "get-orders-id"
+    },
+    {
+      "id": "P4",
+      "what": "Access-Control-Allow-Origin * with credentials",
+      "probe": "cors-wildcard-credentials",
+      "screen": "get-public"
+    },
+    {
+      "id": "P5",
+      "what": "a route that never answers",
+      "probe": "no-timeout",
+      "screen": "get-slow"
+    },
+    {
+      "id": "P6",
+      "what": "a session token in the body",
+      "probe": "secret-in-response",
+      "screen": "get-session"
+    }
+  ],
+  "clean": [
+    "get-items",
+    "get-items-id",
+    "delete-items-id",
+    "get-admin",
+    "not-found"
+  ],
+  "routes": [
+    "GET /items",
+    "POST /items",
+    "GET /items/{id}",
+    "DELETE /items/{id}",
+    "GET /legacy/{id}",
+    "GET /orders/{id}",
+    "GET /session",
+    "GET /public",
+    "GET /slow",
+    "GET /admin"
+  ],
+  "probeOnlyRoutes": [
+    "GET /items",
+    "GET /session",
+    "GET /public"
+  ],
+  "token": "sk-0123456789abcdef0123456789abcdef0123"
+}

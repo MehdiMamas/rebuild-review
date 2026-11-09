@@ -1,0 +1,25 @@
+{
+  "openapi": "3.0.3",
+  "info": { "title": "Items", "version": "1.0.0" },
+  "paths": {
+    "/items": {
+      "get": { "responses": { "200": { "description": "all items" } } },
+      "post": {
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["name"], "properties": { "name": { "type": "string" } } }, "example": { "name": "made" } } } },
+        "responses": { "201": { "description": "created" } }
+      }
+    },
+    "/items/{id}": {
+      "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" }, "example": "demo" }],
+      "get": { "responses": { "200": { "description": "one item" } } },
+      "delete": { "responses": { "204": { "description": "deleted" } } }
+    },
+    "/legacy/{id}": { "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" }, "example": "a1" }], "get": { "responses": { "404": { "description": "gone" } } } },
+    "/orders/{id}": { "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" }, "example": "o1" }], "get": { "responses": { "404": { "description": "none" } } } },
+    "/session": { "get": { "responses": { "200": { "description": "session" } } } },
+    "/public": { "get": { "responses": { "200": { "description": "public" } } } },
+    "/slow": { "get": { "responses": { "200": { "description": "never" } } } },
+    "/admin": { "get": { "security": [{ "key": [] }], "responses": { "200": { "description": "needs a key" } } } }
+  },
+  "components": { "securitySchemes": { "key": { "type": "apiKey", "in": "header", "name": "x-key" } } }
+}

@@ -41,6 +41,15 @@ what it renders, then scores the rebuild against the original. See README.md.
 - Run: `node adapters/cli/capture.mjs --app <runDir>/run.json --out <runDir>/golden [--states states.json] [--max-screens N]`. Each run is a new process in an empty folder with an empty home and no network (a network namespace on Linux when `unshare` is allowed, otherwise dead proxy variables; `NODE_USE_ENV_PROXY` needs Node 24). Timeouts kill the whole process group. Windows is refused.
 - `scripts/room.mjs` `filterGolden` needs nothing special for a CLI golden (no HAR bodies, no HTML); `scripts/room.test.mjs` has a test for it.
 
+## Capture (backend adapter)
+
+- `adapters/backend/` (`api.mjs`, `discover.mjs`, `capture.mjs`, `probes.mjs`, `parity.mjs`, `worker.mjs`); contract: `adapters/CONTRACT.md` section "Backend", driving notes: `adapters/backend/DRIVING.md`. `run.json` is `{platform: "backend", dir, install, build, start, address, openapi?, readyPath?, env?}`. No dependencies (Node 24 `fetch`); `cd adapters/backend && pnpm test` (nine checks, about 4 minutes: hung routes wait 10 s each).
+- Run: `node adapters/backend/capture.mjs --app <runDir>/run.json --out <runDir>/golden [--states states.json] [--max-screens N]`. A screen is one operation plus one state; operations come from the OpenAPI document, else by probing. Each screen is captured twice; JSON values that differ become `"<varies>"`.
+- `api.mjs` has its own start and stop (not the web adapter's `startApp`): the service needs an allowlisted environment, a fresh temp home at every fresh start, and on Linux a network namespace that only the call helper (`worker.mjs`, run through `nsenter`) can reach. Elsewhere (proxy mode) raw connections are not blocked, and `notCaptured` says "network: proxy mode, raw connections not blocked". A fresh restart also empties the work copy: untracked files that were not there after the build are deleted and tracked files go back to how the build left them (a `git stash create` commit taken after the build, else `git checkout -- .`; never in the target). Only a child that has not emitted `exit` is signalled by its process group; `RR_NSENTER` replaces the `nsenter` command for the helper-exit test.
+- Parity tests start the service themselves through `API_MODULE` (`prepare`, `call`, `restart`), because namespace ports are not reachable from the test; `parity.mjs` runs them with `--test-force-exit` and kills the service groups it listed.
+- A store outside this machine (Postgres, Redis on another host) in `run.env` is refused. Windows is refused.
+- `scripts/room.mjs` `filterGolden` needs nothing special for a backend golden; `scripts/room.test.mjs` has a test for it.
+
 ## Inventory phase
 
 - Needs `<runDir>/work/` (clone of the target) and `<runDir>/run.json` (platform, install, build, start, address); `golden/` is used when present. The skill passes `pluginRoot` (`${CLAUDE_PLUGIN_ROOT}`) so the workflow can run `scripts/check-features.mjs`.
