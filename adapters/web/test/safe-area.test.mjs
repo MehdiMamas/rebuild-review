@@ -47,18 +47,39 @@ Object.assign(pages, {
   '/skip-link': doc('', spacer(1500) + at('skip', -100)),
 });
 
+// Bottom-padding fixtures (the env() fallback): the block is 780px, then two 44px buttons that only clear the bottom inset when the page pads by 34px.
+const btns = '<div style="height:780px"></div><button id="a" style="display:block;height:44px">A</button><button id="b" style="display:block;height:44px">B</button>';
+const padded = (css, body = btns) => doc(css, body).replace('position: absolute; left: 10px;', '');
+Object.assign(pages, {
+  '/pad-bottom': padded('body { padding-bottom: max(16px, env(safe-area-inset-bottom)); }'),
+  '/pad-16': padded('body { padding-bottom: 16px; }'),
+  '/pad-fallback-calc': padded('body { padding-bottom: calc(env(safe-area-inset-bottom, 20px) + 2px); }'),
+  '/pad-media': padded('@media (min-width: 1px) { body { padding-bottom: env(safe-area-inset-bottom); } }'),
+  '/pad-var': padded(':root { --sab: env(safe-area-inset-bottom); } body { padding-bottom: var(--sab); }'),
+  '/pad-inline': padded('', '<div style="height:780px"></div><button id="a" style="display:block;height:44px">A</button><button id="b" style="display:block;height:44px">B</button><div style="padding-bottom: env(safe-area-inset-bottom, 20px)"></div>'),
+  '/pad-link': padded('', btns).replace('</head>', '<link rel="stylesheet" href="/pad.css"></head>'),
+  '/pad-cross': padded('', btns).replace('</head>', '<link rel="stylesheet" href="CROSS/pad.css"></head>'),
+});
+const padCss = 'body { padding-bottom: max(16px, env(safe-area-inset-bottom)); }';
+
 const server = http.createServer((req, res) => {
-  const body = pages[req.url];
+  if (req.url === '/pad.css') { res.writeHead(200, { 'content-type': 'text/css' }); res.end(padCss); return; }
+  let body = pages[req.url];
   if (!body) { res.writeHead(404); res.end(); return; }
+  body = body.replace('CROSS', other);
   res.writeHead(200, { 'content-type': 'text/html' });
   res.end(body);
 });
+// A second origin without CORS headers: its stylesheet is applied but its rules cannot be read.
+const otherServer = http.createServer((req, res) => { res.writeHead(200, { 'content-type': 'text/css' }); res.end(padCss); });
+await new Promise((r) => otherServer.listen(0, '127.0.0.1', r));
+const other = `http://127.0.0.1:${otherServer.address().port}`;
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
 const origin = `http://127.0.0.1:${server.address().port}`;
 const browser = await chromium.launch();
-const run = (route) => safeAreaProbes({ browser, origin, screens: [{ id: route.slice(1), url: route }], notChecked: [], idleMs: 1000 });
+const run = (route, extra = {}) => safeAreaProbes({ browser, origin, screens: [{ id: route.slice(1), url: route }], notChecked: [], idleMs: 1000, ...extra });
 
-test.after(async () => { await browser.close(); server.close(); });
+test.after(async () => { await browser.close(); server.close(); otherServer.close(); });
 
 test('a fixed header under the status bar fails in both modes', async () => {
   const rows = await run('/bad');
@@ -138,4 +159,40 @@ test('an absolutely positioned button near the end of a scrolling page passes', 
 test('a control parked above the page top is not judged', async () => {
   const rows = await run('/skip-link');
   for (const row of rows) assert.strictEqual(row.passed, true, `${row.screen}: ${row.evidence}`);
+});
+
+const NOTE = /env\(\) insets not applied by this browser; rewrote \d+ env\(\) uses to the emulated px/;
+
+test('bottom padding by max(16px, env()) passes with the override and makes no rewrite note', async () => {
+  const rows = await run('/pad-bottom');
+  assert.strictEqual(rows.length, 2);
+  for (const row of rows) { assert.strictEqual(row.passed, true, `${row.screen}: ${row.evidence}`); assert.doesNotMatch(row.evidence, /rewrote/, row.evidence); }
+});
+
+test('when the browser ignores the override the env() uses are rewritten and the same page still passes in both modes', async () => {
+  const rows = await run('/pad-bottom', { noInsetOverride: true });
+  assert.strictEqual(rows.length, 2);
+  for (const row of rows) { assert.strictEqual(row.passed, true, `${row.screen}: ${row.evidence}`); assert.match(row.evidence, NOTE, row.evidence); }
+});
+
+test('a page with 16px bottom padding and no env() fails with the override and with the fallback', async () => {
+  for (const extra of [{}, { noInsetOverride: true }]) {
+    const rows = await run('/pad-16', extra);
+    failing(rows);
+    for (const row of rows) assert.match(row.evidence, /#b.*bottom inset/, row.evidence);
+  }
+});
+
+for (const route of ['/pad-fallback-calc', '/pad-media', '/pad-var', '/pad-inline', '/pad-link']) {
+  test(`${route}: env() in a fallback, calc, media rule, custom property, inline style or linked sheet is rewritten and passes`, async () => {
+    const rows = await run(route, { noInsetOverride: true });
+    assert.strictEqual(rows.length, 2);
+    for (const row of rows) { assert.strictEqual(row.passed, true, `${row.screen}: ${row.evidence}`); assert.match(row.evidence, NOTE, row.evidence); }
+  });
+}
+
+test('a cross-origin stylesheet that cannot be read is counted in the note, not a crash', async () => {
+  const rows = await run('/pad-cross', { noInsetOverride: true });
+  assert.strictEqual(rows.length, 2);
+  for (const row of rows) assert.match(row.evidence, /1 stylesheet\(s\) unreadable/, row.evidence);
 });
