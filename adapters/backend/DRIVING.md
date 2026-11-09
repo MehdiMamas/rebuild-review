@@ -14,8 +14,8 @@ A service with an HTTP API and no pages. The adapter is the client: it starts th
 
 ## What the service sees
 
-- A new empty temp `HOME`, `XDG_*` and `TMPDIR` at every start with `fresh`, so embedded stores (SQLite, files, memory) start empty. Environment allowlist: `PATH`, `LANG`, `LC_*`, `SystemRoot`, plus `run.env`.
-- Linux with `unshare` and `ip` allowed: the service runs in a new user and network namespace with only loopback. The adapter reaches it through a helper that enters the same namespace (`nsenter`). Otherwise the proxy variables point at a dead address and capture says so in `notCaptured`.
+- A new empty temp `HOME`, `XDG_*` and `TMPDIR` at every start with `fresh`, so embedded stores (SQLite, files, memory) start empty. A store kept as a file inside the work copy (`sqlite:./local.db`) starts empty too: the adapter records the untracked files after the build, and a fresh restart deletes any untracked file not in that set (ignored files included, `node_modules` excepted) and runs `git checkout -- .` in the work copy. The work copy must be a git checkout; otherwise only the temp folders are emptied. Environment allowlist: `PATH`, `LANG`, `LC_*`, `SystemRoot`, plus `run.env`.
+- Linux with `unshare` and `ip` allowed: the service runs in a new user and network namespace with only loopback. The adapter reaches it through a helper that enters the same namespace (`nsenter`). Otherwise (proxy mode, for example on macOS) the proxy variables point at a dead address. That cannot stop raw TCP connections or a service that ignores proxy variables, so every capture made in proxy mode lists "network: proxy mode, raw connections not blocked" in `notCaptured`. Run services you do not trust on Linux.
 - The service and everything it started are in one process group, killed on stop, timeout and exit. Windows is refused.
 
 ## Calling

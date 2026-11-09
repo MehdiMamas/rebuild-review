@@ -57,7 +57,8 @@ export function prepare(run, runFile) {
     if (run.install) execSync(run.install, { cwd: workDir, stdio: 'inherit' });
     if (run.build) { const t = Date.now(); execSync(run.build, { cwd: workDir, stdio: 'inherit' }); buildMs = Date.now() - t; }
   }
-  const ctx = { run, runFile: key, workDir, origin, port: new URL(origin).port, buildMs, proc: null, worker: null, root: null, log: '', startupMs: null, readyMs: Number(process.env.RR_READY_MS) || 30000 };
+  const baseline = untracked(workDir);
+  const ctx = { run, runFile: key, workDir, baseline: baseline && new Set(baseline), origin, port: new URL(origin).port, buildMs, proc: null, worker: null, root: null, log: '', startupMs: null, readyMs: Number(process.env.RR_READY_MS) || 30000 };
   prepared.set(key, ctx);
   return ctx;
 }
@@ -70,9 +71,18 @@ export function networkMode() {
 }
 const LO_UP = 'ip link set lo up 2>/dev/null || /usr/sbin/ip link set lo up 2>/dev/null || /sbin/ip link set lo up';
 
+// Children that have not emitted 'exit'. A group is signalled only through one of these, never by a pid kept after its child ended (the number may belong to something else by then).
 const groups = new Set();
-function killGroup(pid) { try { process.kill(-pid, 'SIGKILL'); } catch {} }
-function killAll() { for (const pid of groups) killGroup(pid); }
+const isLive = (c) => c.exitCode === null && c.signalCode === null && !c.rrExited;
+function track(child, onGone) {
+  groups.add(child);
+  child.on('exit', () => { child.rrExited = true; groups.delete(child); if (onGone) onGone(); });
+}
+export function killGroup(child) { if (child && child.pid && isLive(child)) { try { process.kill(-child.pid, 'SIGKILL'); } catch {} } }
+function killAll() { for (const c of [...groups]) killGroup(c); }
+function forgetPid(file, pid) {
+  try { fs.writeFileSync(file, fs.readFileSync(file, 'utf8').split('\n').filter((l) => l && Number(l) !== pid).join('\n') + '\n'); } catch {}
+}
 process.on('exit', killAll);
 for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { killAll(); process.exit(1); });
 
@@ -96,9 +106,11 @@ function serviceEnv(ctx) {
 
 // One line in, one line out: runs doFetch inside the service's network namespace.
 function startWorker(ctx) {
-  const child = spawn('nsenter', ['--target', String(ctx.proc.pid), '--user', '--net', '--preserve-credentials', '--', process.execPath, path.join(HERE, 'worker.mjs')], { stdio: ['pipe', 'pipe', 'ignore'], detached: true });
-  groups.add(child.pid);
-  const w = { child, pending: new Map(), n: 0, buf: '' };
+  const child = spawn(process.env.RR_NSENTER || 'nsenter', ['--target', String(ctx.proc.pid), '--user', '--net', '--preserve-credentials', '--', process.execPath, path.join(HERE, 'worker.mjs')], { stdio: ['pipe', 'pipe', 'pipe'], detached: true });
+  const w = { child, pending: new Map(), n: 0, buf: '', err: '', gone: null };
+  child.stderr.on('data', (d) => { w.err = (w.err + d).slice(-4096); });
+  child.on('exit', (c, sig) => { w.gone = `exit ${c ?? sig}`; });
+  track(child);
   child.stdout.on('data', (d) => {
     w.buf += d;
     let i;
@@ -129,8 +141,9 @@ export async function start(ctx) {
   ctx.log = '';
   const t0 = Date.now();
   const child = spawn(file, argv, { cwd: ctx.workDir, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
-  groups.add(child.pid);
-  if (process.env.RR_TMP_PARENT) fs.appendFileSync(path.join(process.env.RR_TMP_PARENT, 'groups'), child.pid + '\n');
+  const groupsFile = process.env.RR_TMP_PARENT ? path.join(process.env.RR_TMP_PARENT, 'groups') : null;
+  track(child, groupsFile ? () => forgetPid(groupsFile, child.pid) : null);
+  if (groupsFile) fs.appendFileSync(groupsFile, child.pid + '\n');
   const take = (d) => { ctx.log = (ctx.log + d).slice(-65536); };
   child.stdout.on('data', take); child.stderr.on('data', take);
   let exited = null;
@@ -148,6 +161,7 @@ export async function start(ctx) {
   }
   const ready = new URL(ctx.run.readyPath || '/', ctx.origin).pathname;
   for (;;) {
+    if (ctx.worker && ctx.worker.gone) { const w = ctx.worker, lastErr = scrub(w.err.trim().split('\n').pop() || 'no output'); await stop(ctx); throw new Error(`the call helper in the service namespace ended before the service answered (${w.gone}): ${lastErr}`); }
     if (exited) { const log = ctx.log; await stop(ctx); throw new Error(`the service ended before it answered (${exited}): ${scrub(log.trim().split('\n').slice(-5).join(' | '))}`); }
     const r = await doFetchVia(ctx, { path: ready, timeoutMs: 2000 });
     if (r.status > 0) break;
@@ -160,16 +174,35 @@ export async function start(ctx) {
 
 // Kills the service and everything it started (its whole process group).
 export async function stop(ctx, { removeRoot = false } = {}) {
-  for (const p of [ctx.proc, ctx.worker && ctx.worker.child]) if (p) { killGroup(p.pid); groups.delete(p.pid); }
+  for (const p of [ctx.proc, ctx.worker && ctx.worker.child]) killGroup(p);
   const procs = [ctx.proc, ctx.worker && ctx.worker.child].filter(Boolean);
   ctx.proc = null; ctx.worker = null;
   for (const p of procs) if (p.exitCode === null && p.signalCode === null) await new Promise((r) => { p.once('exit', r); setTimeout(r, 1000); });
   if (removeRoot && ctx.root) { fs.rmSync(ctx.root, { recursive: true, force: true }); ctx.root = null; }
 }
 
+// Untracked files (ignored ones too) in the work copy, relative to it, without node_modules. null when it is not a git work copy.
+function untracked(workDir) {
+  const r = spawnSync('git', ['-C', workDir, 'ls-files', '-o', '-z'], { encoding: 'utf8', maxBuffer: 1 << 28 });
+  if (r.status !== 0) return null;
+  return r.stdout.split('\0').filter((f) => f && !f.split('/').includes('node_modules'));
+}
+// A fresh start also empties file stores in the work copy: untracked files that were not there after the build go, and tracked files return to their committed state. The target is never touched (this runs in the run's work copy only).
+function resetWork(ctx) {
+  if (!ctx.baseline) return;
+  const now = untracked(ctx.workDir) || [];
+  for (const f of now) {
+    if (ctx.baseline.has(f)) continue;
+    const p = path.resolve(ctx.workDir, f);
+    if (inside(ctx.workDir, p)) fs.rmSync(p, { force: true });
+  }
+  spawnSync('git', ['-C', ctx.workDir, 'checkout', '--', '.'], { stdio: 'ignore' });
+}
+
 // fresh: true (default) starts again with an empty temp home and temp folder, so embedded stores start empty.
 export async function restart(ctx, { fresh = true } = {}) {
   await stop(ctx, { removeRoot: fresh });
+  if (fresh) resetWork(ctx);
   return start(ctx);
 }
 

@@ -32,8 +32,11 @@ function runTest(file) {
     let output = '', timedOut = false, done = false;
     const take = (d) => { output = (output + d).slice(-20000); };
     child.stdout.on('data', take); child.stderr.on('data', take);
+    let ended = false;
+    child.on('exit', () => { ended = true; });
     const killGroup = () => {
-      try { process.kill(-child.pid, 'SIGKILL'); } catch {}
+      // Only a process that has not ended is signalled by its number; the services still listed in the file are the ones whose own exit the test never saw (it removes a line when its child ends).
+      if (!ended) { try { process.kill(-child.pid, 'SIGKILL'); } catch {} }
       // The services a test started have their own process groups; start lists them in <tmpParent>/groups.
       try { for (const l of fs.readFileSync(path.join(tmpParent, 'groups'), 'utf8').split('\n')) if (l) { try { process.kill(-Number(l), 'SIGKILL'); } catch {} } } catch {}
     };

@@ -167,7 +167,7 @@ write(path.join(out, 'network.har'), { log: { version: '1.2', creator: { name: '
 notCaptured.push('no screens or screenshots: HTTP service');
 notCaptured.push(networkMode() === 'namespace'
   ? 'network is blocked with a network namespace for the service and not observed'
-  : 'network is blocked through a dead proxy and not observed; network blocked only for services that honour proxy variables');
+  : 'network: proxy mode, raw connections not blocked (the service is pointed at a dead proxy; a service that opens raw TCP or ignores proxy variables can still reach out; outbound calls are not observed)');
 let appVersion = run.appVersion || null;
 if (!appVersion) try { appVersion = JSON.parse(fs.readFileSync(path.join(ctx.workDir, 'package.json'), 'utf8')).version || null; } catch {}
 write(path.join(out, 'manifest.json'), scrub(JSON.stringify({

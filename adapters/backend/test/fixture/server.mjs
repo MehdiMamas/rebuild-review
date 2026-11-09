@@ -44,6 +44,12 @@ http.createServer(async (req, res) => {
     if (req.method === 'GET' && /^\/legacy\/[\w-]+$/.test(p)) return send(res, 404, { error: 'not found', stack: 'Error: not found\n    at lookup (/srv/app/legacy.js:10:5)\n    at handle (/srv/app/server.js:42:9)' });
     // Planted: an HTML error page on a JSON service.
     if (req.method === 'GET' && /^\/orders\/[\w-]+$/.test(p)) return send(res, 404, '<html><body><h1>Not Found</h1></body></html>', 'text/html');
+    // File state in the work copy: an untracked database file and a tracked file.
+    if (p === '/local') {
+      const db = path.join(process.cwd(), 'local.db'), seed = path.join(process.cwd(), 'seed.txt');
+      if (req.method === 'POST') { fs.appendFileSync(db, 'row\n'); fs.appendFileSync(seed, 'row\n'); return send(res, 201, { rows: fs.readFileSync(db, 'utf8').split('\n').length - 1 }); }
+      if (req.method === 'GET') return send(res, 200, { rows: fs.existsSync(db) ? fs.readFileSync(db, 'utf8').split('\n').length - 1 : 0, seed: fs.readFileSync(seed, 'utf8').length });
+    }
     // Planted: a session token in the body.
     if (req.method === 'GET' && p === '/session') return send(res, 200, { user: 'demo', token: 'sk-0123456789abcdef0123456789abcdef0123' });
     // Planted: wildcard origin with credentials.

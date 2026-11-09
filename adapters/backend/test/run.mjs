@@ -21,7 +21,7 @@ fs.mkdirSync(realHome);
 // The adapter must never use these: it starts the service with its own home.
 process.env.HOME = realHome; process.env.USERPROFILE = realHome; process.env.RR_SECRET_PARENT = secret;
 const api = await import(pathToFileURL(path.join(adapter, 'api.mjs')).href);
-const { prepare, start, stop, call, networkMode, checkEnv } = api;
+const { prepare, start, stop, restart, call, networkMode, checkEnv, killGroup } = api;
 
 const results = [];
 const note = (...a) => console.log('   ', ...a);
@@ -193,8 +193,22 @@ try {
     const dirty = main.git('status', '--porcelain').stdout.trim();
     const homeOk = seen.body && typeof seen.body.home === 'string' && seen.body.home.startsWith(ctx.root) && seen.body.home !== realHome && seen.body.secret === null;
     await stop(ctx, { removeRoot: true });
+    // file state inside the work copy: an untracked database and a tracked file; a fresh restart starts empty, a plain one keeps them
+    const fr = await makeRun('run-files');
+    const fctx = prepare(fr.run, fr.file);
+    await start(fctx);
+    await call(fctx, { method: 'POST', path: '/local' }); await call(fctx, { method: 'POST', path: '/local' });
+    await restart(fctx, { fresh: false });
+    const kept = await call(fctx, { path: '/local' });
+    await restart(fctx, { fresh: true });
+    const emptied = await call(fctx, { path: '/local' });
+    const dbGone = !fs.existsSync(path.join(fr.work, 'local.db'));
+    const filesClean = !fr.git('status', '--porcelain').stdout.trim();
+    await stop(fctx, { removeRoot: true });
+    const filesOk = kept.body && kept.body.rows === 2 && emptied.body && emptied.body.rows === 0 && emptied.body.seed === 5 && dbGone && filesClean;
+    lines.push(`work-copy files: rows kept by a plain restart ${kept.body && kept.body.rows}, after a fresh restart ${emptied.body && emptied.body.rows}; tracked file back to its commit: ${filesClean}`);
     lines.push(`POST ${post.status}; save file in the temp home: ${inTempHome}; in the real home: ${inReal}; service home isolated, parent secret not seen: ${homeOk}; work copy: ${dirty ? `changed (${dirty})` : 'clean'}`);
-    check(4, 'the service ran with an isolated home: its file landed in the temp home, nothing in the real home or the work copy changed, no parent secret or home path in the golden', !leaks.length && inTempHome && !inReal && !dirty && homeOk, [...leaks, ...lines]);
+    check(4, 'a fresh restart empties file stores in the work copy; the service ran with an isolated home: its file landed in the temp home, nothing in the real home or the work copy changed, no parent secret or home path in the golden', !leaks.length && filesOk && inTempHome && !inReal && !dirty && homeOk, [...leaks, ...lines]);
   }
 
   // 5
@@ -286,8 +300,32 @@ const ctx = prepare(JSON.parse(fs.readFileSync(process.env.APP_RUN, 'utf8')), pr
     Object.defineProperty(process, 'platform', { value: 'win32' });
     try { prepare(main.run, path.join(base, 'win', 'run.json')); } catch (e) { winRefused = /not supported on Windows/.test(e.message); } finally { Object.defineProperty(process, 'platform', real); }
     lines.push(`Windows refused with a reason: ${winRefused}`);
+    // a process group is signalled only through a child that has not ended
+    const done = spawn('sh', ['-c', 'exit 0'], { stdio: 'ignore', detached: true });
+    await new Promise((r) => done.once('exit', r));
+    const realKill = process.kill; let signalled = 0;
+    process.kill = (...a) => { if (a[1] === 'SIGKILL') signalled++; return realKill.apply(process, a); };
+    killGroup(done);
+    process.kill = realKill;
+    const noStale = signalled === 0;
+    lines.push(`killGroup on a child that already exited sent ${signalled} signals`);
+    // the call helper ending before the service answers is reported at once with its exit code and last stderr line
+    let helperOk = true;
+    if (networkMode() === 'namespace') {
+      const fake = path.join(base, 'fake-nsenter.sh');
+      fs.writeFileSync(fake, '#!/bin/sh\necho "first line" >&2\necho "nsenter: boom" >&2\nexit 7\n', { mode: 0o755 });
+      const hr = await makeRun('run-helper');
+      process.env.RR_NSENTER = fake;
+      const hc = prepare(hr.run, hr.file);
+      const t1 = Date.now(); let herr = '';
+      try { await start(hc); } catch (e) { herr = e.message; }
+      delete process.env.RR_NSENTER;
+      await stop(hc, { removeRoot: true });
+      helperOk = /exit 7/.test(herr) && /boom/.test(herr) && Date.now() - t1 < 10000;
+      lines.push(`helper that exits early: ${herr.split('\n')[0]}`);
+    } else lines.push('helper that exits early: not checked here (needs the Linux namespace mode)');
     check(9, 'a service that never answers is stopped with its child; a child left behind is killed on stop; an outside store, an outside address and Windows are refused',
-      /did not answer/.test(hangErr) && gone1 && aliveBefore && gone2 && storeRefused && localOk && outsideAddr && winRefused, lines);
+      /did not answer/.test(hangErr) && gone1 && aliveBefore && gone2 && noStale && helperOk && storeRefused && localOk && outsideAddr && winRefused, lines);
   }
 } finally {
   await api.stop({ proc: null, worker: null, root: null }).catch(() => {});
