@@ -10,6 +10,7 @@ const TOKEN_FORMATS = [
   ['a Slack token', /\bxox[abprs]-[A-Za-z0-9-]{10,}/], ['a private key', /-----BEGIN [A-Z ]*PRIVATE KEY-----/],
   ['a JWT', /\beyJ[\w-]+\.[\w-]+\.[\w-]+/],
 ];
+const SECRET_NAME = /KEY|TOKEN|SECRET|PASS|CREDENTIAL|AUTH/i;
 const JSON_CT = /json/i;
 const HANG_MS = 10000;
 
@@ -20,7 +21,7 @@ const first = (t, re) => { const m = re.exec(t); return m ? m[0].trim().slice(0,
 
 export async function runProbes({ ctx, go, screens, log, timings, notChecked }) {
   const rows = [];
-  const envValues = Object.values(ctx.run.env || {}).map(String).filter((v) => v.length >= 8);
+  const envValues = Object.entries(ctx.run.env || {}).filter(([k]) => SECRET_NAME.test(k)).map(([, v]) => String(v)).filter((v) => v.length >= 8);
   const row = (probe, screen, passed, evidence) => rows.push({ probe, screen, passed, evidence: scrub(evidence) });
   const safe = async (probe, screen, fn) => { try { await fn(); } catch (e) { notChecked.push({ probe, route: screen, reason: scrub(String(e.message).split('\n')[0]) }); } };
   const label = (s) => `${s.req.method} ${s.req.path}`;

@@ -39,6 +39,32 @@ export function checkEnv(env = {}) {
   }
 }
 
+// Config files in the work copy that may name a store the app would use: .env* and common config files, in the work copy's root and its config folder. Example and template files are not read by apps and are skipped.
+const TEMPLATE_FILE = /\.(example|sample|template|dist)$/i;
+export function checkWorkFiles(workDir, runEnv = {}) {
+  const envKeys = new Set(Object.keys(runEnv || {}));
+  for (const sub of ['.', 'config']) {
+    const dir = path.join(workDir, sub);
+    let names = [];
+    try { names = fs.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isFile()).map((e) => e.name); } catch { continue; }
+    for (const name of names) {
+      const isEnv = /^\.env/i.test(name);
+      const wanted = isEnv ? !TEMPLATE_FILE.test(name) : (sub === 'config' ? /\.(json|ya?ml|toml|properties)$/i.test(name) : /\.properties$/i.test(name));
+      if (!wanted) continue;
+      let text = '';
+      try { if (fs.statSync(path.join(dir, name)).size > 1 << 20) continue; text = fs.readFileSync(path.join(dir, name), 'utf8'); } catch { continue; }
+      for (const line of text.split('\n')) {
+        if (isEnv) { const k = /^\s*(?:export\s+)?([A-Za-z_][\w]*)\s*=/.exec(line); if (k && envKeys.has(k[1])) continue; }
+        for (const m of line.matchAll(/\b(postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|rediss?|amqps?|memcached|cockroachdb|sqlserver|mssql|clickhouse|kafka|nats):\/\/([^\s"'<>,;]*)/gi)) {
+          const host = (/^(?:[^@/]*@)?(\[[^\]]*\]|[^:/?#]*)/.exec(m[2]) || [])[1] || '';
+          if (/^[$%{]/.test(host)) continue;
+          if (!LOCAL_HOSTS.has(host.toLowerCase())) throw new Error(`${sub === '.' ? '' : sub + '/'}${name} holds a ${m[1].toLowerCase()}:// store URL that points outside this machine; a run never reviews against a shared or real store. Put a stand-in on this machine in run.json env, or change the work copy's file.`);
+        }
+      }
+    }
+  }
+}
+
 const prepared = new Map();
 // Install and build once (RR_PREPARED=1 skips them). Returns the context every other function takes.
 export function prepare(run, runFile) {
@@ -52,13 +78,14 @@ export function prepare(run, runFile) {
   const workDir = path.resolve(base, run.dir || '.');
   if (!inside(base, workDir)) throw new Error(`run.json "dir" must stay inside ${base}, got ${run.dir}`);
   checkEnv(run.env);
+  checkWorkFiles(workDir, run.env);
   let buildMs = null;
   if (process.env.RR_PREPARED !== '1') {
     if (run.install) execSync(run.install, { cwd: workDir, stdio: 'inherit' });
     if (run.build) { const t = Date.now(); execSync(run.build, { cwd: workDir, stdio: 'inherit' }); buildMs = Date.now() - t; }
   }
   const baseline = untracked(workDir);
-  const ctx = { run, runFile: key, workDir, baseline: baseline && new Set(baseline), origin, port: new URL(origin).port, buildMs, proc: null, worker: null, root: null, log: '', startupMs: null, readyMs: Number(process.env.RR_READY_MS) || 30000 };
+  const ctx = { run, runFile: key, workDir, baseline: baseline && new Set(baseline), notes: [], origin, port: new URL(origin).port, buildMs, proc: null, worker: null, root: null, log: '', startupMs: null, readyMs: Number(process.env.RR_READY_MS) || 30000 };
   prepared.set(key, ctx);
   return ctx;
 }
@@ -130,7 +157,7 @@ function startWorker(ctx) {
 export async function start(ctx) {
   assertPosix();
   if (ctx.proc) return ctx;
-  if (networkMode() === 'proxy' && await fetch(ctx.origin).then(() => true, () => false)) throw new Error(`refusing to start: something already answers on ${ctx.origin}`);
+  if (networkMode() === 'proxy' && await fetch(ctx.origin, { signal: AbortSignal.timeout(2000) }).then(() => true, () => false)) throw new Error(`refusing to start: something already answers on ${ctx.origin}`);
   if (!ctx.root) {
     ctx.root = fs.realpathSync(fs.mkdtempSync(path.join(process.env.RR_TMP_PARENT || os.tmpdir(), 'rr-backend-')));
     fs.mkdirSync(path.join(ctx.root, 'home')); fs.mkdirSync(path.join(ctx.root, 'tmp'));
@@ -189,7 +216,7 @@ function untracked(workDir) {
 }
 // A fresh start also empties file stores in the work copy: untracked files that were not there after the build go, and tracked files return to their committed state. The target is never touched (this runs in the run's work copy only).
 function resetWork(ctx) {
-  if (!ctx.baseline) return;
+  if (!ctx.baseline) { const n = 'fresh restart: work copy is not a git repo, file stores not reset'; if (!ctx.notes.includes(n)) ctx.notes.push(n); return; }
   const now = untracked(ctx.workDir) || [];
   for (const f of now) {
     if (ctx.baseline.has(f)) continue;

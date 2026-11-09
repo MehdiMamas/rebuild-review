@@ -44,7 +44,7 @@ async function makeRun(name, extra = {}, files = {}) {
   fs.mkdirSync(dir, { recursive: true });
   const work = path.join(dir, 'work');
   fs.cpSync(path.join(here, 'fixture'), work, { recursive: true });
-  for (const [f, t] of Object.entries(files)) fs.writeFileSync(path.join(work, f), t);
+  for (const [f, t] of Object.entries(files)) { fs.mkdirSync(path.dirname(path.join(work, f)), { recursive: true }); fs.writeFileSync(path.join(work, f), t); }
   const git = (...a) => spawnSync('git', ['-C', work, '-c', 'user.name=t', '-c', 'user.email=t@example.com', ...a], { encoding: 'utf8' });
   git('init', '-q'); git('add', '.'); git('commit', '-q', '-m', 'fixture');
   const file = path.join(dir, 'run.json');
@@ -82,6 +82,10 @@ try {
   {
     const bad = [];
     for (const f of ['manifest.json', 'network.har', 'timings.json', 'probes.json', 'probes-not-checked.json', 'console.log', 'coverage.json']) if (!fs.existsSync(path.join(golden, f))) bad.push(`missing ${f}`);
+    const harText = JSON.stringify(readJson(path.join(golden, 'network.har')) || {});
+    if (/"name":"(authorization|cookie|proxy-authorization|set-cookie)"/i.test(harText) || harText.includes('harcheck')) bad.push('network.har still holds an Authorization, Cookie or Set-Cookie header');
+    else if (!/"name":"x-trace"/i.test(harText)) bad.push('network.har lost the other request headers of the with-auth step');
+    if ((manifest.notCaptured || []).some((x) => /GET changed state/.test(x))) bad.push('a stable GET was noted as changing state');
     const har = readJson(path.join(golden, 'network.har')); if (!har || !Array.isArray(har.log && har.log.entries) || !har.log.entries.length) bad.push('network.har is not a HAR with entries');
     const tim = readJson(path.join(golden, 'timings.json')); if (!Array.isArray(tim) || tim.some((t) => !('name' in t && 'value' in t && 'unit' in t))) bad.push('timings.json is not a list of {name,value,unit}');
     else for (const n of ['startup-ms', 'get-items.ms', 'latency-ms']) if (!tim.some((t) => t.name === n)) bad.push(`timings.json has no ${n}`);
@@ -106,6 +110,7 @@ try {
   // 2
   {
     const lines = [];
+    let flipOk = false;
     const has = (screens, r) => screens.some((s) => `${s.method} ${s.path}` === r);
     const missing = answers.routes.filter((r) => !has(manifest.screens, r));
     lines.push(`from the OpenAPI file: ${ids.length} screens: ${ids.join(', ')}`);
@@ -141,6 +146,18 @@ try {
     const gOnIds = idsOf(path.join(gOn.dir, 'golden')), gOffMan = readJson(path.join(gOff.dir, 'golden', 'manifest.json')) || {};
     const gqOk = gOnIds.length === 1 && gOnIds[0].method === 'POST' && gOnIds[0].path === '/graphql' && goff.code === 0 && (gOffMan.screens || []).length === 0 && (gOffMan.notCaptured || []).some((n) => /GraphQL/.test(n));
     lines.push(`GraphQL: introspection on gives ${gOnIds.length} screen (${gOnIds.map((x) => `${x.method} ${x.path}`).join()}); off gives ${(gOffMan.screens || []).length} screens and a note: ${(gOffMan.notCaptured || []).some((n) => /GraphQL/.test(n))}`);
+    // a GET whose two captures differ in shape is noted; an echoed NODE_ENV is not a secret, an echoed API_TOKEN is
+    const flipDoc = JSON.stringify({ openapi: '3.0.3', info: { title: 'flip', version: '1' }, paths: { '/flip': { get: { responses: { 200: { description: 'ok' } } } }, '/mode': { get: { responses: { 200: { description: 'ok' } } } }, '/tok': { get: { responses: { 200: { description: 'ok' } } } } } });
+    const flipSrc = `import http from 'node:http'; const doc = ${JSON.stringify(flipDoc)}; let n = 0; http.createServer((q, r) => { r.setHeader('content-type', 'application/json'); if (q.url === '/openapi.json') return r.end(doc); if (q.url === '/flip') { n++; return r.end(JSON.stringify(Array.from({ length: n }, (_, i) => i))); } if (q.url === '/mode') return r.end(JSON.stringify({ mode: process.env.NODE_ENV })); if (q.url === '/tok') return r.end(JSON.stringify({ t: process.env.API_TOKEN })); r.statusCode = 404; r.end('{}'); }).listen(Number(process.env.PORT), '127.0.0.1');`;
+    const flip = await makeRun('run-flip', { start: 'node f.mjs', env: { NODE_ENV: 'development', API_TOKEN: 'plainvalue-1234' } }, { 'f.mjs': flipSrc });
+    await runNode('capture.mjs', ['--app', flip.file, '--out', path.join(flip.dir, 'golden')]);
+    const flipMan = readJson(path.join(flip.dir, 'golden', 'manifest.json')) || {};
+    const flipProbes = readJson(path.join(flip.dir, 'golden', 'probes.json')) || [];
+    const secretRows = flipProbes.filter((p) => p.probe === 'secret-in-response');
+    const changed = (flipMan.notCaptured || []).some((x) => /GET changed state: GET \/flip/.test(x)) && !(flipMan.notCaptured || []).some((x) => /GET changed state: GET \/mode/.test(x));
+    const modeClean = (secretRows.find((p) => p.screen === 'get-mode') || {}).passed === true, tokFlagged = (secretRows.find((p) => p.screen === 'get-tok') || {}).passed === false;
+    lines.push(`GET that changes shape noted: ${changed}; echoed NODE_ENV not flagged: ${modeClean}; echoed API_TOKEN flagged: ${tokFlagged}`);
+    flipOk = changed && modeClean && tokFlagged;
     // a response over 1 MB is cut and noted
     const bigDoc = JSON.stringify({ openapi: '3.0.3', info: { title: 'big', version: '1' }, paths: { '/big': { get: { responses: { 200: { description: 'ok' } } } }, '/sse': { get: { responses: { 200: { description: 'ok' } } } } } });
     const bigSrc = `import http from 'node:http'; const doc = ${JSON.stringify(bigDoc)}; http.createServer((q, r) => { if (q.url === '/openapi.json') { r.setHeader('content-type', 'application/json'); return r.end(doc); } if (q.url === '/sse') { r.writeHead(200, { 'content-type': 'text/event-stream' }); const t = setInterval(() => r.write('data: x\\n\\n'), 200); q.on('close', () => clearInterval(t)); return; } r.setHeader('content-type', 'text/plain'); r.end('a '.repeat(1500000)); }).listen(Number(process.env.PORT), '127.0.0.1');`;
@@ -156,7 +173,7 @@ try {
     lines.push(`over 1 MB: cut ${bigRes.cut}, bytes ${bigRes.bytes}, noted ${(bigMan.notCaptured || []).some((n) => /cut at 1 MB/.test(n))}`);
     check(2, 'discovery finds the routes from the OpenAPI file and by probing, stops at the screen cap, and copes with a service that shows nothing',
       cap.code === 0 && !missing.length && skippedAuth && pc.code === 0 && !pmissing.length && pcov.surfaceKnown === true && nc.code === 0 && ncov.surfaceKnown === false
-      && mc.code === 0 && (mcov.screensReached || []).length === 30 && (mcov.screensCut || []).length > 0 && gqOk && bigOk && sseOk, lines);
+      && mc.code === 0 && (mcov.screensReached || []).length === 30 && (mcov.screensCut || []).length > 0 && gqOk && bigOk && sseOk && flipOk, lines);
   }
 
   // 3
@@ -324,8 +341,40 @@ const ctx = prepare(JSON.parse(fs.readFileSync(process.env.APP_RUN, 'utf8')), pr
       helperOk = /exit 7/.test(herr) && /boom/.test(herr) && Date.now() - t1 < 10000;
       lines.push(`helper that exits early: ${herr.split('\n')[0]}`);
     } else lines.push('helper that exits early: not checked here (needs the Linux namespace mode)');
+    // store URLs in the work copy's own files are refused with the file and scheme, never the value
+    const envRun = await makeRun('run-envfile', {}, { '.env': 'DATABASE_URL=postgres://db.example.com/x\n' });
+    let envErr = ''; try { prepare(envRun.run, envRun.file); } catch (e) { envErr = e.message; }
+    const cfgRun = await makeRun('run-cfgfile', {}, { 'config/app.yaml': 'cache: rediss://u:p@cache.example.com:6380/0\n' });
+    let cfgErr = ''; try { prepare(cfgRun.run, cfgRun.file); } catch (e) { cfgErr = e.message; }
+    const okRun = await makeRun('run-envlocal', { env: { MQ_URL: 'x' } }, { '.env': 'DATABASE_URL=postgres://localhost/x\nMQ_URL=amqp://mq.example.com\n', '.env.example': 'DATABASE_URL=postgres://db.example.com/x\n' });
+    let okErr = ''; try { prepare(okRun.run, okRun.file); } catch (e) { okErr = e.message; }
+    const envRefused = /\.env holds a postgres:\/\/ store URL/.test(envErr) && !envErr.includes('example.com') && /config\/app\.yaml holds a rediss:\/\//.test(cfgErr) && !cfgErr.includes('example.com') && okErr === '';
+    lines.push(`.env with an outside store refused without its value: ${envRefused}`);
+    // a work copy that is not a git repo says its file stores were not reset
+    const ng = await makeRun('run-nogit');
+    fs.rmSync(path.join(ng.work, '.git'), { recursive: true, force: true });
+    const nctx = prepare(ng.run, ng.file);
+    await start(nctx); await restart(nctx, { fresh: true }); await stop(nctx, { removeRoot: true });
+    const noGitNote = nctx.notes.includes('fresh restart: work copy is not a git repo, file stores not reset');
+    lines.push(`not a git repo: note given: ${noGitNote}`);
+    // something that accepts and never answers on the port does not hang the start check (proxy mode)
+    let slowOk = true;
+    if (networkMode() === 'proxy') {
+      const hang2 = await makeRun('run-slowcheck', { start: 'node hang.mjs' });
+      const dummy = net.createServer((sock) => { sock.on('error', () => {}); });
+      await new Promise((r) => dummy.listen(Number(new URL(hang2.run.address).port), '127.0.0.1', r));
+      process.env.RR_READY_MS = '2000';
+      const sctx = prepare(hang2.run, hang2.file);
+      const t2 = Date.now(); let serr = '';
+      try { await start(sctx); } catch (e) { serr = e.message; }
+      delete process.env.RR_READY_MS;
+      await stop(sctx, { removeRoot: true });
+      dummy.close();
+      slowOk = Date.now() - t2 < 15000 && !/refusing to start/.test(serr);
+      lines.push(`start check with a silent listener: took ${Date.now() - t2} ms, ${serr.split(':')[0]}`);
+    } else lines.push('start check with a silent listener: not checked here (proxy mode only)');
     check(9, 'a service that never answers is stopped with its child; a child left behind is killed on stop; an outside store, an outside address and Windows are refused',
-      /did not answer/.test(hangErr) && gone1 && aliveBefore && gone2 && noStale && helperOk && storeRefused && localOk && outsideAddr && winRefused, lines);
+      /did not answer/.test(hangErr) && gone1 && aliveBefore && gone2 && noStale && helperOk && envRefused && noGitNote && slowOk && storeRefused && localOk && outsideAddr && winRefused, lines);
   }
 } finally {
   await api.stop({ proc: null, worker: null, root: null }).catch(() => {});

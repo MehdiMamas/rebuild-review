@@ -39,16 +39,16 @@ function mask(a, b, at = '') {
   if (JSON.stringify(a) === JSON.stringify(b)) return { value: a, paths: [] };
   const isObj = (v) => v && typeof v === 'object';
   if (Array.isArray(a) && Array.isArray(b) && a.length === b.length) {
-    const paths = [];
-    const value = a.map((x, i) => { const r = mask(x, b[i], `${at}[${i}]`); paths.push(...r.paths); return r.value; });
-    return { value, paths };
+    const paths = []; let structural = false;
+    const value = a.map((x, i) => { const r = mask(x, b[i], `${at}[${i}]`); paths.push(...r.paths); structural ||= r.structural; return r.value; });
+    return { value, paths, structural };
   }
   if (isObj(a) && isObj(b) && !Array.isArray(a) && !Array.isArray(b) && Object.keys(a).sort().join() === Object.keys(b).sort().join()) {
-    const paths = [], value = {};
-    for (const k of Object.keys(a)) { const r = mask(a[k], b[k], at ? `${at}.${k}` : k); paths.push(...r.paths); value[k] = r.value; }
-    return { value, paths };
+    const paths = [], value = {}; let structural = false;
+    for (const k of Object.keys(a)) { const r = mask(a[k], b[k], at ? `${at}.${k}` : k); paths.push(...r.paths); structural ||= r.structural; value[k] = r.value; }
+    return { value, paths, structural };
   }
-  return { value: '<varies>', paths: [at || '(body)'] };
+  return { value: '<varies>', paths: [at || '(body)'], structural: isObj(a) || isObj(b) };
 }
 
 const fill = (v, vars) => {
@@ -60,7 +60,7 @@ const fill = (v, vars) => {
 const dig = (body, p) => String(p).split('.').filter(Boolean).reduce((o, k) => (o == null ? o : o[k]), body);
 
 // One screen: two captures. fresh: restart with empty storage before each. steps run before the last request.
-async function capture(id, steps, { fresh }) {
+async function capture(id, steps, { fresh, safeMethod = false }) {
   const results = [];
   for (let pass = 0; pass < 2; pass++) {
     if (fresh) await restart(ctx, { fresh: true });
@@ -78,12 +78,13 @@ async function capture(id, steps, { fresh }) {
     if (last.error === 'timeout') break; // a hung route is not captured twice
   }
   const [a, b] = results;
-  let body = a.res.body, paths = [], statusVaries = false;
+  let body = a.res.body, paths = [], statusVaries = false, structural = false;
   if (b) {
     if (a.res.status !== b.res.status) statusVaries = true;
-    else if (!a.res.binary && !b.res.binary) { const m = mask(a.res.body, b.res.body); body = m.value; paths = m.paths; }
+    else if (!a.res.binary && !b.res.binary) { const m = mask(a.res.body, b.res.body); body = m.value; paths = m.paths; structural = !!m.structural; }
   }
   if (paths.length) volatile[id] = paths;
+  if (safeMethod && (statusVaries || structural)) notCaptured.push(`GET changed state: ${a.req.method || 'GET'} ${a.req.path} (${id}): two captures differ in more than values (${statusVaries ? 'status' : 'shape'})`);
   if (statusVaries) notCaptured.push(`${id}: the status differed between two captures (${a.res.status}, ${b.res.status}); the first is kept`);
   if (!b) notCaptured.push(`${id}: captured once (the request did not finish in ${CALL_MS / 1000} s), so volatile values were not checked`);
   return { id, req: a.req, res: { ...a.res, body } };
@@ -115,7 +116,7 @@ for (const item of plan) {
   try {
     if (item.state && !item.steps.length) throw new Error('no steps');
     if (!item.fresh && !ctx.proc) await restart(ctx, { fresh: true });
-    const c = await capture(id, item.steps, { fresh: item.fresh });
+    const c = await capture(id, item.steps, { fresh: item.fresh, safeMethod: !!item.op && !MUTATING.has(item.op.method) });
     captured.push({ ...c, state: !!item.state, op: item.op, steps: item.state ? item.steps : undefined });
   } catch (e) { notCaptured.push(`${item.state ? 'state ' : ''}${id}: ${scrub(e.message).split('\n')[0]}`); }
 }
@@ -148,6 +149,9 @@ for (const c of captured) {
   else if (res.error) notCaptured.push(`${c.id}: ${scrub(res.error)}`);
 }
 
+const HAR_DROP = new Set(['authorization', 'cookie', 'proxy-authorization', 'set-cookie']);
+const envVals = new Set(Object.values(run.env || {}).map(String).filter((v) => v.length >= 4));
+const harHeaders = (h) => Object.entries(h || {}).filter(([n, v]) => !HAR_DROP.has(n.toLowerCase()) && !envVals.has(String(v))).map(([name, value]) => ({ name, value: String(value) }));
 const entries = log.map((e) => {
   const url = new URL(e.req.path, run.address);
   for (const [k, v] of Object.entries(e.req.query || {})) url.searchParams.set(k, String(v));
@@ -155,29 +159,30 @@ const entries = log.map((e) => {
   const text = e.res.binary ? '' : (typeof e.res.body === 'string' ? e.res.body : JSON.stringify(e.res.body));
   return scrubDeep({
     startedDateTime: e.started, time: e.res.ms,
-    request: { method: e.req.method || 'GET', url: url.toString(), headers: Object.entries(e.req.headers || {}).map(([name, value]) => ({ name, value: String(value) })),
+    request: { method: e.req.method || 'GET', url: url.toString(), headers: harHeaders(e.req.headers),
       queryString: [...url.searchParams].map(([name, value]) => ({ name, value })),
       ...(e.req.body !== undefined ? { postData: { mimeType: 'application/json', text: typeof e.req.body === 'string' ? e.req.body.slice(0, 20000) : JSON.stringify(e.req.body).slice(0, 20000) } } : {}) },
-    response: { status: e.res.status, headers: Object.entries(e.res.headers).map(([name, value]) => ({ name, value })), content: { size: e.res.bytes, mimeType: ct, text } },
+    response: { status: e.res.status, headers: harHeaders(e.res.headers), content: { size: e.res.bytes, mimeType: ct, text } },
     ...(e.label ? { comment: e.label } : {}),
   });
 });
 write(path.join(out, 'network.har'), { log: { version: '1.2', creator: { name: 'rebuild-review backend adapter', version: '1' }, entries } });
 
+for (const n of ctx.notes) notCaptured.push(n);
 notCaptured.push('no screens or screenshots: HTTP service');
 notCaptured.push(networkMode() === 'namespace'
   ? 'network is blocked with a network namespace for the service and not observed'
   : 'network: proxy mode, raw connections not blocked (the service is pointed at a dead proxy; a service that opens raw TCP or ignores proxy variables can still reach out; outbound calls are not observed)');
 let appVersion = run.appVersion || null;
 if (!appVersion) try { appVersion = JSON.parse(fs.readFileSync(path.join(ctx.workDir, 'package.json'), 'utf8')).version || null; } catch {}
-write(path.join(out, 'manifest.json'), scrub(JSON.stringify({
+write(path.join(out, 'manifest.json'), JSON.stringify(scrubDeep({
   platform: 'backend', appVersion,
   screens: captured.map((c) => ({ id: c.id, method: c.req.method || 'GET', path: c.op ? c.op.path : c.req.path, ...(c.steps ? { steps: c.steps } : {}), ...(c.state ? { state: true } : {}) })),
   states: captured.filter((c) => c.state).map((c) => c.id),
   volatile, networkMode: networkMode(), discovery: found.source,
   blockedRequests: [],
   notCaptured: [...notCaptured, ...notChecked.map((r) => scrub(`${r.probe} ${r.route}: ${r.reason}`))],
-}, null, 2)));
+}), null, 2));
 write(path.join(out, 'coverage.json'), {
   caps: { maxScreens: MAX_SCREENS }, screensReached: captured.map((c) => c.id), screensCut: cutScreens, buttonsSkipped: [],
   operationsSkipped, surfaceKnown: found.surfaceKnown, harEntriesSkipped: 0,
