@@ -41,7 +41,10 @@ Object.assign(pages, {
   '/scroll-end': doc('', `<div style="height:2000px"></div><button id="last" style="position:static;display:block">Last</button>`),
   '/sticky-footer': doc('footer { position: sticky; bottom: 0; height: 50px; }', spacer(1500) + '<footer><button id="bar" style="position:static">Bar</button></footer>'),
   '/body-hidden': doc('html, body { height: 100%; overflow: hidden; }', `<div style="height:3000px">${at('mid', 400)}${at('low', 800)}</div>`),
-  '/absolute-end': doc('', `<div style="height:1500px"></div>` + at('abs', 1400)),
+  // Crosses y 810-844 at load; the page scrolls 56px, enough to clear it. Judged at load it would fail.
+  '/absolute-end': doc('', spacer(900) + at('abs', 790)),
+  // Skip link parked above the page top: it can never be seen, so it is not judged.
+  '/skip-link': doc('', spacer(1500) + at('skip', -100)),
 });
 
 const server = http.createServer((req, res) => {
@@ -129,5 +132,10 @@ test('overflow hidden on body judges in-flow controls with no scroll', async () 
 
 test('an absolutely positioned button near the end of a scrolling page passes', async () => {
   const rows = await run('/absolute-end');
+  for (const row of rows) assert.strictEqual(row.passed, true, `${row.screen}: ${row.evidence}`);
+});
+
+test('a control parked above the page top is not judged', async () => {
+  const rows = await run('/skip-link');
   for (const row of rows) assert.strictEqual(row.passed, true, `${row.screen}: ${row.evidence}`);
 });

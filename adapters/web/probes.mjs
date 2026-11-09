@@ -368,11 +368,13 @@ const SAFE_EVAL = `(() => {
     if (c.right <= 0 || c.left >= W) continue; // off to the side
     const onScreen = c.bottom > 0 && c.top < H;
     if (!flow && !onScreen) continue;
-    checked++;
+    // An in-flow control above the page top or past the scroll end can never be seen (a skip link parked at top:-100px), so it is not judged.
+    if (flow && (r.bottom + scrollY <= 0 || r.top + scrollY >= H + maxScroll)) continue;
+    if (cover || onScreen) checked++;
     if (flow) {
       // Clear if some scroll position puts the whole control between the insets.
       const top = r.top + scrollY, bottom = r.bottom + scrollY;
-      if (cover && r.height <= H - T - B && Math.max(0, bottom - (H - B)) > Math.min(maxScroll, top - T)) {
+      if (cover && r.height <= H - T - B && Math.max(0, bottom - (H - B)) > Math.min(maxScroll, top - T) + 1) { // 1px slack: scrollHeight is whole pixels, boxes are not
         const side = top < T ? 'top' : 'bottom';
         problems.push(name(el) + ' sits in the ' + side + ' inset (cannot be scrolled clear; page y ' + Math.round(top) + '-' + Math.round(bottom) + ', inset ' + (side === 'top' ? '0-' + T : (H - B) + '-' + H) + ')');
       }
