@@ -343,18 +343,46 @@ const SAFE_EVAL = `(() => {
   const meta = document.querySelector('meta[name=viewport]');
   const cover = !!meta && /viewport-fit\\s*=\\s*cover/.test(meta.getAttribute('content') || '');
   const problems = []; let checked = 0;
+  // Pinned: the control or an ancestor is fixed or sticky. Inner scroller: an ancestor other than html and body scrolls or clips. Everything else is in flow and moves with the document.
+  const bucket = (el) => {
+    let inner = false;
+    for (let p = el; p; p = p.parentElement) {
+      const s = getComputedStyle(p);
+      if (s.position === 'fixed' || s.position === 'sticky') return 'pinned';
+      if (p !== el && p !== document.documentElement && p !== document.body && (s.overflowX !== 'visible' || s.overflowY !== 'visible')) inner = true;
+    }
+    return inner ? 'inner' : 'flow';
+  };
+  const se = document.scrollingElement || document.documentElement;
+  const noScroll = [document.documentElement, document.body].some((e) => /^(hidden|clip)$/.test(getComputedStyle(e).overflowY));
+  const maxScroll = noScroll ? 0 : Math.max(0, se.scrollHeight - innerHeight);
   for (const el of document.querySelectorAll(sel)) {
     const cs = getComputedStyle(el);
     if (cs.display === 'none' || cs.visibility !== 'visible' || cs.pointerEvents === 'none' || Number(cs.opacity) === 0) continue;
     if (el.closest('[hidden],[aria-hidden=true],[inert]')) continue;
     const r = el.getBoundingClientRect();
     if (r.width === 0 || r.height === 0) continue;
-    const c = clip(el, r);
+    const flow = bucket(el) === 'flow';
+    const c = flow ? { top: r.top, bottom: r.bottom, left: r.left, right: r.right } : clip(el, r);
     if (c.bottom <= c.top || c.right <= c.left) continue;
-    if (c.bottom <= 0 || c.top >= H || c.right <= 0 || c.left >= W) continue; // not on screen
-    checked++;
-    if (cover && c.top < T && c.bottom > 0) problems.push(name(el) + ' sits in the top inset (y ' + Math.round(c.top) + '-' + Math.round(c.bottom) + ', inset 0-' + T + ')');
-    if (cover && c.bottom > H - B && c.top < H) problems.push(name(el) + ' sits in the bottom inset (y ' + Math.round(c.top) + '-' + Math.round(c.bottom) + ', inset ' + (H - B) + '-' + H + ')');
+    if (c.right <= 0 || c.left >= W) continue; // off to the side
+    const onScreen = c.bottom > 0 && c.top < H;
+    if (!flow && !onScreen) continue;
+    // An in-flow control above the page top or past the scroll end can never be seen (a skip link parked at top:-100px), so it is not judged.
+    if (flow && (r.bottom + scrollY <= 0 || r.top + scrollY >= H + maxScroll)) continue;
+    if (cover || onScreen) checked++;
+    if (flow) {
+      // Clear if some scroll position puts the whole control between the insets.
+      const top = r.top + scrollY, bottom = r.bottom + scrollY;
+      if (cover && r.height <= H - T - B && Math.max(0, bottom - (H - B)) > Math.min(maxScroll, top - T) + 1) { // 1px slack: scrollHeight is whole pixels, boxes are not
+        const side = top < T ? 'top' : 'bottom';
+        problems.push(name(el) + ' sits in the ' + side + ' inset (cannot be scrolled clear; page y ' + Math.round(top) + '-' + Math.round(bottom) + ', inset ' + (side === 'top' ? '0-' + T : (H - B) + '-' + H) + ')');
+      }
+    } else {
+      if (cover && c.top < T && c.bottom > 0) problems.push(name(el) + ' sits in the top inset (y ' + Math.round(c.top) + '-' + Math.round(c.bottom) + ', inset 0-' + T + ')');
+      if (cover && c.bottom > H - B && c.top < H) problems.push(name(el) + ' sits in the bottom inset (y ' + Math.round(c.top) + '-' + Math.round(c.bottom) + ', inset ' + (H - B) + '-' + H + ')');
+    }
+    if (!onScreen) continue;
     const mx = (Math.max(c.left, 0) + Math.min(c.right, W)) / 2, my = (Math.max(c.top, 0) + Math.min(c.bottom, H)) / 2;
     const hit = document.elementFromPoint(mx, my);
     if (hit && hit !== el && !el.contains(hit)) problems.push(name(el) + ' is covered at its centre by ' + name(hit));

@@ -28,6 +28,25 @@ const pages = {
     .replace('<main><button id="body-btn">Body button</button></main>', '<main><button id="body-btn">Body button</button></main><div class="shield"></div>'),
 };
 
+// Scrolling fixtures: a cover page with a body style and body markup.
+const doc = (css, body) => `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>fixture</title>
+<style>body { margin: 0; font: 16px sans-serif; } button { height: 34px; position: absolute; left: 10px; } ${css}</style></head><body>${body}</body></html>`;
+const at = (id, y, extra = '') => `<button id="${id}" style="top:${y}px;${extra}">${id}</button>`;
+const spacer = (h) => `<div style="height:${h}px"></div>`;
+Object.assign(pages, {
+  // Mid-page in-flow buttons: one crosses y 810-844 at load, the page scrolls clear of the insets.
+  '/scroll-mid': doc('', spacer(3000) + at('mid', 800) + at('top', 120)),
+  '/fixed-bottom': doc('footer { position: fixed; bottom: 0; left: 0; right: 0; height: 50px; }', spacer(1500) + '<footer><button id="bar" style="position:static">Bar</button></footer>'),
+  // Last in-flow button ends at the page end, under the bottom inset, with no padding.
+  '/scroll-end': doc('', `<div style="height:2000px"></div><button id="last" style="position:static;display:block">Last</button>`),
+  '/sticky-footer': doc('footer { position: sticky; bottom: 0; height: 50px; }', spacer(1500) + '<footer><button id="bar" style="position:static">Bar</button></footer>'),
+  '/body-hidden': doc('html, body { height: 100%; overflow: hidden; }', `<div style="height:3000px">${at('mid', 400)}${at('low', 800)}</div>`),
+  // Crosses y 810-844 at load; the page scrolls 56px, enough to clear it. Judged at load it would fail.
+  '/absolute-end': doc('', spacer(900) + at('abs', 790)),
+  // Skip link parked above the page top: it can never be seen, so it is not judged.
+  '/skip-link': doc('', spacer(1500) + at('skip', -100)),
+});
+
 const server = http.createServer((req, res) => {
   const body = pages[req.url];
   if (!body) { res.writeHead(404); res.end(); return; }
@@ -73,5 +92,50 @@ test('a control covered at its centre by another element fails', async () => {
 test('the same header padded by the safe-area inset passes in both modes', async () => {
   const rows = await run('/good');
   assert.strictEqual(rows.length, 2, JSON.stringify(rows));
+  for (const row of rows) assert.strictEqual(row.passed, true, `${row.screen}: ${row.evidence}`);
+});
+
+const failing = (rows) => rows.forEach((row) => assert.strictEqual(row.passed, false, `${row.screen}: ${row.evidence}`));
+
+test('a long page whose mid-page in-flow button crosses the bottom inset at load passes in both modes', async () => {
+  const rows = await run('/scroll-mid');
+  assert.strictEqual(rows.length, 2);
+  for (const row of rows) assert.strictEqual(row.passed, true, `${row.screen}: ${row.evidence}`);
+});
+
+test('a fixed bottom bar with no safe-area padding fails naming the bottom inset', async () => {
+  const rows = await run('/fixed-bottom');
+  failing(rows);
+  for (const row of rows) assert.match(row.evidence, /#bar.*bottom inset/, row.evidence);
+});
+
+test('the last in-flow button under the bottom inset at the scroll end fails as cannot be scrolled clear', async () => {
+  const rows = await run('/scroll-end');
+  failing(rows);
+  for (const row of rows) assert.match(row.evidence, /#last.*bottom inset \(cannot be scrolled clear/, row.evidence);
+});
+
+test('a sticky footer at bottom 0 with no safe-area padding fails', async () => {
+  const rows = await run('/sticky-footer');
+  failing(rows);
+  for (const row of rows) assert.match(row.evidence, /#bar.*bottom inset/, row.evidence);
+});
+
+test('overflow hidden on body judges in-flow controls with no scroll', async () => {
+  const rows = await run('/body-hidden');
+  failing(rows);
+  for (const row of rows) {
+    assert.match(row.evidence, /#low.*cannot be scrolled clear/, row.evidence);
+    assert.doesNotMatch(row.evidence, /#mid/, row.evidence);
+  }
+});
+
+test('an absolutely positioned button near the end of a scrolling page passes', async () => {
+  const rows = await run('/absolute-end');
+  for (const row of rows) assert.strictEqual(row.passed, true, `${row.screen}: ${row.evidence}`);
+});
+
+test('a control parked above the page top is not judged', async () => {
+  const rows = await run('/skip-link');
   for (const row of rows) assert.strictEqual(row.passed, true, `${row.screen}: ${row.evidence}`);
 });
