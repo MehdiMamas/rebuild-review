@@ -23,4 +23,8 @@ Platform `electron`. The app is a desktop program with windows and no address. `
 
 ## Running on Linux without a screen
 
-Under `xvfb-run -a` the app and the twelve checks run with no visible window. Use a throwaway `HOME` for the test process; the adapter gives the app its own isolated home on top of that. `LD_LIBRARY_PATH` is the one loader variable the adapter passes to the app. Libraries the Electron binary lacks are fetched without root by the adapter itself (`apt-get download` and `dpkg -x` into a cache under the temp folder, 300 MB cap); with no `apt-get`, no network or a library it has no package for, the run stops and names the libraries. `run.env` reaches the app too.
+Under `xvfb-run -a` the app and the fourteen checks run with no visible window. Use a throwaway `HOME` for the test process; the adapter gives the app its own isolated home on top of that. `LD_LIBRARY_PATH` is the one loader variable the adapter passes to the app. Libraries the Electron binary lacks are fetched without root by the adapter itself (`apt-get download` and `dpkg -x` into a cache under the temp folder, 300 MB cap); with no `apt-get`, no network or a library it has no package for, the run stops and names the libraries. `run.env` reaches the app too.
+
+## Helper windows at launch
+
+A first window that closes within 1 second is taken for a helper (a Code-OSS app opens some) and the next open window is driven instead. This costs up to 1 second on every launch whose first window stays open. A helper that closes later than 1 second is taken for the app window; `session.page` then recovers on its next read by moving to the first window still open, and `livePage()` waits up to 5 seconds for one. If no window stays open the launch stops with "the app opened no window that stayed open".

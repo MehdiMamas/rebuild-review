@@ -176,7 +176,7 @@ export async function launchApp(run, appFile, { theme = 'light' } = {}) {
   // A first window that closes within a second is a helper (a Code-OSS app opens some), not the app's window: take the next open one.
   await first.waitForEvent('close', { timeout: 1000 }).catch(() => {});
   app.windows().forEach(watch);
-  const page = first.isClosed() ? (windows.find((w) => !w.isClosed()) || await app.waitForEvent('window', { timeout: 30000 })) : first;
+  const page = first.isClosed() ? (windows.find((w) => !w.isClosed()) || await app.waitForEvent('window', { timeout: 30000 }).catch(async () => { await stopNow(); throw new Error('the app opened no window that stayed open'); })) : first;
   await page.waitForLoadState('domcontentloaded').catch(() => {});
 
   await app.evaluate(stubDialogs);
@@ -249,7 +249,8 @@ export async function replay(session, steps, settleMs = 300) {
 export function electronOpener(run, appFile) {
   return async (screen, { width = SIZES.wide.w, height = SIZES.wide.h, colorScheme = 'light' } = {}) => {
     const session = await launchApp(run, appFile, { theme: colorScheme });
-    await session.setSize(await session.livePage(), width, height).catch(() => {});
+    // A closed-window throw must not leave the app running.
+    try { await session.setSize(await session.livePage(), width, height).catch(() => {}); } catch (e) { await session.stop(); throw e; }
     return {
       // follows the current main window: when the app closes the one it had (a reload that opens a new window), the first window still open
       get page() { return session.page; },
