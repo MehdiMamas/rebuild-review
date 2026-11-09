@@ -225,7 +225,7 @@ export async function launchApp(run, appFile, { theme = 'light' } = {}) {
 export async function windowOfKind(session, kind, timeout = 8000) {
   const end = Date.now() + timeout;
   for (;;) {
-    for (const w of session.windows) { if (!w.isClosed() && kindOf(await w.title().catch(() => '')) === kind) return w; }
+    for (const w of [...session.windows]) { if (!w.isClosed() && kindOf(await w.title().catch(() => '')) === kind) return w; }
     if (Date.now() > end) throw new Error(`no window of kind "${kind}" opened`);
     await sleep(150);
   }
@@ -235,7 +235,7 @@ export async function windowOfKind(session, kind, timeout = 8000) {
 export async function replay(session, steps, settleMs = 300) {
   for (const step of steps) {
     if ('open' in step) session.page = await windowOfKind(session, step.open);
-    else { await runStep(session.page, null, step); if ('click' in step || 'type' in step || 'press' in step) await sleep(settleMs); }
+    else { await runStep(await session.livePage(), null, step); if ('click' in step || 'type' in step || 'press' in step) await sleep(settleMs); }
   }
 }
 
