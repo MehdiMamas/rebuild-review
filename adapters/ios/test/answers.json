@@ -1,0 +1,14 @@
+{
+  "note": "Written before the probes were run. Only run.mjs reads this file; the fixture and the adapter never do.",
+  "problems": [
+    { "id": "I1", "what": "a button in the status-bar band at the top", "probe": "control-under-status-bar", "screen": "fixture-home" },
+    { "id": "I2", "what": "a 30 pt tap target", "probe": "tap-target-small", "screen": "fixture-home" },
+    { "id": "I3", "what": "a button with no accessibility label", "probe": "missing-accessibility-label", "screen": "fixture-home" },
+    { "id": "I4", "what": "a button that crashes the app", "probe": "crash-on-tap", "screen": "fixture-home" },
+    { "id": "I5", "what": "text that does not fit at the largest accessibility text size", "probe": "dynamic-type-overflow", "screen": "settings" }
+  ],
+  "clean": ["items", "details"],
+  "screens": ["fixture-home", "items", "settings", "details"],
+  "extension": "ShareExt.appex",
+  "token": "tok_0123456789abcdef0123456789abcdef0123"
+}

@@ -42,7 +42,6 @@ struct HomeView: View {
                     NavigationLink { SettingsView() } label: { Text("Open Settings").frame(minWidth: 44, minHeight: 44) }
                     Button(action: { showDetails = true }) { Text("Show Details").frame(minWidth: 44, minHeight: 44) }
                     Button(action: { fetch() }) { Text("Fetch").frame(minWidth: 44, minHeight: 44) }
-                    Text(fetched)
                     // Planted: a 30 pt tap target.
                     Button(action: {}) { Text("Tiny").frame(width: 30, height: 30) }
                     // Planted: a button with no label.

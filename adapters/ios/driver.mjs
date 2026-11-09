@@ -83,7 +83,7 @@ export async function settled(bundleId, { tries = 20, gapMs = 300 } = {}) {
   for (let i = 0; i < tries; i++) {
     try { h = await hierarchy(bundleId); } catch { h = { size: { width: 0, height: 0 }, elements: [] }; }
     const key = JSON.stringify(h.elements.map((e) => [e.type, e.label, e.frame]));
-    if (h.elements.length && key === last) return h;
+    if (h.elements.length && key === last && !/^springboard$/i.test(h.app?.label || '')) return h;
     last = key; await sleep(gapMs);
   }
   return h;

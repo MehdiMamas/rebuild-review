@@ -112,7 +112,7 @@ async function main() {
     const targets = tapTargets(item.h.elements, item.h.size);
     const take = targets.slice(0, MAX_BUTTONS);
     for (const t of targets.slice(MAX_BUTTONS)) skipped.push(`${item.id}: ${nameOf(t) || typeNameOf(t)}`);
-    let at = true; // the app is showing `item` now
+    let at = qi === 0 && !launchInfo.crashed; // only the first screen is on show: the app was just launched; after that it is somewhere else
     for (const t of take) {
       const name = nameOf(t);
       const sameName = item.h.elements.filter((e) => nameOf(e) === name);

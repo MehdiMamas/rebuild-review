@@ -35,14 +35,14 @@ export function flatten(dump) {
     }
   };
   walk(app, 0, false);
-  return { size: { width: af.w, height: af.h }, elements };
+  return { size: { width: af.w, height: af.h }, elements, app: { label: app.label || '', id: app.identifier || '' } };
 }
 
 const blank = (s) => String(s).replace(/\d+/g, '#');
 // A screen is its signature: the hierarchy's types, labels and identifiers with digits blanked. Values (typed text, switch state) are not part of it.
 export function signature(elements) {
   const lines = elements.filter((e) => e.label || e.id || CONTROLS.has(e.type) || e.type === T.staticText).map((e) => `${e.type}|${blank(e.label)}|${blank(e.id)}`);
-  return crypto.createHash('sha256').update(lines.join('\n')).digest('hex').slice(0, 16);
+  return crypto.createHash('sha256').update(lines.sort().join('\n')).digest('hex').slice(0, 16);
 }
 
 export const isControl = (e) => CONTROLS.has(e.type);
