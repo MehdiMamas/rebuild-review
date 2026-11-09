@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { checkText, trackedTexts } from './check-features.mjs';
+import { checkText, looksLikeCode, trackedTexts } from './check-features.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -38,4 +38,45 @@ test('lists tracked files when git ls-files output is over 1 MB', () => {
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+const ok = (t, s) => assert.deepEqual(checkText(t, s), [], t);
+const doc = (content, name = 'doc.md') => [{ name, content }];
+
+test('looksLikeCode: prose with parentheses and a markdown link is not code', () => {
+  assert.equal(looksLikeCode('See [the guide](docs/guide.html?a=b) (from the docs) too'), false);
+  assert.equal(looksLikeCode('open_agents new_agent list_sessions sort_order'), false);
+});
+test('looksLikeCode: calls and assignments are code', () => {
+  assert.equal(looksLikeCode('const total = items.reduce((a, b) => a + b'), true);
+  assert.equal(looksLikeCode('set width = 100 for the box'), true);
+  assert.equal(looksLikeCode('x.reduce(fn) and more words here'), true);
+});
+test('prose copied from a markdown doc passes', () => {
+  const t = 'File has New Agent and Open Agents Window';
+  ok(t, doc('Intro. ' + t + ' and more text.'));
+});
+test('prose with parentheses, brackets and a tag boundary passes', () => {
+  const t = 'Plan orange, Agent gray, Ask green, Done blue (from the docs) [x]';
+  ok(t, doc('<li>' + t + '</li> <b>next</b>', 'design/note.html'));
+});
+test('UI labels copied from html or jsx pass', () => {
+  const t = 'search, New Agent, Customize, sessions, Settings';
+  ok(t, doc('<ul><li>' + t + '</li></ul>', 'agents-list.html'));
+  ok(t, doc('<Menu>' + t + '</Menu>', 'Menu.jsx'));
+});
+test('a copied code line fails with copied from', () => {
+  const line = 'const total = items.reduce((a, b) => a + b';
+  const p = checkText('The total is ' + line + ' here', doc(line + ', 0);', 'a.js'));
+  assert.ok(p.some((x) => x.startsWith('copied from a.js')), p.join());
+});
+test('a later code match is reported after an earlier prose match', () => {
+  const prose = 'Plan orange, Agent gray, Ask green, Done blue';
+  const code = 'const total = items.reduce((a, b) => a + b';
+  const p = checkText(prose + '. Then ' + code + '.', doc(prose + '. ' + 'zzzz '.repeat(20) + code + ', 0);', 'b.js'));
+  assert.ok(p.some((x) => x.includes('copied from b.js') && x.includes('reduce')), p.join());
+});
+test('empty or short text has no copied-run problems', () => {
+  assert.deepEqual(checkText('', src), []);
+  assert.deepEqual(checkText('short text', src), []);
 });

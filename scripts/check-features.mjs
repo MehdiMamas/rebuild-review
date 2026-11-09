@@ -1,6 +1,6 @@
 // No-source check for features.md. Usage: node check-features.mjs <features.md> <workDir>
 // Exits 1 and prints one line per problem when the file holds fenced code, source file paths,
-// import or JSX-like lines, or a run of 40+ characters copied from a tracked text file in workDir.
+// import or JSX-like lines, or a run of 40+ characters that contain code copied from a tracked text file in workDir.
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -22,6 +22,14 @@ export function norm(s) {
   return s.replace(/\s+/g, ' ').trim();
 }
 
+// True when a 40-char window holds code: braces, `;`, `=>`, `::`, `&&`, `||`, `==`, a call like
+// `reduce(`, or an assignment like `width = 100` (not inside a markdown link).
+export function looksLikeCode(window) {
+  if (/[{};]|=>|::|&&|\|\||==/.test(window)) return true;
+  if (/\w\(/.test(window)) return true;
+  return /\w\s*=\s*[\w'"\[{(]/.test(window.replace(/\[[^\]]*\]\([^)]*\)/g, ''));
+}
+
 export function checkText(text, srcTexts = []) {
   const problems = [];
   const lines = text.split('\n');
@@ -40,8 +48,9 @@ export function checkText(text, srcTexts = []) {
     for (const { name, content } of srcTexts) {
       const c = norm(content);
       for (let i = 0; i + RUN <= c.length; i++) {
-        if (grams.has(c.slice(i, i + RUN))) {
-          problems.push(`copied from ${name}: "${c.slice(i, i + RUN)}"`);
+        const w = c.slice(i, i + RUN);
+        if (grams.has(w) && looksLikeCode(w)) {
+          problems.push(`copied from ${name}: "${w}"`);
           break;
         }
       }
