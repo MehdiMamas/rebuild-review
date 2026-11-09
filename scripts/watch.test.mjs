@@ -249,5 +249,7 @@ test('a stop marker older than a long-step log is ignored; a newer one still sto
     assert.equal(stopText(run), null);
     fs.utimesSync(path.join(run, 'long', 'stack-2.log'), new Date(Date.now() - 20000), new Date(Date.now() - 20000));
     assert.match(stopText(run), /wall check failed/);
+    fs.appendFileSync(path.join(run, 'events.jsonl'), JSON.stringify({ t: new Date().toISOString(), kind: 'phase', what: 'Stack' }) + '\n');
+    assert.equal(stopText(run), null, 'a newer event should make the stop stale');
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
