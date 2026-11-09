@@ -36,3 +36,9 @@ test('agents that start the app are told to stop it, and only the stop rule name
   assert.equal(lines.filter((l) => /pkill|killall/.test(l) && !l.startsWith('const STOP_APP')).length, 0)
   assert.equal(lines.filter((l) => l.includes('${STOP_APP}')).length, 4)
 })
+
+test('the per-area inventory step marks areas and lists the finished ones through areas.mjs', () => {
+  const src = readFileSync(file, 'utf8')
+  assert.ok(/areas\.mjs'\)\} mark \$\{q\(runDir\)\} \$\{q\(area\.id\)\}/.test(src), 'mark step')
+  assert.ok(/\$\{AJS\} done \$\{q\(runDir\)\}/.test(src), 'done step')
+})

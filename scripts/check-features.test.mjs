@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { checkText, looksLikeCode, trackedTexts } from './check-features.mjs';
+import { checkText, looksLikeCode, trackedTexts, trimCache, cacheDirSafe } from './check-features.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 
 const src = [{ name: 'a.js', content: 'function computeTheTotalOfAllTheItemsInTheCart(items) { return 1 }' }];
 const bad = (t, s = []) => assert.ok(checkText(t, s).length > 0, t);
@@ -79,4 +79,167 @@ test('a later code match is reported after an earlier prose match', () => {
 test('empty or short text has no copied-run problems', () => {
   assert.deepEqual(checkText('', src), []);
   assert.deepEqual(checkText('short text', src), []);
+});
+
+// ---- cache of the tracked texts (#94) ----
+const git = (dir, ...a) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'gc.auto=0', '-c', 'core.fsmonitor=false', ...a], { cwd: dir, stdio: 'pipe' });
+function repoOf(n) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cf-cache-'));
+  git(dir, 'init', '-q');
+  for (let d = 0; d < n / 500; d++) {
+    fs.mkdirSync(path.join(dir, 'd' + d));
+    for (let i = 0; i < 500 && d * 500 + i < n; i++) fs.writeFileSync(path.join(dir, 'd' + d, `f${i}.txt`), `file ${d} ${i}  text`);
+  }
+  git(dir, 'add', '-A');
+  git(dir, 'commit', '-qm', 'one');
+  return dir;
+}
+const events = () => { const e = []; return { e, onCache: (x) => e.push(x) }; };
+
+test('cache: 20,000 files, second call on the same HEAD is a hit with the same texts; a commit or a change misses', () => {
+  const dir = repoOf(20000);
+  const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cf-cachedir-'));
+  try {
+    const a = events(); const first = trackedTexts(dir, { cacheDir, onCache: a.onCache });
+    const b = events(); const second = trackedTexts(dir, { cacheDir, onCache: b.onCache });
+    assert.deepEqual(a.e, ['miss']);
+    assert.deepEqual(b.e, ['hit']);
+    assert.equal(first.length, 20000);
+    assert.deepEqual(second, first);
+    // an untracked file does not count as a change
+    fs.writeFileSync(path.join(dir, 'build.out'), 'x');
+    const c = events(); trackedTexts(dir, { cacheDir, onCache: c.onCache });
+    assert.deepEqual(c.e, ['hit']);
+    // a modified tracked file: no cache used, and none written
+    fs.writeFileSync(path.join(dir, 'd0', 'f0.txt'), 'changed');
+    const d = events(); const dirty = trackedTexts(dir, { cacheDir, onCache: d.onCache });
+    assert.deepEqual(d.e, ['miss']);
+    assert.ok(dirty.some((f) => f.content === 'changed'));
+    const files = fs.readdirSync(cacheDir);
+    assert.equal(files.length, 1);
+    // a new commit is a new key
+    git(dir, 'commit', '-qam', 'two');
+    const e = events(); trackedTexts(dir, { cacheDir, onCache: e.onCache });
+    assert.deepEqual(e.e, ['miss']);
+    assert.equal(fs.readdirSync(cacheDir).length, 2);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5 });
+    fs.rmSync(cacheDir, { recursive: true, force: true });
+  }
+});
+
+test('cache: parallel writers of one key leave a valid JSON file', async () => {
+  const dir = repoOf(50);
+  const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cf-cachedir-'));
+  try {
+    const mod = new URL('./check-features.mjs', import.meta.url).href;
+    const code = `import { trackedTexts } from ${JSON.stringify(mod)}; trackedTexts(${JSON.stringify(dir)}, { cacheDir: ${JSON.stringify(cacheDir)} });`;
+    await Promise.all(Array.from({ length: 4 }, () => new Promise((res, rej) => {
+      const c = spawn(process.execPath, ['--input-type=module', '-e', code], { stdio: 'pipe' });
+      c.on('exit', (x) => (x === 0 ? res() : rej(new Error('exit ' + x))));
+    })));
+    const files = fs.readdirSync(cacheDir);
+    assert.equal(files.length, 1, files.join());
+    assert.equal(JSON.parse(fs.readFileSync(path.join(cacheDir, files[0]), 'utf8')).length, 50);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5 });
+    fs.rmSync(cacheDir, { recursive: true, force: true });
+  }
+});
+
+test('cache: a folder over the cap loses its oldest files first', () => {
+  const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cf-cachedir-'));
+  try {
+    for (const [i, n] of ['old', 'mid', 'new'].entries()) {
+      const p = path.join(cacheDir, n + '.json');
+      fs.writeFileSync(p, 'x'.repeat(100));
+      fs.utimesSync(p, 1000 + i, 1000 + i);
+    }
+    trimCache(cacheDir, 250);
+    assert.deepEqual(fs.readdirSync(cacheDir).sort(), ['mid.json', 'new.json']);
+    trimCache(cacheDir, 0);
+    assert.deepEqual(fs.readdirSync(cacheDir), []);
+  } finally {
+    fs.rmSync(cacheDir, { recursive: true, force: true });
+  }
+});
+
+function smallRepo() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cf-cache-'));
+  git(dir, 'init', '-q');
+  fs.writeFileSync(path.join(dir, 'a.txt'), 'Line one\r\n  two  words \n');
+  git(dir, 'add', '-A');
+  git(dir, 'commit', '-qm', 'one');
+  return dir;
+}
+
+test('cache: folder 0700, file 0600 (POSIX); cached and uncached calls return identical raw texts', { skip: process.platform === 'win32' }, () => {
+  const dir = smallRepo();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cf-cachedir-'));
+  const cacheDir = path.join(root, 'texts');
+  try {
+    const first = trackedTexts(dir, { cacheDir });
+    const second = trackedTexts(dir, { cacheDir });
+    assert.deepEqual(second, first);
+    assert.equal(first[0].content, 'Line one\r\n  two  words \n');
+    assert.equal(fs.statSync(cacheDir).mode & 0o777, 0o700);
+    const f = fs.readdirSync(cacheDir)[0];
+    assert.equal(fs.statSync(path.join(cacheDir, f)).mode & 0o777, 0o600);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true }); fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('cache: a linked cache folder is never read or written; an open folder of ours is closed to 0700', { skip: process.platform === 'win32' }, () => {
+  const dir = smallRepo();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cf-cachedir-'));
+  try {
+    const real = path.join(root, 'planted');
+    fs.mkdirSync(real);
+    const link = path.join(root, 'texts');
+    fs.symlinkSync(real, link);
+    const seen = [];
+    trackedTexts(dir, { cacheDir: link, onCache: (x) => seen.push(x) });
+    trackedTexts(dir, { cacheDir: link, onCache: (x) => seen.push(x) });
+    assert.deepEqual(seen, ['miss', 'miss'], 'a linked folder must never give a hit');
+    assert.deepEqual(fs.readdirSync(real), [], 'nothing may be written through the link');
+    assert.equal(cacheDirSafe(link), false);
+    const open = path.join(root, 'open');
+    fs.mkdirSync(open, { mode: 0o777 }); fs.chmodSync(open, 0o777);
+    assert.equal(cacheDirSafe(open), true);
+    assert.equal(fs.statSync(open).mode & 0o777, 0o700);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true }); fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('cache: a corrupt cache file is removed and the result is still right', () => {
+  const dir = smallRepo();
+  const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cf-cachedir-'));
+  try {
+    const first = trackedTexts(dir, { cacheDir });
+    const f = path.join(cacheDir, fs.readdirSync(cacheDir)[0]);
+    fs.writeFileSync(f, '{"broken');
+    const ev = events(); const again = trackedTexts(dir, { cacheDir, onCache: ev.onCache });
+    assert.deepEqual(ev.e, ['miss']);
+    assert.deepEqual(again, first);
+    assert.deepEqual(JSON.parse(fs.readFileSync(f, 'utf8')), first);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true }); fs.rmSync(cacheDir, { recursive: true, force: true });
+  }
+});
+
+test('trimCache removes .tmp files older than an hour, keeps young ones and never removes the file just written', () => {
+  const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cf-cachedir-'));
+  try {
+    const put = (n, size, ageMs) => { const p = path.join(cacheDir, n); fs.writeFileSync(p, 'x'.repeat(size)); const t = new Date(Date.now() - ageMs); fs.utimesSync(p, t, t); return p; };
+    put('old.1.tmp', 10, 2 * 3600 * 1000);
+    put('young.2.tmp', 10, 60 * 1000);
+    const keep = put('written.json', 500, 10 * 1000);
+    put('other.json', 500, 5000 * 1000);
+    trimCache(cacheDir, 600, keep);
+    assert.deepEqual(fs.readdirSync(cacheDir).sort(), ['written.json', 'young.2.tmp']);
+  } finally {
+    fs.rmSync(cacheDir, { recursive: true, force: true });
+  }
 });
