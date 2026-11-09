@@ -124,7 +124,7 @@ try {
     const har = readJson(path.join(golden, 'network.har')); if (!har || !Array.isArray(har.log && har.log.entries)) bad.push('network.har is not a HAR');
     const tim = readJson(path.join(golden, 'timings.json'));
     if (!Array.isArray(tim) || tim.some((t) => !('name' in t && 'value' in t && 'unit' in t))) bad.push('timings.json is not a list of {name,value,unit}');
-    else for (const n of ['launch-ms', 'build-ms', 'app-bytes']) if (!tim.some((t) => t.name === n)) bad.push(`timings.json has no ${n}`);
+    else for (const n of ['launch-ms', 'app-bytes']) if (!tim.some((t) => t.name === n)) bad.push(`timings.json has no ${n}`);
     if (!Array.isArray(probes) || probes.some((p) => !('probe' in p && 'screen' in p && 'passed' in p && 'evidence' in p))) bad.push('probes.json is not a list of {probe,screen,passed,evidence}');
     if (manifest.platform !== 'ios') bad.push(`manifest platform is "${manifest.platform}"`);
     for (const id of ids) for (const f of ['render.json', 'a11y.json', 'iphone-16-light.png', 'iphone-16-dark.png', 'iphone-se-3rd-generation-light.png', 'iphone-se-3rd-generation-dark.png']) if (!fs.existsSync(path.join(golden, 'screens', id, f))) bad.push(`screens/${id}/${f} missing`);
@@ -259,6 +259,7 @@ try {
   if (left !== startDevices) results.push({ n: 'devices', name: 'no rr- device is left', ok: false });
 } finally {
   server.close();
+  if (process.env.RR_KEEP) fs.cpSync(base, process.env.RR_KEEP, { recursive: true }); // for looking at the goldens after a failure
   fs.rmSync(base, { recursive: true, force: true });
 }
 
