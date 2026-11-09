@@ -370,7 +370,7 @@ export function replaceProject(runDir, n, roomProject) {
   }
 }
 
-// The rebuild stays on the platform of the original: a web app is rebuilt as a web app, an Electron app as an Electron app.
+// The rebuild stays on the platform of the original: a web app is rebuilt as a web app, an Electron app as an Electron app, a command-line tool as a command-line tool.
 export function platformNote(runDir) {
   let platform = '';
   try { platform = JSON.parse(fs.readFileSync(path.join(runDir, 'run.json'), 'utf8')).platform || ''; } catch {}

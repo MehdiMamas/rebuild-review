@@ -66,6 +66,24 @@ test('filterGolden empties bodies of file: and custom-scheme entries, whatever t
   assert.equal(by['http://127.0.0.1:1/api/tasks'], '[{"id":1}]');
 });
 
+test('filterGolden passes a CLI golden through intact', () => {
+  const src = tmp(), dest = path.join(tmp(), 'g');
+  const files = {
+    'manifest.json': '{"platform":"cli"}',
+    'network.har': JSON.stringify({ log: { version: '1.2', entries: [] } }),
+    'probes.json': '[]',
+    'screens/help/stdout.txt': 'Usage: tool <command>\n',
+    'screens/help/stderr.txt': '',
+    'screens/help/result.json': '{"args":["--help"],"code":0}',
+    'screens/list-all/out/home/.fixture.json': '[{"id":1}]',
+  };
+  for (const [f, t] of Object.entries(files)) { fs.mkdirSync(path.dirname(path.join(src, f)), { recursive: true }); fs.writeFileSync(path.join(src, f), t); }
+  fs.writeFileSync(path.join(src, 'run.json'), '{}');
+  filterGolden(src, dest);
+  for (const [f, t] of Object.entries(files)) assert.equal(fs.readFileSync(path.join(dest, f), 'utf8'), f === 'network.har' ? t : t, f);
+  assert.equal(fs.existsSync(path.join(dest, 'run.json')), false);
+});
+
 function makeRun(features) {
   const base = fs.realpathSync(tmp());
   const target = path.join(base, 'mytarget'), runDir = path.join(base, 'run-1');

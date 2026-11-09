@@ -35,6 +35,12 @@ what it renders, then scores the rebuild against the original. See README.md.
 - Run it headless on Linux, never on a desktop Mac (the windows disturb the user): on the `pc` machine, clone the branch into `~/work/rebuild-review-electron`, `pnpm install --frozen-lockfile` in `adapters/web` and `adapters/electron` (with `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1` for web), then `HOME=$(mktemp -d) xvfb-run -a pnpm test` in `adapters/electron`. Missing system libraries (libnss3, libnspr4) can be unpacked with `apt-get download` + `dpkg -x` and given through `LD_LIBRARY_PATH`, which the adapter passes to the app. Bring back only the log.
 - A rebuild must stay on the original's platform; the workflow stops with a plain reason otherwise.
 
+## Capture (CLI adapter)
+
+- `adapters/cli/` (`run.mjs`, `capture.mjs`, `probes.mjs`, `parity.mjs`); contract: `adapters/CONTRACT.md` section "CLI", driving notes: `adapters/cli/DRIVING.md`. `run.json` has no `address`; it has `command: [exe, ...fixed args]`. No dependencies; `cd adapters/cli && pnpm test` (about 40 seconds, light, no display) runs eight checks on `test/fixture` (a to-do tool with five planted problems); `test/answers.json` is read only by `test/run.mjs`. Misses are printed as MISS, never tuned away. CI job `cli-adapter` (Node 24).
+- Run: `node adapters/cli/capture.mjs --app <runDir>/run.json --out <runDir>/golden [--states states.json] [--max-screens N]`. Each run is a new process in an empty folder with an empty home and no network (a network namespace on Linux when `unshare` is allowed, otherwise dead proxy variables; `NODE_USE_ENV_PROXY` needs Node 24). Timeouts kill the whole process group. Windows is refused.
+- `scripts/room.mjs` `filterGolden` needs nothing special for a CLI golden (no HAR bodies, no HTML); `scripts/room.test.mjs` has a test for it.
+
 ## Inventory phase
 
 - Needs `<runDir>/work/` (clone of the target) and `<runDir>/run.json` (platform, install, build, start, address); `golden/` is used when present. The skill passes `pluginRoot` (`${CLAUDE_PLUGIN_ROOT}`) so the workflow can run `scripts/check-features.mjs`.
