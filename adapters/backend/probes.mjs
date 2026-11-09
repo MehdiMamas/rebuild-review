@@ -1,6 +1,7 @@
 // General checks for an HTTP service. Each row: { probe, screen, passed, evidence }; passed=false means the probe flagged a problem.
 // screens: [{ id, req, res }] of every screen captured; log: every call made so far ({ screen, req, res }); go(screen, req) makes and records one more call.
-import { scrub, scrubDeep, restart } from './api.mjs';
+import { scrub } from '../web/context.mjs';
+import { restart } from './api.mjs';
 
 const STACK = [/^\s+at\s.+:\d+(:\d+)?\)?\s*$/m, /\n\s+at\s[\w$.<>]+\s*\(.+:\d+(:\d+)?\)/, /Traceback \(most recent call last\)/, /thread '[^']*' panicked/, /(^|\n)panic:[\s\S]*goroutine \d+/, /\bat [\w.$]+\([\w$]+\.java:\d+\)/, /Stack trace:\s*\n#0 /, /\.rb:\d+:in [`']/];
 const UUID = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
@@ -9,6 +10,7 @@ const HANG_MS = 10000;
 
 const median = (a) => [...a].sort((x, y) => x - y)[Math.floor(a.length / 2)];
 const text = (body) => (typeof body === 'string' ? body : JSON.stringify(body ?? ''));
+const strings = (v, out = []) => { if (typeof v === 'string') out.push(v); else if (Array.isArray(v)) v.forEach((x) => strings(x, out)); else if (v && typeof v === 'object') Object.values(v).forEach((x) => strings(x, out)); return out; };
 const first = (t, re) => { const m = re.exec(t); return m ? m[0].trim().slice(0, 120) : null; };
 
 export async function runProbes({ ctx, go, screens, log, timings, notChecked }) {
@@ -43,8 +45,11 @@ export async function runProbes({ ctx, go, screens, log, timings, notChecked }) 
     });
   }
 
+  // The bad-input calls can leave oversize values in the service's store; the later calls start from an empty one.
+  if (screens.some((x) => ['POST', 'PUT', 'PATCH'].includes(x.req.method))) await restart(ctx, { fresh: true });
+
   // cors: one more request with an Origin header on every GET screen.
-  for (const s of screens.filter((x) => x.req.method === 'GET')) {
+  for (const s of screens.filter((x) => x.req.method === 'GET' && !x.res.error)) {
     await safe('cors-wildcard-credentials', s.id, async () => { await go(s.id, { ...s.req, headers: { ...(s.req.headers || {}), origin: 'https://rr-origin.invalid' }, timeoutMs: HANG_MS }, 'with Origin'); });
   }
 
@@ -61,7 +66,7 @@ export async function runProbes({ ctx, go, screens, log, timings, notChecked }) 
     if (s) row('server-error-on-valid', id, !(cap.res.status >= 500), cap.res.status >= 500 ? `${where} answered ${cap.res.status}` : `${where} answered ${cap.res.status || 'nothing'}`);
 
     let hit = null, hitAt = '';
-    for (const c of calls) for (const re of STACK) if (!hit) { hit = first(text(c.res.body), re); hitAt = `${c.req.method} ${c.req.path}${c.label ? ` (${c.label})` : ''} -> ${c.res.status}`; }
+    for (const c of calls) for (const re of STACK) if (!hit) { hit = first(`${text(c.res.body)}\n${strings(c.res.body).join('\n')}`, re); hitAt = `${c.req.method} ${c.req.path}${c.label ? ` (${c.label})` : ''} -> ${c.res.status}`; }
     row('stack-trace-in-body', id, !hit, hit ? `a stack trace is in the body of ${hitAt}: ${hit}` : 'no stack trace in any body');
 
     const html = calls.find((c) => c.res.status >= 400 && !c.res.error && (c.res.binary ? false : (typeof c.res.body === 'string' && !JSON_CT.test(c.res.headers['content-type'] || ''))));
@@ -82,6 +87,7 @@ export async function runProbes({ ctx, go, screens, log, timings, notChecked }) 
     let secret = null;
     for (const c of calls) {
       if (secret) break;
+      if (/^bad input/.test(c.label || '')) continue;
       const t = text(c.res.body).replace(UUID, 'id');
       if (scrub(t) !== t) secret = `${c.req.method} ${c.req.path}${c.label ? ` (${c.label})` : ''}`;
     }

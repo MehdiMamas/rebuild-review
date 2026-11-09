@@ -89,6 +89,26 @@ test('filterGolden passes a CLI golden through intact', () => {
   assert.equal(fs.existsSync(path.join(dest, 'run.json')), false);
 });
 
+test('filterGolden passes a backend golden through intact', () => {
+  const src = tmp(), dest = path.join(tmp(), 'g');
+  const har = { log: { version: '1.2', entries: [{ request: { method: 'GET', url: 'http://127.0.0.1:1/items', headers: [] }, response: { status: 200, headers: [], content: { mimeType: 'application/json', text: '[{"id":"a"}]' } } }] } };
+  const files = {
+    'manifest.json': '{"platform":"backend"}',
+    'network.har': JSON.stringify(har),
+    'probes.json': '[]',
+    'screens/get-items/request.json': '{"method":"GET","path":"/items"}',
+    'screens/get-items/response.json': '{"status":200,"headers":{"content-type":"application/json"},"body":[{"id":"a"}]}',
+    'screens/get-items/result.json': '{"ms":3,"bytes":12}',
+  };
+  for (const [f, t] of Object.entries(files)) { fs.mkdirSync(path.dirname(path.join(src, f)), { recursive: true }); fs.writeFileSync(path.join(src, f), t); }
+  fs.writeFileSync(path.join(src, 'run.json'), '{}');
+  filterGolden(src, dest);
+  for (const [f, t] of Object.entries(files)) assert.equal(fs.readFileSync(path.join(dest, f), 'utf8') === t || f === 'network.har', true, f);
+  const e = JSON.parse(fs.readFileSync(path.join(dest, 'network.har'), 'utf8')).log.entries[0];
+  assert.equal(e.response.content.text, '[{"id":"a"}]');
+  assert.equal(fs.existsSync(path.join(dest, 'run.json')), false);
+});
+
 function makeRun(features) {
   const base = fs.realpathSync(tmp());
   const target = path.join(base, 'mytarget'), runDir = path.join(base, 'run-1');

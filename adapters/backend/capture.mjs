@@ -97,6 +97,7 @@ const safe = [], mutating = [];
 for (const op of found.operations) {
   if (!op.request) { operationsSkipped.push({ method: op.method, path: op.path, reason: op.skip || 'no request could be built' }); continue; }
   if (op.skip) { operationsSkipped.push({ method: op.method, path: op.path, reason: op.skip }); continue; }
+  if (op.security) operationsSkipped.push({ method: op.method, path: op.path, reason: 'needs credentials; none were invented, so the answer without them is the behaviour recorded' });
   (MUTATING.has(op.method) ? mutating : safe).push(op);
 }
 
