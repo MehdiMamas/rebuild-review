@@ -392,6 +392,31 @@ const SAFE_EVAL = `(() => {
   return { checked, problems, env, cover };
 })()`;
 
+// Reads the two insets the way a page would. Used to see whether the browser applied the emulated insets.
+const ENV_READ = `(() => {
+  const read = (side) => { const p = document.createElement('div'); p.style['padding' + side] = 'env(safe-area-inset-' + side.toLowerCase() + ')'; document.documentElement.append(p); const v = parseFloat(getComputedStyle(p)['padding' + side]); p.remove(); return v; };
+  return { top: read('Top'), bottom: read('Bottom') };
+})()`;
+
+// Fallback for a browser that takes the CDP inset override but does not feed it to env(): rewrites every env(safe-area-inset-*) use
+// (with or without a fallback value, inside max/calc/min too) in readable stylesheets and inline styles to the emulated px.
+const REWRITE_ENV = `((px) => {
+  const re = /env\\(\\s*safe-area-inset-(top|right|bottom|left)\\s*(?:,(?:[^()]|\\([^()]*\\))*)?\\)/gi;
+  let n = 0, unreadable = 0;
+  const fix = (t) => t.replace(re, (_, side) => { n++; return px[side.toLowerCase()] + 'px'; });
+  for (const sheet of Array.from(document.styleSheets)) {
+    let text;
+    try { text = Array.from(sheet.cssRules).map((r) => r.cssText).join('\\n'); } catch { unreadable++; continue; }
+    if (!/env\\(/i.test(text)) continue;
+    const owner = sheet.ownerNode;
+    if (owner && owner.tagName === 'STYLE') { owner.textContent = fix(owner.textContent); continue; }
+    const st = document.createElement('style'); st.textContent = fix(text);
+    sheet.disabled = true; if (owner) owner.after(st); else document.head.append(st);
+  }
+  for (const el of document.querySelectorAll('[style]')) { const a = el.getAttribute('style'); if (/env\\(/i.test(a)) el.setAttribute('style', fix(a)); }
+  return { n, unreadable };
+})`;
+
 // One screen, both modes. A failed probe (no CDP support, a page error) becomes notChecked via guard.
 async function safeAreaScreen(c, s, add) {
   for (const mode of ['browser', 'standalone']) {
@@ -402,15 +427,24 @@ async function safeAreaScreen(c, s, add) {
       try {
         if (mode === 'standalone') await context.addInitScript(STANDALONE_SHIM);
         const page = await context.newPage();
-        const cdp = await context.newCDPSession(page);
-        await cdp.send('Emulation.setSafeAreaInsetsOverride', { insets: { top: SAFE_AREA.top, bottom: SAFE_AREA.bottom, left: 0, right: 0 } });
+        // noInsetOverride is for tests only: it leaves env() at 0, as on a browser that ignores the override.
+        if (!c.noInsetOverride) {
+          const cdp = await context.newCDPSession(page);
+          await cdp.send('Emulation.setSafeAreaInsetsOverride', { insets: { top: SAFE_AREA.top, bottom: SAFE_AREA.bottom, left: 0, right: 0 } }).catch(() => {}); // unsupported: the env() check below falls back
+        }
         await page.goto(url, { waitUntil: 'load' });
         await idle(c, page);
+        const seen = await page.evaluate(ENV_READ);
+        let rewrite = null;
+        if (seen.top !== SAFE_AREA.top || seen.bottom !== SAFE_AREA.bottom) {
+          rewrite = await page.evaluate(`${REWRITE_ENV}(${JSON.stringify({ top: SAFE_AREA.top, bottom: SAFE_AREA.bottom, left: 0, right: 0 })})`);
+          await page.evaluate('new Promise((ok) => requestAnimationFrame(() => requestAnimationFrame(ok)))');
+        }
         const r = await page.evaluate(SAFE_EVAL);
         const shown = r.problems.slice(0, 3).join('; ');
         const notes = [];
         if (!r.cover) notes.push('page lacks viewport-fit=cover, so its bands were not checked');
-        if (r.env !== SAFE_AREA.top) notes.push(`env(safe-area-inset-top) is ${r.env}px`);
+        if (rewrite) notes.push(`env() insets not applied by this browser; rewrote ${rewrite.n} env() uses to the emulated px${rewrite.unreadable ? `; ${rewrite.unreadable} stylesheet(s) unreadable` : ''}`);
         if (mode === 'standalone') notes.push('display mode shimmed in JS; a CSS display-mode rule is not emulated');
         const note = notes.length ? `; ${notes.join('; ')}` : '';
         add('safe-area', `${s.id}:${mode}`, r.problems.length === 0, r.problems.length ? `${r.problems.length} problem(s): ${shown}${note}` : `${r.checked} control(s) clear of the insets${note}`);
