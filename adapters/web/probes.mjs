@@ -430,7 +430,7 @@ async function safeAreaScreen(c, s, add) {
         // noInsetOverride is for tests only: it leaves env() at 0, as on a browser that ignores the override.
         if (!c.noInsetOverride) {
           const cdp = await context.newCDPSession(page);
-          await cdp.send('Emulation.setSafeAreaInsetsOverride', { insets: { top: SAFE_AREA.top, bottom: SAFE_AREA.bottom, left: 0, right: 0 } });
+          await cdp.send('Emulation.setSafeAreaInsetsOverride', { insets: { top: SAFE_AREA.top, bottom: SAFE_AREA.bottom, left: 0, right: 0 } }).catch(() => {}); // unsupported: the env() check below falls back
         }
         await page.goto(url, { waitUntil: 'load' });
         await idle(c, page);
