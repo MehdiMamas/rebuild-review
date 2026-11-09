@@ -171,8 +171,13 @@ export async function launchApp(run, appFile, { theme = 'light' } = {}) {
     page.on('close', () => { const i = windows.indexOf(page); if (i >= 0) windows.splice(i, 1); });
   };
   app.on('window', watch);
-  const page = await app.firstWindow({ timeout: 30000 }).catch(async (e) => { await stopNow(); throw new Error(`the app opened no window: ${scrub(e.message).split('\n')[0]}`); });
+  const first = await app.firstWindow({ timeout: 30000 }).catch(async (e) => { await stopNow(); throw new Error(`the app opened no window: ${scrub(e.message).split('\n')[0]}`); });
   app.windows().forEach(watch);
+  // A first window that closes within a second is a helper (a Code-OSS app opens some), not the app's window: take the next open one.
+  await first.waitForEvent('close', { timeout: 1000 }).catch(() => {});
+  app.windows().forEach(watch);
+  const page = first.isClosed() ? (windows.find((w) => !w.isClosed()) || await app.waitForEvent('window', { timeout: 30000 }).catch(async () => { await stopNow(); throw new Error('the app opened no window that stayed open'); })) : first;
+  await page.waitForLoadState('domcontentloaded').catch(() => {});
 
   await app.evaluate(stubDialogs);
   const setTheme = (t) => app.evaluate(({ nativeTheme }, v) => { nativeTheme.themeSource = v; }, t);
@@ -225,7 +230,7 @@ export async function launchApp(run, appFile, { theme = 'light' } = {}) {
 export async function windowOfKind(session, kind, timeout = 8000) {
   const end = Date.now() + timeout;
   for (;;) {
-    for (const w of session.windows) { if (!w.isClosed() && kindOf(await w.title().catch(() => '')) === kind) return w; }
+    for (const w of [...session.windows]) { if (!w.isClosed() && kindOf(await w.title().catch(() => '')) === kind) return w; }
     if (Date.now() > end) throw new Error(`no window of kind "${kind}" opened`);
     await sleep(150);
   }
@@ -235,7 +240,7 @@ export async function windowOfKind(session, kind, timeout = 8000) {
 export async function replay(session, steps, settleMs = 300) {
   for (const step of steps) {
     if ('open' in step) session.page = await windowOfKind(session, step.open);
-    else { await runStep(session.page, null, step); if ('click' in step || 'type' in step || 'press' in step) await sleep(settleMs); }
+    else { await runStep(await session.livePage(), null, step); if ('click' in step || 'type' in step || 'press' in step) await sleep(settleMs); }
   }
 }
 
@@ -244,7 +249,8 @@ export async function replay(session, steps, settleMs = 300) {
 export function electronOpener(run, appFile) {
   return async (screen, { width = SIZES.wide.w, height = SIZES.wide.h, colorScheme = 'light' } = {}) => {
     const session = await launchApp(run, appFile, { theme: colorScheme });
-    await session.setSize(await session.livePage(), width, height).catch(() => {});
+    // A closed-window throw must not leave the app running.
+    try { await session.setSize(await session.livePage(), width, height).catch(() => {}); } catch (e) { await session.stop(); throw e; }
     return {
       // follows the current main window: when the app closes the one it had (a reload that opens a new window), the first window still open
       get page() { return session.page; },
