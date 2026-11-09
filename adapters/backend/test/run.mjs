@@ -132,9 +132,31 @@ try {
     const mc = await runNode('capture.mjs', ['--app', many.file, '--out', path.join(many.dir, 'golden')]);
     const mcov = readJson(path.join(many.dir, 'golden', 'coverage.json')) || {};
     lines.push(`400 operations: ${(mcov.screensReached || []).length} screens, ${(mcov.screensCut || []).length} cut`);
+    // GraphQL: one POST /graphql, with introspection on (one screen) and off (a note)
+    const gqSrc = (on) => `import http from 'node:http'; http.createServer((q, r) => { let b = ''; q.on('data', (d) => { b += d; }); q.on('end', () => { r.setHeader('content-type', 'application/json'); if (q.method === 'POST' && q.url === '/graphql') return r.end(JSON.stringify(${on ? "{ data: { __schema: { queryType: { name: 'Query' } } } }" : "{ errors: [{ message: 'introspection is disabled' }] }"})); r.statusCode = 404; r.end('{}'); }); }).listen(Number(process.env.PORT), '127.0.0.1');`;
+    const gOn = await makeRun('run-gql-on', { start: 'node g.mjs' }, { 'g.mjs': gqSrc(true) });
+    await runNode('capture.mjs', ['--app', gOn.file, '--out', path.join(gOn.dir, 'golden')]);
+    const gOff = await makeRun('run-gql-off', { start: 'node g.mjs' }, { 'g.mjs': gqSrc(false) });
+    const goff = await runNode('capture.mjs', ['--app', gOff.file, '--out', path.join(gOff.dir, 'golden')]);
+    const gOnIds = idsOf(path.join(gOn.dir, 'golden')), gOffMan = readJson(path.join(gOff.dir, 'golden', 'manifest.json')) || {};
+    const gqOk = gOnIds.length === 1 && gOnIds[0].method === 'POST' && gOnIds[0].path === '/graphql' && goff.code === 0 && (gOffMan.screens || []).length === 0 && (gOffMan.notCaptured || []).some((n) => /GraphQL/.test(n));
+    lines.push(`GraphQL: introspection on gives ${gOnIds.length} screen (${gOnIds.map((x) => `${x.method} ${x.path}`).join()}); off gives ${(gOffMan.screens || []).length} screens and a note: ${(gOffMan.notCaptured || []).some((n) => /GraphQL/.test(n))}`);
+    // a response over 1 MB is cut and noted
+    const bigDoc = JSON.stringify({ openapi: '3.0.3', info: { title: 'big', version: '1' }, paths: { '/big': { get: { responses: { 200: { description: 'ok' } } } }, '/sse': { get: { responses: { 200: { description: 'ok' } } } } } });
+    const bigSrc = `import http from 'node:http'; const doc = ${JSON.stringify(bigDoc)}; http.createServer((q, r) => { if (q.url === '/openapi.json') { r.setHeader('content-type', 'application/json'); return r.end(doc); } if (q.url === '/sse') { r.writeHead(200, { 'content-type': 'text/event-stream' }); const t = setInterval(() => r.write('data: x\\n\\n'), 200); q.on('close', () => clearInterval(t)); return; } r.setHeader('content-type', 'text/plain'); r.end('a '.repeat(1500000)); }).listen(Number(process.env.PORT), '127.0.0.1');`;
+    const big = await makeRun('run-big', { start: 'node b.mjs' }, { 'b.mjs': bigSrc });
+    await runNode('capture.mjs', ['--app', big.file, '--out', path.join(big.dir, 'golden')]);
+    const bigRes = readJson(path.join(big.dir, 'golden', 'screens', 'get-big', 'result.json')) || {};
+    const bigMan = readJson(path.join(big.dir, 'golden', 'manifest.json')) || {};
+    const bigOk = bigRes.cut === true && (bigMan.notCaptured || []).some((n) => /cut at 1 MB/.test(n));
+    const sseRes = readJson(path.join(big.dir, 'golden', 'screens', 'get-sse', 'result.json')) || {};
+    const sseProbe = (readJson(path.join(big.dir, 'golden', 'probes.json')) || []).find((x) => x.probe === 'no-timeout' && x.screen === 'get-sse') || {};
+    const sseOk = (sseRes.cut === true || sseRes.error === 'timeout') && sseProbe.passed === true && /stream/.test(sseProbe.evidence || '');
+    lines.push(`stream: result ${JSON.stringify(sseRes)}; probe ${sseProbe.passed} ${sseProbe.evidence}`);
+    lines.push(`over 1 MB: cut ${bigRes.cut}, bytes ${bigRes.bytes}, noted ${(bigMan.notCaptured || []).some((n) => /cut at 1 MB/.test(n))}`);
     check(2, 'discovery finds the routes from the OpenAPI file and by probing, stops at the screen cap, and copes with a service that shows nothing',
       cap.code === 0 && !missing.length && skippedAuth && pc.code === 0 && !pmissing.length && pcov.surfaceKnown === true && nc.code === 0 && ncov.surfaceKnown === false
-      && mc.code === 0 && (mcov.screensReached || []).length === 30 && (mcov.screensCut || []).length > 0, lines);
+      && mc.code === 0 && (mcov.screensReached || []).length === 30 && (mcov.screensCut || []).length > 0 && gqOk && bigOk && sseOk, lines);
   }
 
   // 3

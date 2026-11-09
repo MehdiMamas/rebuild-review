@@ -139,6 +139,7 @@ async function findDocument(ctx, call, notes) {
   return null;
 }
 
+const GQL_PROBE = '{ __schema { queryType { name } } }';
 // Probing: GET /, links in its headers and JSON, OPTIONS on each path found, robots.txt.
 async function probe(ctx, call, notes) {
   const found = new Map(); // path -> Set(methods)
@@ -164,8 +165,14 @@ async function probe(ctx, call, notes) {
     const allow = r.headers.allow;
     if (allow) for (const m of allow.split(',').map((x) => x.trim().toUpperCase())) if (['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(m)) add(p, [m]);
   }
+  // GraphQL: one POST /graphql. With introspection on it is one screen (the schema's root type); otherwise a note. Per-operation GraphQL is out of scope.
+  const gq = await call(ctx, { method: 'POST', path: '/graphql', headers: { 'content-type': 'application/json' }, body: { query: GQL_PROBE }, timeoutMs: 10000 });
+  const gqOn = gq.status === 200 && isObj(gq.body) && isObj(gq.body.data) && gq.body.data.__schema;
+  const gqSeen = gq.status === 200 && isObj(gq.body) && (gq.body.errors || gq.body.data) || [400, 401, 403].includes(gq.status) && isObj(gq.body) && gq.body.errors;
+  if (gqOn) found.set('/graphql', new Set(['POST'])); else if (gqSeen) notes.push('POST /graphql looks like GraphQL but introspection is off or refused: no screen for it; per-operation GraphQL is not captured');
   const ops = [];
   for (const [p, ms] of found) for (const method of ms) {
+    if (p === '/graphql' && gqOn && method === 'POST') { ops.push({ method, path: p, params: [], source: 'graphql', request: { method, path: p, headers: { 'content-type': 'application/json' }, body: { query: GQL_PROBE } } }); continue; }
     const entry = { method, path: p, params: [], source: 'probe', request: { method, path: p } };
     if (MUTATING.has(method)) entry.skip = 'found by probing: no documented request body';
     ops.push(entry);
