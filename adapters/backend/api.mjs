@@ -178,7 +178,8 @@ export async function start(ctx) {
   const env = serviceEnv(ctx);
   let file = 'sh', argv = ['-c', ctx.run.start];
   if (networkMode() === 'namespace') { file = 'unshare'; argv = ['--user', '--net', '--map-root-user', '--', 'sh', '-c', `${LO_UP}; exec sh -c "$1"`, 'sh', ctx.run.start]; }
-  if (ctx.log) ctx.log += '\n--- service started again ---\n';
+  const SEP = '\n--- service started again ---\n';
+  if (ctx.log) ctx.log += SEP;
   const t0 = Date.now();
   const child = spawn(file, argv, { cwd: ctx.workDir, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
   const groupsFile = process.env.RR_TMP_PARENT ? path.join(process.env.RR_TMP_PARENT, 'groups') : null;
@@ -202,10 +203,10 @@ export async function start(ctx) {
   const ready = new URL(ctx.run.readyPath || '/', ctx.origin).pathname;
   for (;;) {
     if (ctx.worker && ctx.worker.gone) { const w = ctx.worker, lastErr = scrub(w.err.trim().split('\n').pop() || 'no output'); await stop(ctx); throw new Error(`the call helper in the service namespace ended before the service answered (${w.gone}): ${lastErr}`); }
-    if (exited) { const log = ctx.log; await stop(ctx); throw new Error(`the service ended before it answered (${exited}): ${scrub(log.trim().split('\n').slice(-5).join(' | '))}`); }
+    if (exited) { const log = ctx.log.split(SEP).pop(); await stop(ctx); throw new Error(`the service ended before it answered (${exited}): ${scrub(log.trim().split('\n').slice(-5).join(' | '))}`); }
     const r = await doFetchVia(ctx, { path: ready, timeoutMs: 2000 });
     if (r.status > 0) break;
-    if (Date.now() - t0 > ctx.readyMs) { const log = ctx.log; await stop(ctx); throw new Error(`the service did not answer on ${ctx.origin} within ${Math.round(ctx.readyMs / 1000)} s: ${scrub(log.trim().split('\n').slice(-5).join(' | '))}`); }
+    if (Date.now() - t0 > ctx.readyMs) { const log = ctx.log.split(SEP).pop(); await stop(ctx); throw new Error(`the service did not answer on ${ctx.origin} within ${Math.round(ctx.readyMs / 1000)} s: ${scrub(log.trim().split('\n').slice(-5).join(' | '))}`); }
     await sleep(100);
   }
   ctx.startupMs = Date.now() - t0;
