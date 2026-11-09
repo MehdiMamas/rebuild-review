@@ -61,13 +61,19 @@ function walkImages(dir, rel, depth, out) {
   }
 }
 
-// A stop marker is stale once the run went on: a phase finished after it was written (a rerun continues from the same folder).
+// A stop marker is stale once the run went on after it was written (a rerun continues from the same folder): a phase
+// finished, a long step wrote its log, or an event was added later than the marker.
 export function stopText(runDir) {
   const f = path.join(runDir, 'report', 'stopped.txt');
   const st = tryStat(f);
   if (!st) return null;
-  for (const p of PHASES) {
-    const d = tryStat(path.join(runDir, `${p}.done`));
+  const later = [
+    ...PHASES.map((p) => path.join(runDir, `${p}.done`)),
+    path.join(runDir, 'events.jsonl'),
+    ...tryDir(path.join(runDir, 'long')).filter((n) => n.endsWith('.log')).map((n) => path.join(runDir, 'long', n)),
+  ];
+  for (const g of later) {
+    const d = tryStat(g);
     if (d && d.mtimeMs > st.mtimeMs) return null;
   }
   return tryText(f);
