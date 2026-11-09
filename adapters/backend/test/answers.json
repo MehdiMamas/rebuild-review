@@ -61,5 +61,5 @@
     "GET /session",
     "GET /public"
   ],
-  "token": "tok_0123456789abcdef0123456789abcdef0123"
+  "token": "sk-0123456789abcdef0123456789abcdef0123"
 }

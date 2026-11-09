@@ -5,6 +5,11 @@ import { restart } from './api.mjs';
 
 const STACK = [/^\s+at\s.+:\d+(:\d+)?\)?\s*$/m, /\n\s+at\s[\w$.<>]+\s*\(.+:\d+(:\d+)?\)/, /Traceback \(most recent call last\)/, /thread '[^']*' panicked/, /(^|\n)panic:[\s\S]*goroutine \d+/, /\bat [\w.$]+\([\w$]+\.java:\d+\)/, /Stack trace:\s*\n#0 /, /\.rb:\d+:in [`']/];
 const UUID = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
+const TOKEN_FORMATS = [
+  ['an sk- key', /\bsk-[A-Za-z0-9_-]{16,}/], ['a GitHub token', /\bghp_[A-Za-z0-9]{20,}/], ['an AWS access key id', /\bAKIA[0-9A-Z]{16}\b/],
+  ['a Slack token', /\bxox[abprs]-[A-Za-z0-9-]{10,}/], ['a private key', /-----BEGIN [A-Z ]*PRIVATE KEY-----/],
+  ['a JWT', /\beyJ[\w-]+\.[\w-]+\.[\w-]+/],
+];
 const JSON_CT = /json/i;
 const HANG_MS = 10000;
 
@@ -15,6 +20,7 @@ const first = (t, re) => { const m = re.exec(t); return m ? m[0].trim().slice(0,
 
 export async function runProbes({ ctx, go, screens, log, timings, notChecked }) {
   const rows = [];
+  const envValues = Object.values(ctx.run.env || {}).map(String).filter((v) => v.length >= 8);
   const row = (probe, screen, passed, evidence) => rows.push({ probe, screen, passed, evidence: scrub(evidence) });
   const safe = async (probe, screen, fn) => { try { await fn(); } catch (e) { notChecked.push({ probe, route: screen, reason: scrub(String(e.message).split('\n')[0]) }); } };
   const label = (s) => `${s.req.method} ${s.req.path}`;
@@ -88,10 +94,11 @@ export async function runProbes({ ctx, go, screens, log, timings, notChecked }) 
     for (const c of calls) {
       if (secret) break;
       if (/^bad input/.test(c.label || '')) continue;
-      const t = text(c.res.body).replace(UUID, 'id');
-      if (scrub(t) !== t) secret = `${c.req.method} ${c.req.path}${c.label ? ` (${c.label})` : ''}`;
+      const t = text(c.res.body);
+      const kind = TOKEN_FORMATS.find(([, re]) => re.test(t)) || (envValues.find((v) => t.includes(v)) ? ['a value from run.json env'] : null);
+      if (kind) secret = `${c.req.method} ${c.req.path}${c.label ? ` (${c.label})` : ''}: ${kind[0]}`;
     }
-    row('secret-in-response', id, !secret, secret ? `a token-like value is in the body of ${secret}` : 'no token-like value in any body');
+    row('secret-in-response', id, !secret, secret ? `a token-like value is in the body of ${secret}` : 'no known token format and no run.json env value in any body');
   }
 
   // latency-ms: a value, not a pass or fail.

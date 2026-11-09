@@ -45,9 +45,9 @@ http.createServer(async (req, res) => {
     // Planted: an HTML error page on a JSON service.
     if (req.method === 'GET' && /^\/orders\/[\w-]+$/.test(p)) return send(res, 404, '<html><body><h1>Not Found</h1></body></html>', 'text/html');
     // Planted: a session token in the body.
-    if (req.method === 'GET' && p === '/session') return send(res, 200, { user: 'demo', token: 'tok_0123456789abcdef0123456789abcdef0123' });
+    if (req.method === 'GET' && p === '/session') return send(res, 200, { user: 'demo', token: 'sk-0123456789abcdef0123456789abcdef0123' });
     // Planted: wildcard origin with credentials.
-    if (req.method === 'GET' && p === '/public') { res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'access-control-allow-credentials': 'true' }); return res.end('{"ok":true}'); }
+    if (req.method === 'GET' && p === '/public') { res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'access-control-allow-credentials': 'true' }); return res.end('{"ok":true,"etag":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}'); }
     // Planted: never answers.
     if (req.method === 'GET' && p === '/slow') return;
     // Not in the OpenAPI file: fetches an address given in the query (the test points it outside the machine).
