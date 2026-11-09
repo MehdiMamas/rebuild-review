@@ -163,3 +163,60 @@ test('cache: a folder over the cap loses its oldest files first', () => {
     fs.rmSync(cacheDir, { recursive: true, force: true });
   }
 });
+
+function smallRepo() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cf-cache-'));
+  git(dir, 'init', '-q');
+  fs.writeFileSync(path.join(dir, 'a.txt'), 'Line one\r\n  two  words \n');
+  git(dir, 'add', '-A');
+  git(dir, 'commit', '-qm', 'one');
+  return dir;
+}
+
+test('cache: folder 0700, file 0600 (POSIX); cached and uncached calls return identical raw texts', { skip: process.platform === 'win32' }, () => {
+  const dir = smallRepo();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cf-cachedir-'));
+  const cacheDir = path.join(root, 'texts');
+  try {
+    const first = trackedTexts(dir, { cacheDir });
+    const second = trackedTexts(dir, { cacheDir });
+    assert.deepEqual(second, first);
+    assert.equal(first[0].content, 'Line one\r\n  two  words \n');
+    assert.equal(fs.statSync(cacheDir).mode & 0o777, 0o700);
+    const f = fs.readdirSync(cacheDir)[0];
+    assert.equal(fs.statSync(path.join(cacheDir, f)).mode & 0o777, 0o600);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true }); fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('cache: a corrupt cache file is removed and the result is still right', () => {
+  const dir = smallRepo();
+  const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cf-cachedir-'));
+  try {
+    const first = trackedTexts(dir, { cacheDir });
+    const f = path.join(cacheDir, fs.readdirSync(cacheDir)[0]);
+    fs.writeFileSync(f, '{"broken');
+    const ev = events(); const again = trackedTexts(dir, { cacheDir, onCache: ev.onCache });
+    assert.deepEqual(ev.e, ['miss']);
+    assert.deepEqual(again, first);
+    assert.deepEqual(JSON.parse(fs.readFileSync(f, 'utf8')), first);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true }); fs.rmSync(cacheDir, { recursive: true, force: true });
+  }
+});
+
+test('trimCache removes .tmp files older than an hour, keeps young ones and never removes the file just written', () => {
+  const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cf-cachedir-'));
+  try {
+    const put = (n, size, ageMs) => { const p = path.join(cacheDir, n); fs.writeFileSync(p, 'x'.repeat(size)); const t = new Date(Date.now() - ageMs); fs.utimesSync(p, t, t); return p; };
+    put('old.1.tmp', 10, 2 * 3600 * 1000);
+    put('young.2.tmp', 10, 60 * 1000);
+    const keep = put('written.json', 500, 10 * 1000);
+    put('other.json', 500, 5000 * 1000);
+    trimCache(cacheDir, 600, keep);
+    assert.deepEqual(fs.readdirSync(cacheDir).sort(), ['written.json', 'young.2.tmp']);
+  } finally {
+    fs.rmSync(cacheDir, { recursive: true, force: true });
+  }
+});

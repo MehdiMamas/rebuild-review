@@ -6,9 +6,12 @@
 //   node areas.mjs states <runDir>                 joins inventory-areas/<id>/states.json into inventory/states.json
 //   node areas.mjs ids <runDir> <id>               prints the feature IDs of one area
 //   node areas.mjs coverage <runDir>              writes <runDir>/coverage.json: what the run covered per area, and what it did not reach
+//   node areas.mjs done <runDir>                   prints a JSON array of the area ids whose inventory-areas/<id>.done marker matches the area's current entry in areas.json and whose features and technology files exist
+//   node areas.mjs mark <runDir> <id>              writes inventory-areas/<id>.done: the sha256 of that area's entry (paths and entry)
 //   node areas.mjs untested <runDir>               joins parity/untested-<id>.md into parity/untested.md
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { scan, readPlan, readOwn } from './size.mjs';
 import { tryEmit } from './events.mjs';
 
@@ -159,6 +162,19 @@ export function coverage(runDir) {
   return out;
 }
 
+// sha256 of an area's entry (paths and entry): a changed entry no longer matches its marker.
+export const areaHash = (area) => crypto.createHash('sha256').update(JSON.stringify({ paths: area.paths, entry: area.entry })).digest('hex');
+
+export function doneAreas(runDir) {
+  const dir = path.join(runDir, 'inventory-areas');
+  return readSpec(runDir).areas.filter((ar) => {
+    try {
+      return fs.readFileSync(path.join(dir, `${ar.id}.done`), 'utf8').trim() === areaHash(ar)
+        && fs.existsSync(path.join(dir, ar.id, 'features.md')) && fs.existsSync(path.join(dir, `${ar.id}-technology.md`));
+    } catch { return false; }
+  }).map((ar) => ar.id);
+}
+
 function main(argv) {
   const [cmd, a, b] = argv;
   if (cmd === 'tree') {
@@ -200,6 +216,17 @@ function main(argv) {
     console.log(Object.keys(m).filter((id) => m[id] === b).sort().join(' '));
     return 0;
   }
+  if (cmd === 'done') {
+    console.log(JSON.stringify(doneAreas(a)));
+    return 0;
+  }
+  if (cmd === 'mark') {
+    const ar = readSpec(a).areas.find((x) => x.id === b);
+    if (!ar) { console.error(`no area ${b} in areas.json`); return 1; }
+    fs.mkdirSync(path.join(a, 'inventory-areas'), { recursive: true });
+    fs.writeFileSync(path.join(a, 'inventory-areas', `${b}.done`), areaHash(ar) + '\n');
+    return 0;
+  }
   if (cmd === 'untested') {
     const dir = path.join(a, 'parity');
     const parts = fs.existsSync(dir) ? fs.readdirSync(dir).filter((f) => /^untested-.+\.md$/.test(f)).sort() : [];
@@ -212,7 +239,7 @@ function main(argv) {
     console.log(`${c.areas.length} areas, ${c.totals.features} features, ${c.totals.tested} tested, ${c.notReached.length} not reached`);
     return 0;
   }
-  console.error('usage: areas.mjs tree|init|check|renumber|states|ids|untested|coverage ...');
+  console.error('usage: areas.mjs tree|init|check|renumber|states|ids|done|mark|untested|coverage ...');
   return 2;
 }
 

@@ -143,7 +143,7 @@ async function inventoryArea(area, single) {
       await agent(`Append a final line to ${FEAT}: "Critic loop stopped by the 3-round cap, not by a round with nothing new." Then run ${CHECK} and report nothing else.`, { ...CHEAP, label: 'cap-note' + L, phase: 'Inventory' })
     }
   }
-  if (!single) await agent(`Write the file ${runDir}/inventory-areas/${area.id}.done containing exactly this text: ${stoppedBy}. Touch nothing else.`, { ...CHEAP, label: 'area-done' + L, phase: 'Inventory' })
+  if (!single) await agent(`Run exactly: node ${q(pluginRoot + '/scripts/areas.mjs')} mark ${q(runDir)} ${q(area.id)} . Change nothing else.`, { ...CHEAP, label: 'area-done' + L, phase: 'Inventory' })
   return stoppedBy
 }
 
@@ -154,12 +154,12 @@ async function runInventory() {
     const AJS = `node ${q(pluginRoot + '/scripts/areas.mjs')}`
     if (areas.length === 1) stoppedBy = await inventoryArea(areas[0], true)
     else {
-      // An area with an inventory-areas/<id>.done marker (and its features.md and technology file) is finished: it is not run again. Delete its marker to run it again.
-      const marked = await agent(`List the files ending in .done directly inside ${runDir}/inventory-areas (use ls; the folder may not exist yet). For each file <id>.done, check that ${runDir}/inventory-areas/<id>/features.md and ${runDir}/inventory-areas/<id>-technology.md both exist; return only the ids where both do, each with the text inside its <id>.done file as stoppedBy. Change nothing.`, { ...CHEAP, label: 'areas-done', phase: 'Inventory', schema: { type: 'object', required: ['areas'], properties: { areas: { type: 'array', items: { type: 'object', required: ['id', 'stoppedBy'], properties: { id: { type: 'string' }, stoppedBy: { type: 'string' } } } } } } })
-      const finished = new Map(((marked && marked.areas) || []).map(m => [m.id, m.stoppedBy]))
-      const results = await parallel(areas.map(a => () => finished.has(a.id) ? finished.get(a.id) : inventoryArea(a, false)))
+      // Code decides which areas are finished: areas.mjs done prints the ids whose marker matches the area's current entry in areas.json and whose features and technology files exist. Delete a marker to run its area again.
+      const marked = await agent(`Run exactly: ${AJS} done ${q(runDir)} . It prints a JSON array of area ids. Return those ids. Change nothing.`, { ...CHEAP, label: 'areas-done', phase: 'Inventory', schema: { type: 'object', required: ['ids'], properties: { ids: { type: 'array', items: { type: 'string' } } } } })
+      const finished = new Set((marked && marked.ids) || [])
+      const results = await parallel(areas.map(a => () => finished.has(a.id) ? 'an earlier run' : inventoryArea(a, false)))
       if (results.some(r => r === null)) throw new Error('Inventory: an area died, so features.md would be incomplete')
-      stoppedBy = results.every(r => r === 'a round with nothing new') ? 'a round with nothing new' : 'the 3-round cap in at least one area'
+      stoppedBy = results.some(r => r === 'the 3-round cap') ? 'the 3-round cap in at least one area' : results.every(r => r === 'a round with nothing new') ? 'a round with nothing new' : 'an earlier run'
       const joined = await agent(`Run in order: (1) ${AJS} renumber ${q(runDir)}  (2) ${AJS} states ${q(runDir)}  (3) ${AJS} ids ${q(runDir)} ${q(areas[0].id)} . Step 3 only proves every entry carries a valid [area: id] tag. Return ok true with the outputs as detail if all exited 0, otherwise ok false with the error. Change nothing else.`, { ...CHEAP, label: 'areas-join', phase: 'Inventory', schema: RUN_RESULT })
       if (!joined || !joined.ok) throw new Error(`Inventory: joining the areas failed: ${(joined && joined.detail) || 'agent died'}`)
       const tech = await agent(`Read every file ${runDir}/inventory-areas/*-technology.md (one per area) and write ${runDir}/technology.md: one factual list of languages, frameworks, libraries, storage and build tools (names and versions only), duplicates merged. Then run: node ${q(pluginRoot + '/scripts/check-features.mjs')} ${q(runDir + '/technology.md')} ${q(WORK)}. If it prints failures, edit technology.md to remove them and run it again, at most 2 fix attempts. Return checkPassed. Do not write anywhere else.`, { model: 'sonnet', effort: 'low', label: 'technology-join', phase: 'Inventory', schema: { type: 'object', required: ['checkPassed'], properties: { checkPassed: { type: 'boolean' } } } })

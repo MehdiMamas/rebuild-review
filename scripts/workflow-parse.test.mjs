@@ -37,8 +37,8 @@ test('agents that start the app are told to stop it, and only the stop rule name
   assert.equal(lines.filter((l) => l.includes('${STOP_APP}')).length, 4)
 })
 
-test('the per-area inventory step writes and lists inventory-areas/<id>.done markers', () => {
+test('the per-area inventory step marks areas and lists the finished ones through areas.mjs', () => {
   const src = readFileSync(file, 'utf8')
-  assert.ok(/Write the file \$\{runDir\}\/inventory-areas\/\$\{area\.id\}\.done/.test(src), 'write step')
-  assert.ok(/ending in \.done directly inside \$\{runDir\}\/inventory-areas/.test(src), 'list step')
+  assert.ok(/areas\.mjs'\)\} mark \$\{q\(runDir\)\} \$\{q\(area\.id\)\}/.test(src), 'mark step')
+  assert.ok(/\$\{AJS\} done \$\{q\(runDir\)\}/.test(src), 'done step')
 })

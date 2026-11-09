@@ -63,16 +63,25 @@ export function checkText(text, srcTexts = []) {
 
 const CACHE_CAP = 2 * 1024 ** 3;
 
-// Remove the oldest cache files until the folder is at or under cap bytes.
-export function trimCache(dir, cap = CACHE_CAP) {
+// Remove .tmp files older than one hour, then the oldest cache files until the folder is at or under cap bytes.
+// The file named keep (the one just written) is never removed.
+export function trimCache(dir, cap = CACHE_CAP, keep = null) {
   let files;
   try { files = fs.readdirSync(dir).map((n) => { const p = path.join(dir, n); const st = fs.statSync(p); return { p, size: st.size, t: st.mtimeMs }; }); } catch { return; }
+  const now = Date.now();
+  files = files.filter((f) => {
+    if (f.p.endsWith('.tmp') && now - f.t > 3600 * 1000) { try { fs.rmSync(f.p, { force: true }); } catch { /* gone already */ } return false; }
+    return true;
+  });
   let total = files.reduce((a, f) => a + f.size, 0);
   for (const f of files.sort((a, b) => a.t - b.t)) {
     if (total <= cap) break;
+    if (keep && path.resolve(f.p) === path.resolve(keep)) continue;
     try { fs.rmSync(f.p, { force: true }); total -= f.size; } catch { /* another run removed it */ }
   }
 }
+
+const FILE_CAP = 256 * 1024 ** 2;
 
 // Texts of the tracked files. With a clean tracked tree the result is cached by folder and HEAD in the temp folder
 // (shared by the CLI and room.mjs). opts.onCache gets 'hit' or 'miss'; opts.cacheDir and opts.cap are for tests.
@@ -91,7 +100,10 @@ export function trackedTexts(workDir, opts = {}) {
       const cached = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
       if (opts.onCache) opts.onCache('hit');
       return cached;
-    } catch { /* no usable cache */ }
+    } catch (e) {
+      // a file that does not parse is deleted; the texts are then read fresh
+      if (e instanceof SyntaxError) { try { fs.rmSync(cacheFile, { force: true }); } catch { /* gone already */ } }
+    }
   }
   if (opts.onCache) opts.onCache('miss');
   const files = git('ls-files', '-z').split('\0').filter(Boolean);
@@ -100,16 +112,21 @@ export function trackedTexts(workDir, opts = {}) {
     let buf;
     try { buf = fs.readFileSync(path.join(workDir, f)); } catch { continue; }
     if (buf.includes(0)) continue;
-    out.push({ name: f, content: norm(buf.toString('utf8')) });
+    out.push({ name: f, content: buf.toString('utf8') });
   }
   if (cacheFile) {
+    let written = null;
     try {
-      fs.mkdirSync(cacheDir, { recursive: true });
-      const tmp = `${cacheFile}.${process.pid}.${Date.now()}.tmp`;
-      fs.writeFileSync(tmp, JSON.stringify(out));
-      fs.renameSync(tmp, cacheFile);
-      trimCache(cacheDir, opts.cap);
+      fs.mkdirSync(cacheDir, { recursive: true, mode: 0o700 });
+      const json = JSON.stringify(out);
+      if (json.length <= FILE_CAP) {
+        const tmp = `${cacheFile}.${process.pid}.${Date.now()}.tmp`;
+        fs.writeFileSync(tmp, json, { mode: 0o600 });
+        fs.renameSync(tmp, cacheFile);
+        written = cacheFile;
+      }
     } catch { /* the cache is optional */ }
+    trimCache(cacheDir, opts.cap, written);
   }
   return out;
 }
