@@ -96,7 +96,7 @@ function serviceEnv(ctx) {
 
 // One line in, one line out: runs doFetch inside the service's network namespace.
 function startWorker(ctx) {
-  const child = spawn('nsenter', ['--target', String(ctx.proc.pid), '--user', '--net', '--', process.execPath, path.join(HERE, 'worker.mjs')], { stdio: ['pipe', 'pipe', 'ignore'], detached: true });
+  const child = spawn('nsenter', ['--target', String(ctx.proc.pid), '--user', '--net', '--preserve-credentials', '--', process.execPath, path.join(HERE, 'worker.mjs')], { stdio: ['pipe', 'pipe', 'ignore'], detached: true });
   groups.add(child.pid);
   const w = { child, pending: new Map(), n: 0, buf: '' };
   child.stdout.on('data', (d) => {
@@ -110,7 +110,7 @@ function startWorker(ctx) {
   child.stdin.on('error', () => {});
   const dead = () => { for (const p of w.pending.values()) p({ status: 0, headers: {}, body: '', bytes: 0, ms: 0, error: 'the call helper in the service namespace ended' }); w.pending.clear(); };
   child.on('exit', dead);
-  w.send = (origin, req) => new Promise((resolve) => { const id = ++w.n; w.pending.set(id, resolve); child.stdin.write(JSON.stringify({ id, origin, req }) + '\n'); });
+  w.send = (origin, req) => new Promise((resolve) => { if (child.exitCode !== null || child.signalCode !== null) return resolve({ status: 0, headers: {}, body: '', bytes: 0, ms: 0, error: 'the call helper in the service namespace ended' }); const id = ++w.n; w.pending.set(id, resolve); child.stdin.write(JSON.stringify({ id, origin, req }) + '\n'); });
   return w;
 }
 
