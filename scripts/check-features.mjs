@@ -3,6 +3,8 @@
 // import or JSX-like lines, or a run of 40+ characters that contain code copied from a tracked text file in workDir.
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
+import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 
 const RUN = 40;
@@ -59,14 +61,55 @@ export function checkText(text, srcTexts = []) {
   return problems;
 }
 
-export function trackedTexts(workDir) {
-  const files = execFileSync('git', ['ls-files', '-z'], { cwd: workDir, maxBuffer: 1 << 30 }).toString().split('\0').filter(Boolean);
+const CACHE_CAP = 2 * 1024 ** 3;
+
+// Remove the oldest cache files until the folder is at or under cap bytes.
+export function trimCache(dir, cap = CACHE_CAP) {
+  let files;
+  try { files = fs.readdirSync(dir).map((n) => { const p = path.join(dir, n); const st = fs.statSync(p); return { p, size: st.size, t: st.mtimeMs }; }); } catch { return; }
+  let total = files.reduce((a, f) => a + f.size, 0);
+  for (const f of files.sort((a, b) => a.t - b.t)) {
+    if (total <= cap) break;
+    try { fs.rmSync(f.p, { force: true }); total -= f.size; } catch { /* another run removed it */ }
+  }
+}
+
+// Texts of the tracked files. With a clean tracked tree the result is cached by folder and HEAD in the temp folder
+// (shared by the CLI and room.mjs). opts.onCache gets 'hit' or 'miss'; opts.cacheDir and opts.cap are for tests.
+export function trackedTexts(workDir, opts = {}) {
+  const git = (...args) => execFileSync('git', args, { cwd: workDir, maxBuffer: 1 << 30 }).toString();
+  const cacheDir = opts.cacheDir || path.join(os.tmpdir(), 'rebuild-review-texts');
+  let cacheFile = null;
+  try {
+    if (git('status', '--porcelain', '--untracked-files=no').trim() === '') {
+      const key = crypto.createHash('sha256').update(fs.realpathSync(workDir) + '\0' + git('rev-parse', 'HEAD').trim()).digest('hex');
+      cacheFile = path.join(cacheDir, key + '.json');
+    }
+  } catch { cacheFile = null; }
+  if (cacheFile) {
+    try {
+      const cached = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
+      if (opts.onCache) opts.onCache('hit');
+      return cached;
+    } catch { /* no usable cache */ }
+  }
+  if (opts.onCache) opts.onCache('miss');
+  const files = git('ls-files', '-z').split('\0').filter(Boolean);
   const out = [];
   for (const f of files) {
     let buf;
     try { buf = fs.readFileSync(path.join(workDir, f)); } catch { continue; }
     if (buf.includes(0)) continue;
-    out.push({ name: f, content: buf.toString('utf8') });
+    out.push({ name: f, content: norm(buf.toString('utf8')) });
+  }
+  if (cacheFile) {
+    try {
+      fs.mkdirSync(cacheDir, { recursive: true });
+      const tmp = `${cacheFile}.${process.pid}.${Date.now()}.tmp`;
+      fs.writeFileSync(tmp, JSON.stringify(out));
+      fs.renameSync(tmp, cacheFile);
+      trimCache(cacheDir, opts.cap);
+    } catch { /* the cache is optional */ }
   }
   return out;
 }

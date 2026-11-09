@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { checkText, looksLikeCode, trackedTexts } from './check-features.mjs';
+import { checkText, looksLikeCode, trackedTexts, trimCache } from './check-features.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 
 const src = [{ name: 'a.js', content: 'function computeTheTotalOfAllTheItemsInTheCart(items) { return 1 }' }];
 const bad = (t, s = []) => assert.ok(checkText(t, s).length > 0, t);
@@ -79,4 +79,87 @@ test('a later code match is reported after an earlier prose match', () => {
 test('empty or short text has no copied-run problems', () => {
   assert.deepEqual(checkText('', src), []);
   assert.deepEqual(checkText('short text', src), []);
+});
+
+// ---- cache of the tracked texts (#94) ----
+const git = (dir, ...a) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'gc.auto=0', '-c', 'core.fsmonitor=false', ...a], { cwd: dir, stdio: 'pipe' });
+function repoOf(n) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cf-cache-'));
+  git(dir, 'init', '-q');
+  for (let d = 0; d < n / 500; d++) {
+    fs.mkdirSync(path.join(dir, 'd' + d));
+    for (let i = 0; i < 500 && d * 500 + i < n; i++) fs.writeFileSync(path.join(dir, 'd' + d, `f${i}.txt`), `file ${d} ${i}  text`);
+  }
+  git(dir, 'add', '-A');
+  git(dir, 'commit', '-qm', 'one');
+  return dir;
+}
+const events = () => { const e = []; return { e, onCache: (x) => e.push(x) }; };
+
+test('cache: 20,000 files, second call on the same HEAD is a hit with the same texts; a commit or a change misses', () => {
+  const dir = repoOf(20000);
+  const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cf-cachedir-'));
+  try {
+    const a = events(); const first = trackedTexts(dir, { cacheDir, onCache: a.onCache });
+    const b = events(); const second = trackedTexts(dir, { cacheDir, onCache: b.onCache });
+    assert.deepEqual(a.e, ['miss']);
+    assert.deepEqual(b.e, ['hit']);
+    assert.equal(first.length, 20000);
+    assert.deepEqual(second, first);
+    // an untracked file does not count as a change
+    fs.writeFileSync(path.join(dir, 'build.out'), 'x');
+    const c = events(); trackedTexts(dir, { cacheDir, onCache: c.onCache });
+    assert.deepEqual(c.e, ['hit']);
+    // a modified tracked file: no cache used, and none written
+    fs.writeFileSync(path.join(dir, 'd0', 'f0.txt'), 'changed');
+    const d = events(); const dirty = trackedTexts(dir, { cacheDir, onCache: d.onCache });
+    assert.deepEqual(d.e, ['miss']);
+    assert.ok(dirty.some((f) => f.content === 'changed'));
+    const files = fs.readdirSync(cacheDir);
+    assert.equal(files.length, 1);
+    // a new commit is a new key
+    git(dir, 'commit', '-qam', 'two');
+    const e = events(); trackedTexts(dir, { cacheDir, onCache: e.onCache });
+    assert.deepEqual(e.e, ['miss']);
+    assert.equal(fs.readdirSync(cacheDir).length, 2);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5 });
+    fs.rmSync(cacheDir, { recursive: true, force: true });
+  }
+});
+
+test('cache: parallel writers of one key leave a valid JSON file', async () => {
+  const dir = repoOf(50);
+  const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cf-cachedir-'));
+  try {
+    const mod = new URL('./check-features.mjs', import.meta.url).href;
+    const code = `import { trackedTexts } from ${JSON.stringify(mod)}; trackedTexts(${JSON.stringify(dir)}, { cacheDir: ${JSON.stringify(cacheDir)} });`;
+    await Promise.all(Array.from({ length: 4 }, () => new Promise((res, rej) => {
+      const c = spawn(process.execPath, ['--input-type=module', '-e', code], { stdio: 'pipe' });
+      c.on('exit', (x) => (x === 0 ? res() : rej(new Error('exit ' + x))));
+    })));
+    const files = fs.readdirSync(cacheDir);
+    assert.equal(files.length, 1, files.join());
+    assert.equal(JSON.parse(fs.readFileSync(path.join(cacheDir, files[0]), 'utf8')).length, 50);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5 });
+    fs.rmSync(cacheDir, { recursive: true, force: true });
+  }
+});
+
+test('cache: a folder over the cap loses its oldest files first', () => {
+  const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cf-cachedir-'));
+  try {
+    for (const [i, n] of ['old', 'mid', 'new'].entries()) {
+      const p = path.join(cacheDir, n + '.json');
+      fs.writeFileSync(p, 'x'.repeat(100));
+      fs.utimesSync(p, 1000 + i, 1000 + i);
+    }
+    trimCache(cacheDir, 250);
+    assert.deepEqual(fs.readdirSync(cacheDir).sort(), ['mid.json', 'new.json']);
+    trimCache(cacheDir, 0);
+    assert.deepEqual(fs.readdirSync(cacheDir), []);
+  } finally {
+    fs.rmSync(cacheDir, { recursive: true, force: true });
+  }
 });
