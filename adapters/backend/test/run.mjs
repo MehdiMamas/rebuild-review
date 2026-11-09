@@ -147,8 +147,8 @@ try {
     const gqOk = gOnIds.length === 1 && gOnIds[0].method === 'POST' && gOnIds[0].path === '/graphql' && goff.code === 0 && (gOffMan.screens || []).length === 0 && (gOffMan.notCaptured || []).some((n) => /GraphQL/.test(n));
     lines.push(`GraphQL: introspection on gives ${gOnIds.length} screen (${gOnIds.map((x) => `${x.method} ${x.path}`).join()}); off gives ${(gOffMan.screens || []).length} screens and a note: ${(gOffMan.notCaptured || []).some((n) => /GraphQL/.test(n))}`);
     // a GET whose two captures differ in shape is noted; an echoed NODE_ENV is not a secret, an echoed API_TOKEN is
-    const flipDoc = JSON.stringify({ openapi: '3.0.3', info: { title: 'flip', version: '1' }, paths: { '/flip': { get: { responses: { 200: { description: 'ok' } } } }, '/mode': { get: { responses: { 200: { description: 'ok' } } } }, '/tok': { get: { responses: { 200: { description: 'ok' } } } } } });
-    const flipSrc = `import http from 'node:http'; const doc = ${JSON.stringify(flipDoc)}; let n = 0; http.createServer((q, r) => { r.setHeader('content-type', 'application/json'); if (q.url === '/openapi.json') return r.end(doc); if (q.url === '/flip') { n++; return r.end(JSON.stringify(Array.from({ length: n }, (_, i) => i))); } if (q.url === '/mode') return r.end(JSON.stringify({ mode: process.env.NODE_ENV })); if (q.url === '/tok') return r.end(JSON.stringify({ t: process.env.API_TOKEN })); r.statusCode = 404; r.end('{}'); }).listen(Number(process.env.PORT), '127.0.0.1');`;
+    const flipDoc = JSON.stringify({ openapi: '3.0.3', info: { title: 'flip', version: '1' }, paths: { '/flip': { get: { responses: { 200: { description: 'ok' } } } }, '/mode': { get: { responses: { 200: { description: 'ok' } } } }, '/tok': { get: { responses: { 200: { description: 'ok' } } } }, '/die': { get: { responses: { 200: { description: 'ok' } } } } } });
+    const flipSrc = `import http from 'node:http'; const doc = ${JSON.stringify(flipDoc)}; let n = 0; http.createServer((q, r) => { r.setHeader('content-type', 'application/json'); if (q.url === '/openapi.json') return r.end(doc); if (q.url === '/flip') { n++; return r.end(JSON.stringify(Array.from({ length: n }, (_, i) => i))); } if (q.url === '/mode') return r.end(JSON.stringify({ mode: process.env.NODE_ENV })); if (q.url === '/tok') return r.end(JSON.stringify({ t: process.env.API_TOKEN })); if (q.url === '/die') return q.socket.destroy(); r.statusCode = 404; r.end('{}'); }).listen(Number(process.env.PORT), '127.0.0.1');`;
     const flip = await makeRun('run-flip', { start: 'node f.mjs', env: { NODE_ENV: 'development', API_TOKEN: 'plainvalue-1234' } }, { 'f.mjs': flipSrc });
     await runNode('capture.mjs', ['--app', flip.file, '--out', path.join(flip.dir, 'golden')]);
     const flipMan = readJson(path.join(flip.dir, 'golden', 'manifest.json')) || {};
@@ -157,7 +157,16 @@ try {
     const changed = (flipMan.notCaptured || []).some((x) => /GET changed state: GET \/flip/.test(x)) && !(flipMan.notCaptured || []).some((x) => /GET changed state: GET \/mode/.test(x));
     const modeClean = (secretRows.find((p) => p.screen === 'get-mode') || {}).passed === true, tokFlagged = (secretRows.find((p) => p.screen === 'get-tok') || {}).passed === false;
     lines.push(`GET that changes shape noted: ${changed}; echoed NODE_ENV not flagged: ${modeClean}; echoed API_TOKEN flagged: ${tokFlagged}`);
-    flipOk = changed && modeClean && tokFlagged;
+    const dieRow = flipProbes.find((p) => p.probe === 'server-error-on-valid' && p.screen === 'get-die') || {};
+    // run.json env values with a secret-like name never reach the golden or the HAR; the HAR cap drops entries and counts them
+    const flipFiles = allFiles(path.join(flip.dir, 'golden')).filter((f) => fs.readFileSync(f, 'utf8').includes('plainvalue-1234')).map((f) => path.relative(path.join(flip.dir, 'golden'), f));
+    const tokBody = (readJson(path.join(flip.dir, 'golden', 'screens', 'get-tok', 'response.json')) || {}).body || {};
+    const small = path.join(flip.dir, 'golden-small');
+    await runNode('capture.mjs', ['--app', flip.file, '--out', small, '--max-har-bytes', '600']);
+    const smallHar = (readJson(path.join(small, 'network.har')) || { log: { entries: [] } }).log.entries, fullHar = (readJson(path.join(flip.dir, 'golden', 'network.har')) || { log: { entries: [] } }).log.entries;
+    const smallCov = readJson(path.join(small, 'coverage.json')) || {};
+    lines.push(`a dead connection on a valid request fails: ${dieRow.passed === false}; env secret scrubbed from goldens and HAR: ${!flipFiles.length && tokBody.t === '***'}${flipFiles.length ? ` (still in ${flipFiles.join(', ')})` : ''}; HAR cap: ${smallHar.length} of ${fullHar.length} entries kept, ${smallCov.harEntriesSkipped} counted`);
+    flipOk = changed && modeClean && tokFlagged && dieRow.passed === false && !flipFiles.length && tokBody.t === '***' && smallHar.length < fullHar.length && smallCov.harEntriesSkipped === fullHar.length - smallHar.length;
     // a response over 1 MB is cut and noted
     const bigDoc = JSON.stringify({ openapi: '3.0.3', info: { title: 'big', version: '1' }, paths: { '/big': { get: { responses: { 200: { description: 'ok' } } } }, '/sse': { get: { responses: { 200: { description: 'ok' } } } } } });
     const bigSrc = `import http from 'node:http'; const doc = ${JSON.stringify(bigDoc)}; http.createServer((q, r) => { if (q.url === '/openapi.json') { r.setHeader('content-type', 'application/json'); return r.end(doc); } if (q.url === '/sse') { r.writeHead(200, { 'content-type': 'text/event-stream' }); const t = setInterval(() => r.write('data: x\\n\\n'), 200); q.on('close', () => clearInterval(t)); return; } r.setHeader('content-type', 'text/plain'); r.end('a '.repeat(1500000)); }).listen(Number(process.env.PORT), '127.0.0.1');`;
@@ -278,7 +287,16 @@ const ctx = prepare(JSON.parse(fs.readFileSync(process.env.APP_RUN, 'utf8')), pr
     const p = await runNode('parity.mjs', ['--app', main.file, '--tests', tests, '--out', out]);
     const res = readJson(out) || [];
     const by = Object.fromEntries(res.map((x) => [x.feature, x]));
-    check(8, 'parity on two tests gives one pass and one fail', p.code === 0 && by['F-001'] && by['F-001'].passed === true && by['F-002'] && by['F-002'].passed === false && /201/.test(by['F-002'].detail), [p.text.trim().split('\n').pop(), `F-002: ${by['F-002'] ? by['F-002'].detail.split('\n').find((l) => /expected|201/.test(l)) || 'no message' : 'missing'}`]);
+    // the second test starts without the file the first one left in the work copy
+    const pf = await makeRun('run-parfiles');
+    const ptests = path.join(pf.dir, 'tests'); fs.mkdirSync(ptests);
+    fs.writeFileSync(path.join(ptests, 'F-001.test.mjs'), head + `test('writes', async () => { const r = await call(ctx, { method: 'POST', path: '/local' }); assert.equal(r.body.rows, 1, 'expected one row after the first write'); });\n`);
+    fs.writeFileSync(path.join(ptests, 'F-002.test.mjs'), head + `test('starts empty', async () => { const r = await call(ctx, { path: '/local' }); assert.equal(r.body.rows, 0, 'expected no rows left by the earlier test'); });\n`);
+    const pout = path.join(pf.dir, 'results.json');
+    const pp = await runNode('parity.mjs', ['--app', pf.file, '--tests', ptests, '--out', pout]);
+    const pres = readJson(pout) || [];
+    const parFiles = pp.code === 0 && pres.length === 2 && pres.every((x) => x.passed);
+    check(8, 'parity on two tests gives one pass and one fail; a test starts without files an earlier test left', p.code === 0 && by['F-001'] && by['F-001'].passed === true && by['F-002'] && by['F-002'].passed === false && /201/.test(by['F-002'].detail) && parFiles, [p.text.trim().split('\n').pop(), `F-002: ${by['F-002'] ? by['F-002'].detail.split('\n').find((l) => /expected|201/.test(l)) || 'no message' : 'missing'}`]);
   }
 
   // 9
@@ -349,7 +367,14 @@ const ctx = prepare(JSON.parse(fs.readFileSync(process.env.APP_RUN, 'utf8')), pr
     const okRun = await makeRun('run-envlocal', { env: { MQ_URL: 'x' } }, { '.env': 'DATABASE_URL=postgres://localhost/x\nMQ_URL=amqp://mq.example.com\n', '.env.example': 'DATABASE_URL=postgres://db.example.com/x\n' });
     let okErr = ''; try { prepare(okRun.run, okRun.file); } catch (e) { okErr = e.message; }
     const envRefused = /\.env holds a postgres:\/\/ store URL/.test(envErr) && !envErr.includes('example.com') && /config\/app\.yaml holds a rediss:\/\//.test(cfgErr) && !cfgErr.includes('example.com') && okErr === '';
-    lines.push(`.env with an outside store refused without its value: ${envRefused}`);
+    const ymlRun = await makeRun('run-rootyml', {}, { 'application.yml': 'spring:\n  datasource:\n    url: postgres://db.example.com/x\n', 'package.json': '{"name":"x","note":"postgres://db.example.com/y"}' });
+    let ymlErr = ''; try { prepare(ymlRun.run, ymlRun.file); } catch (e) { ymlErr = e.message; }
+    const pkgRun = await makeRun('run-rootpkg', {}, { 'package.json': '{"name":"x","note":"postgres://db.example.com/y"}' });
+    let pkgErr = ''; try { prepare(pkgRun.run, pkgRun.file); } catch (e) { pkgErr = e.message; }
+    const cmdRun = await makeRun('run-cmdstore', { start: 'DATABASE_URL=mongodb+srv://u:p@cluster.example.net/app node server.mjs' });
+    let cmdErr = ''; try { prepare(cmdRun.run, cmdRun.file); } catch (e) { cmdErr = e.message; }
+    const rootOk = /application\.yml holds a postgres:\/\//.test(ymlErr) && !ymlErr.includes('example.com') && pkgErr === '' && /run\.json start holds a mongodb\+srv:\/\//.test(cmdErr) && !cmdErr.includes('example.net');
+    lines.push(`.env with an outside store refused without its value: ${envRefused}; root application.yml and a command with a store URL refused, package.json skipped: ${rootOk}`);
     // a work copy that is not a git repo says its file stores were not reset
     const ng = await makeRun('run-nogit');
     fs.rmSync(path.join(ng.work, '.git'), { recursive: true, force: true });
@@ -374,7 +399,7 @@ const ctx = prepare(JSON.parse(fs.readFileSync(process.env.APP_RUN, 'utf8')), pr
       lines.push(`start check with a silent listener: took ${Date.now() - t2} ms, ${serr.split(':')[0]}`);
     } else lines.push('start check with a silent listener: not checked here (proxy mode only)');
     check(9, 'a service that never answers is stopped with its child; a child left behind is killed on stop; an outside store, an outside address and Windows are refused',
-      /did not answer/.test(hangErr) && gone1 && aliveBefore && gone2 && noStale && helperOk && envRefused && noGitNote && slowOk && storeRefused && localOk && outsideAddr && winRefused, lines);
+      /did not answer/.test(hangErr) && gone1 && aliveBefore && gone2 && noStale && helperOk && envRefused && rootOk && noGitNote && slowOk && storeRefused && localOk && outsideAddr && winRefused, lines);
   }
 } finally {
   await api.stop({ proc: null, worker: null, root: null }).catch(() => {});

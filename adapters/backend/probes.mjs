@@ -70,7 +70,10 @@ export async function runProbes({ ctx, go, screens, log, timings, notChecked }) 
     const cap = s ? calls.find((c) => !c.label) || calls[0] : calls[0];
 
     // server-error-on-valid: the documented request itself.
-    if (s) row('server-error-on-valid', id, !(cap.res.status >= 500), cap.res.status >= 500 ? `${where} answered ${cap.res.status}` : `${where} answered ${cap.res.status || 'nothing'}`);
+    if (s) {
+      const dead = cap.res.status === 0 && cap.res.error !== 'timeout';
+      row('server-error-on-valid', id, !(cap.res.status >= 500) && !dead, cap.res.status >= 500 ? `${where} answered ${cap.res.status}` : dead ? `${where} got no answer (${cap.res.error || 'connection ended'}); the service refused, reset the connection or died` : `${where} answered ${cap.res.status || 'nothing'}`);
+    }
 
     let hit = null, hitAt = '';
     for (const c of calls) for (const re of STACK) if (!hit) { hit = first(`${text(c.res.body)}\n${strings(c.res.body).join('\n')}`, re); hitAt = `${c.req.method} ${c.req.path}${c.label ? ` (${c.label})` : ''} -> ${c.res.status}`; }

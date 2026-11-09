@@ -18,7 +18,11 @@ if (run.platform !== 'backend') throw new Error(`backend adapter cannot run pari
 const here = path.dirname(fileURLToPath(import.meta.url));
 
 // Install and build once; the tests then skip them (RR_PREPARED).
-prepare(run, appFile);
+const pctx = prepare(run, appFile);
+// One baseline of untracked files for the whole run, taken before the first test, so each test's fresh start removes what earlier tests left.
+const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-backend-baseline-'));
+const baselineFile = path.join(baseDir, 'baseline.json');
+fs.writeFileSync(baselineFile, JSON.stringify(pctx.baseline ? [...pctx.baseline] : null));
 const results = [];
 const TIMEOUT_MS = 120000;
 // Each test runs in its own process group with its own temp parent (RR_TMP_PARENT, used by start); both are removed afterwards.
@@ -27,7 +31,7 @@ function runTest(file) {
     const tmpParent = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-backend-parity-'));
     const child = spawn(process.execPath, ['--test', '--test-force-exit', path.join(testsDir, file)], {
       cwd: here, detached: true, stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, APP_RUN: appFile, API_MODULE: path.join(here, 'api.mjs'), APP_URL: run.address, RR_PREPARED: '1', RR_TMP_PARENT: tmpParent },
+      env: { ...process.env, APP_RUN: appFile, API_MODULE: path.join(here, 'api.mjs'), APP_URL: run.address, RR_PREPARED: '1', RR_BASELINE: baselineFile, RR_TMP_PARENT: tmpParent },
     });
     let output = '', timedOut = false, done = false;
     const take = (d) => { output = (output + d).slice(-20000); };
@@ -55,6 +59,7 @@ for (const file of fs.readdirSync(testsDir).filter((f) => /^F-.*\.test\.mjs$/.te
   const r = await runTest(file);
   results.push({ feature: file.replace(/\.test\.mjs$/, ''), passed: r.status === 0 && !r.timedOut, detail: (r.timedOut ? ['timed out after 120 s', ...r.text] : r.text).slice(-20).join('\n') });
 }
+fs.rmSync(baseDir, { recursive: true, force: true });
 fs.mkdirSync(path.dirname(out), { recursive: true });
 fs.writeFileSync(out, JSON.stringify(results, null, 2));
 console.log(`parity: ${results.filter((x) => x.passed).length}/${results.length} passed -> ${out}`);

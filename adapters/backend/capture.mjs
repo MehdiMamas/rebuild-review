@@ -7,7 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { scrub } from '../web/context.mjs';
-import { prepare, start, stop, restart, call, networkMode, scrubDeep } from './api.mjs';
+import { prepare, start, stop, restart, call, networkMode, scrubDeep as scrubDeepBase } from './api.mjs';
 import { operations, MUTATING } from './discover.mjs';
 import { runProbes } from './probes.mjs';
 
@@ -18,6 +18,9 @@ const statesFile = arg('states');
 const run = JSON.parse(fs.readFileSync(appFile, 'utf8'));
 if (run.platform !== 'backend') throw new Error(`backend adapter cannot capture platform "${run.platform}"`);
 const MAX_SCREENS = Number(arg('max-screens')) || 30;
+const MAX_HAR_BYTES = Number(arg('max-har-bytes')) || 50 * 1024 * 1024;
+// Values of run.json env whose name looks secret are replaced by *** in every body, header and log line written.
+const SECRET_NAME = /KEY|TOKEN|SECRET|PASS|CREDENTIAL|AUTH/i;
 const CALL_MS = 10000;
 const ctx = prepare(run, appFile);
 
@@ -57,6 +60,15 @@ const fill = (v, vars) => {
   if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, fill(x, vars)]));
   return v;
 };
+const secretVals = Object.entries(run.env || {}).filter(([k, v]) => SECRET_NAME.test(k) && String(v).length >= 4).map(([, v]) => String(v)).sort((x, y) => y.length - x.length);
+const hide = (v) => {
+  if (!secretVals.length) return v;
+  if (typeof v === 'string') { let t = v; for (const x of secretVals) t = t.split(x).join('***'); return t; }
+  if (Array.isArray(v)) return v.map(hide);
+  if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, hide(x)]));
+  return v;
+};
+const scrubDeep = (v) => hide(scrubDeepBase(v));
 const dig = (body, p) => String(p).split('.').filter(Boolean).reduce((o, k) => (o == null ? o : o[k]), body);
 
 // One screen: two captures. fresh: restart with empty storage before each. steps run before the last request.
@@ -166,7 +178,11 @@ const entries = log.map((e) => {
     ...(e.label ? { comment: e.label } : {}),
   });
 });
-write(path.join(out, 'network.har'), { log: { version: '1.2', creator: { name: 'rebuild-review backend adapter', version: '1' }, entries } });
+let harBytes = 0, harSkipped = 0;
+const keptEntries = [];
+for (const e of entries) { const n = JSON.stringify(e).length; if (harBytes + n > MAX_HAR_BYTES) { harSkipped++; continue; } harBytes += n; keptEntries.push(e); }
+if (harSkipped) notCaptured.push(`network.har: ${harSkipped} entries past ${MAX_HAR_BYTES} bytes were dropped`);
+write(path.join(out, 'network.har'), { log: { version: '1.2', creator: { name: 'rebuild-review backend adapter', version: '1' }, entries: keptEntries } });
 
 for (const n of ctx.notes) notCaptured.push(n);
 notCaptured.push('no screens or screenshots: HTTP service');
@@ -185,12 +201,12 @@ write(path.join(out, 'manifest.json'), JSON.stringify(scrubDeep({
 }), null, 2));
 write(path.join(out, 'coverage.json'), {
   caps: { maxScreens: MAX_SCREENS }, screensReached: captured.map((c) => c.id), screensCut: cutScreens, buttonsSkipped: [],
-  operationsSkipped, surfaceKnown: found.surfaceKnown, harEntriesSkipped: 0,
+  operationsSkipped, surfaceKnown: found.surfaceKnown, harEntriesSkipped: harSkipped,
 });
 write(path.join(out, 'timings.json'), timings);
 write(path.join(out, 'probes.json'), probes);
 write(path.join(out, 'probes-not-checked.json'), notChecked);
-const consoleText = scrub(serviceLog).split('\n').filter(Boolean).map((l) => `[service] ${l}`);
+const consoleText = hide(scrub(serviceLog)).split('\n').filter(Boolean).map((l) => `[service] ${l}`);
 write(path.join(out, 'console.log'), consoleText.join('\n') + (consoleText.length ? '\n' : ''));
 console.log(`captured ${captured.length} screens, ${captured.filter((c) => c.state).length} states, ${probes.filter((p) => !p.passed).length} probe flags -> ${out}`);
 process.exit(0);

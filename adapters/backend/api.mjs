@@ -39,6 +39,16 @@ export function checkEnv(env = {}) {
   }
 }
 
+// The scheme of the first store URL in text whose host is not on this machine, else null.
+const STORE_URL = /\b(postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|rediss?|amqps?|memcached|cockroachdb|sqlserver|mssql|clickhouse|kafka|nats):\/\/([^\s"'<>,;]*)/gi;
+function outsideStore(text) {
+  for (const m of String(text).matchAll(STORE_URL)) {
+    const host = (/^(?:[^@/]*@)?(\[[^\]]*\]|[^:/?#]*)/.exec(m[2]) || [])[1] || '';
+    if (/^[$%{]/.test(host)) continue;
+    if (!LOCAL_HOSTS.has(host.toLowerCase())) return m[1].toLowerCase();
+  }
+  return null;
+}
 // Config files in the work copy that may name a store the app would use: .env* and common config files, in the work copy's root and its config folder. Example and template files are not read by apps and are skipped.
 const TEMPLATE_FILE = /\.(example|sample|template|dist)$/i;
 export function checkWorkFiles(workDir, runEnv = {}) {
@@ -49,17 +59,14 @@ export function checkWorkFiles(workDir, runEnv = {}) {
     try { names = fs.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isFile()).map((e) => e.name); } catch { continue; }
     for (const name of names) {
       const isEnv = /^\.env/i.test(name);
-      const wanted = isEnv ? !TEMPLATE_FILE.test(name) : (sub === 'config' ? /\.(json|ya?ml|toml|properties)$/i.test(name) : /\.properties$/i.test(name));
+      const wanted = isEnv ? !TEMPLATE_FILE.test(name) : (sub === 'config' ? /\.(json|ya?ml|toml|properties)$/i.test(name) : /\.(json|ya?ml|toml|properties)$/i.test(name) && !/^(package|tsconfig[\w.-]*|jsconfig)\.json$|lock/i.test(name));
       if (!wanted) continue;
       let text = '';
       try { if (fs.statSync(path.join(dir, name)).size > 1 << 20) continue; text = fs.readFileSync(path.join(dir, name), 'utf8'); } catch { continue; }
       for (const line of text.split('\n')) {
         if (isEnv) { const k = /^\s*(?:export\s+)?([A-Za-z_][\w]*)\s*=/.exec(line); if (k && envKeys.has(k[1])) continue; }
-        for (const m of line.matchAll(/\b(postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|rediss?|amqps?|memcached|cockroachdb|sqlserver|mssql|clickhouse|kafka|nats):\/\/([^\s"'<>,;]*)/gi)) {
-          const host = (/^(?:[^@/]*@)?(\[[^\]]*\]|[^:/?#]*)/.exec(m[2]) || [])[1] || '';
-          if (/^[$%{]/.test(host)) continue;
-          if (!LOCAL_HOSTS.has(host.toLowerCase())) throw new Error(`${sub === '.' ? '' : sub + '/'}${name} holds a ${m[1].toLowerCase()}:// store URL that points outside this machine; a run never reviews against a shared or real store. Put a stand-in on this machine in run.json env, or change the work copy's file.`);
-        }
+        const scheme = outsideStore(line);
+        if (scheme) throw new Error(`${sub === '.' ? '' : sub + '/'}${name} holds a ${scheme}:// store URL that points outside this machine; a run never reviews against a shared or real store. Put a stand-in on this machine in run.json env, or change the work copy's file.`);
       }
     }
   }
@@ -78,13 +85,16 @@ export function prepare(run, runFile) {
   const workDir = path.resolve(base, run.dir || '.');
   if (!inside(base, workDir)) throw new Error(`run.json "dir" must stay inside ${base}, got ${run.dir}`);
   checkEnv(run.env);
+  for (const k of ['start', 'install', 'build']) { const sch = typeof run[k] === 'string' && outsideStore(run[k]); if (sch) throw new Error(`run.json ${k} holds a ${sch}:// store URL that points outside this machine; a run never reviews against a shared or real store. Use a stand-in on this machine.`); }
   checkWorkFiles(workDir, run.env);
   let buildMs = null;
   if (process.env.RR_PREPARED !== '1') {
     if (run.install) execSync(run.install, { cwd: workDir, stdio: 'inherit' });
     if (run.build) { const t = Date.now(); execSync(run.build, { cwd: workDir, stdio: 'inherit' }); buildMs = Date.now() - t; }
   }
-  const baseline = untracked(workDir);
+  let baseline = null;
+  if (process.env.RR_BASELINE) { try { baseline = JSON.parse(fs.readFileSync(process.env.RR_BASELINE, 'utf8')); } catch {} }
+  if (!baseline) baseline = untracked(workDir);
   const ctx = { run, runFile: key, workDir, baseline: baseline && new Set(baseline), notes: [], origin, port: new URL(origin).port, buildMs, proc: null, worker: null, root: null, log: '', startupMs: null, readyMs: Number(process.env.RR_READY_MS) || 30000 };
   prepared.set(key, ctx);
   return ctx;
@@ -161,6 +171,7 @@ export async function start(ctx) {
   if (!ctx.root) {
     ctx.root = fs.realpathSync(fs.mkdtempSync(path.join(process.env.RR_TMP_PARENT || os.tmpdir(), 'rr-backend-')));
     fs.mkdirSync(path.join(ctx.root, 'home')); fs.mkdirSync(path.join(ctx.root, 'tmp'));
+    resetWork(ctx);
   }
   const env = serviceEnv(ctx);
   let file = 'sh', argv = ['-c', ctx.run.start];
@@ -229,7 +240,6 @@ function resetWork(ctx) {
 // fresh: true (default) starts again with an empty temp home and temp folder, so embedded stores start empty.
 export async function restart(ctx, { fresh = true } = {}) {
   await stop(ctx, { removeRoot: fresh });
-  if (fresh) resetWork(ctx);
   return start(ctx);
 }
 
