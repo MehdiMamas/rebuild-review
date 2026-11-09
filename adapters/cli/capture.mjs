@@ -3,6 +3,7 @@
 // A screen is one invocation. Discovery: no arguments, --help, -h, help, --version, then the subcommands named in the help text
 // (each with --help), one level deeper. states.json steps: { args }, { stdin }, { file: { path, content } }, { env }.
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import path from 'node:path';
 import { scrub } from '../web/context.mjs';
 import { prepare, runCli, networkMode, TEXT_FILE_CAP } from './run.mjs';
@@ -41,7 +42,7 @@ async function capture(id, args, extra = {}) {
 // 1. Discovery.
 const queue = [];
 const seen = new Set();
-const known = new Set(); // subcommand names already queued at any level: a tool that repeats its list in every --help adds nothing
+const known = new Set(); // full subcommand paths already queued (`remote add`, not `add`)
 const fixed = [[[], 'no-args'], [['--help'], 'help'], [['-h'], 'h'], [['help'], 'help-command'], [['--version'], 'version']];
 const helps = {};
 for (const [args, want] of fixed) {
@@ -54,9 +55,9 @@ for (const [args, want] of fixed) {
 }
 // The subcommands come from the first of these that lists any.
 const helpText = [helps.help, helps.h, helps['no-args'], helps['help-command']].find((t) => t && subcommands(t).length) || '';
-for (const sub of subcommands(helpText)) { known.add(sub); queue.push({ path: [sub], depth: 1 }); }
+for (const sub of subcommands(helpText)) { known.add(sub); queue.push({ path: [sub], depth: 1, parentOut: helpText }); }
 for (let qi = 0; qi < queue.length; qi++) {
-  const { path: p, depth } = queue[qi];
+  const { path: p, depth, parentOut } = queue[qi];
   const args = [...p, '--help'];
   if (seen.has(args.join(' '))) continue;
   seen.add(args.join(' '));
@@ -64,7 +65,8 @@ for (let qi = 0; qi < queue.length; qi++) {
   const id = uniqueId(slug(p.join(' ')) || 'screen');
   const r = await capture(id, args);
   screens.push({ id, args, steps: [{ args }], depth });
-  if (depth < 2) for (const s of subcommands(r.stdout)) if (!known.has(s)) { known.add(s); queue.push({ path: [...p, s], depth: depth + 1 }); }
+  // A --help that prints the same text as its parent only repeats the list; its names are not new levels.
+  if (depth < 2 && r.stdout !== parentOut) for (const s of subcommands(r.stdout)) { const k = [...p, s].join(' '); if (!known.has(k)) { known.add(k); queue.push({ path: [...p, s], depth: depth + 1, parentOut: r.stdout }); } }
 }
 if (cutScreens.length) notCaptured.push(`discovery stopped at ${MAX_SCREENS} screens; ${cutScreens.length} more found and not captured`);
 
@@ -98,14 +100,19 @@ const byId = new Map(runs.map((x) => [x.id, x]));
 for (const s of screens) {
   const { result: r } = byId.get(s.id);
   const dir = path.join(out, 'screens', s.id);
-  if (r.stdoutB64) { write(path.join(dir, 'stdout.bin'), r.stdoutB64); notCaptured.push(`${s.id}: stdout is not text; saved as base64 in stdout.bin`); }
-  else write(path.join(dir, 'stdout.txt'), scrub(r.stdout));
-  if (r.stderrB64) { write(path.join(dir, 'stderr.bin'), r.stderrB64); notCaptured.push(`${s.id}: stderr is not text; saved as base64 in stderr.bin`); }
-  else write(path.join(dir, 'stderr.txt'), scrub(r.stderr));
+  // Binary output cannot be scrubbed, so only its size and hash are kept.
+  const binary = {};
+  for (const n of ['stdout', 'stderr']) {
+    if (r[`${n}B64`]) {
+      const buf = Buffer.from(r[`${n}B64`], 'base64');
+      binary[n] = { bytes: buf.length, sha256: crypto.createHash('sha256').update(buf).digest('hex') };
+      notCaptured.push(`${s.id}: ${n} is not text; only its size and hash are kept`);
+    } else write(path.join(dir, `${n}.txt`), scrub(r[n]));
+  }
   for (const n of ['stdout', 'stderr']) if (r.cut[n]) notCaptured.push(`${s.id}: ${n} was cut at 1 MB`);
   if (r.timedOut) notCaptured.push(`${s.id}: the run was stopped after the time limit`);
   if (r.error) notCaptured.push(`${s.id}: could not start: ${scrub(r.error)}`);
-  write(path.join(dir, 'result.json'), { args: s.args, code: r.code, signal: r.signal, ms: r.ms, timedOut: r.timedOut, written: r.written.map(({ path: p, bytes, sha256 }) => ({ path: p, bytes, sha256 })) });
+  write(path.join(dir, 'result.json'), { args: s.args, code: r.code, signal: r.signal, ms: r.ms, timedOut: r.timedOut, ...(binary.stdout ? { stdoutBinary: binary.stdout } : {}), ...(binary.stderr ? { stderrBinary: binary.stderr } : {}), written: r.written.map(({ path: p, bytes, sha256 }) => ({ path: p, bytes, sha256 })) });
   for (const w of r.written) {
     if (w.text !== undefined) write(path.join(dir, 'out', w.path), scrub(w.text));
     else notCaptured.push(`${s.id}: written file ${w.path} (${w.bytes} bytes) is not text or over ${TEXT_FILE_CAP / 1024} KB; only its size and hash are kept`);

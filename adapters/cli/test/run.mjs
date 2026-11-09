@@ -86,6 +86,8 @@ try {
     for (const id of ids) {
       for (const f of ['stdout.txt', 'stderr.txt', 'result.json']) {
         const p = path.join(golden, 'screens', id, f);
+        const binary = (f === 'stdout.txt' || f === 'stderr.txt') && (readJson(path.join(golden, 'screens', id, 'result.json')) || {})[`${f.slice(0, -4)}Binary`];
+        if (binary) continue; // binary output: size and hash in result.json only
         if (!fs.existsSync(p)) bad.push(`screens/${id}/${f} missing`);
         else if (f === 'result.json') { const r = readJson(p); if (!r || !('args' in r && 'code' in r && 'ms' in r && 'timedOut' in r && Array.isArray(r.written))) bad.push(`screens/${id}/result.json lacks a field`); }
       }
@@ -111,8 +113,15 @@ try {
     const nm = readJson(path.join(nohelp.dir, 'golden', 'manifest.json')) || { screens: [] };
     const nps = readJson(path.join(nohelp.dir, 'golden', 'probes.json')) || [];
     lines.push(`no --help: ${nm.screens.map((s) => s.id).join(', ')}; help-exit ${nps.some((p) => p.probe === 'help-exit' && !p.passed) ? 'flagged' : 'not flagged'}`);
+    // a nested command that repeats a top-level name (`remote add` and `add`) is still captured
+    const nestedSrc = 'const a = process.argv.slice(1); if (a[0] === "add" && a[1] === "--help") console.log("Usage: add"); else if (a[0] === "remote" && a[1] === "--help") console.log("Usage: remote\\n\\n  add    Add a remote\\n  prune  Remove stale remotes"); else if (a[0] === "remote" && a[1] === "add" && a[2] === "--help") console.log("Usage: remote add <url>"); else if (a[0] === "--help") console.log("Usage: t\\n\\n  add     Add\\n  remote  Manage remotes"); else process.exit(2)';
+    const nested = makeRun('run-nested', { platform: 'cli', command: ['node', '-e', nestedSrc, '--'] });
+    await runNode('capture.mjs', ['--app', nested.file, '--out', path.join(nested.dir, 'golden')]);
+    const nestedScreens = ((readJson(path.join(nested.dir, 'golden', 'manifest.json')) || { screens: [] }).screens).map((x) => x.id);
+    lines.push(`nested names: ${nestedScreens.join(', ')}`);
+    const nestedOk = nestedScreens.includes('remote-add') && nestedScreens.includes('add');
     check(2, 'discovery finds the commands from the help text, stops at the screen cap, and copes with a tool that has no --help',
-      cap.code === 0 && !missing.length && mc.code === 0 && cov.screensReached.length === 30 && cov.screensCut.length > 0 && nc.code === 0 && nm.screens.some((s) => s.id === 'no-args') && nm.screens.some((s) => s.id === 'h') && nps.some((p) => p.probe === 'help-exit' && !p.passed), lines);
+      nestedOk && cap.code === 0 && !missing.length && mc.code === 0 && cov.screensReached.length === 30 && cov.screensCut.length > 0 && nc.code === 0 && nm.screens.some((s) => s.id === 'no-args') && nm.screens.some((s) => s.id === 'h') && nps.some((p) => p.probe === 'help-exit' && !p.passed), lines);
   }
 
   // 3
@@ -168,10 +177,13 @@ try {
   // 6
   {
     const tokenValue = 'tok_0123456789abcdef0123456789abcdef0123';
-    const files = allFiles(golden).filter((f) => !/\.bin$/.test(f));
-    const found = files.filter((f) => fs.readFileSync(f, 'utf8').includes(tokenValue)).map((f) => path.relative(golden, f));
+    const files = allFiles(golden);
+    const forms = [Buffer.from(tokenValue), Buffer.from(Buffer.from(tokenValue).toString('base64').slice(0, 20)), Buffer.from(Buffer.concat([Buffer.from([0xff, 0xfe, 0x00]), Buffer.from(tokenValue)]).toString('base64').slice(0, 20))];
+    const found = files.filter((f) => { const b = fs.readFileSync(f); return forms.some((x) => b.includes(x)); }).map((f) => path.relative(golden, f));
+    const binRes = JSON.parse(fs.readFileSync(path.join(golden, 'screens', 'blob-token', 'result.json'), 'utf8'));
+    const binKept = !!(binRes.stdoutBinary && binRes.stdoutBinary.bytes > 3 && binRes.stdoutBinary.sha256) && !files.some((f) => /\.bin$/.test(f));
     const listed = fs.readFileSync(path.join(golden, 'screens', 'list-all', 'stdout.txt'), 'utf8');
-    check(6, 'a token-like value in the output is scrubbed in the golden', !found.length && listed.includes('token: [redacted]'), [found.length ? `token still in: ${found.join(', ')}` : 'the token appears in no golden file', `list-all printed: ${listed.trim().split('\n').pop()}`]);
+    check(6, 'a token-like value in the output is scrubbed in the golden', !found.length && binKept && listed.includes('token: [redacted]'), [`binary output with the token: size and hash only (${binKept})`, found.length ? `token still in: ${found.join(', ')}` : 'the token appears in no golden file', `list-all printed: ${listed.trim().split('\n').pop()}`]);
   }
 
   // 7

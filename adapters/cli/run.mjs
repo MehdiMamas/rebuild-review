@@ -19,6 +19,7 @@ function assertPosix() {
   if (process.platform === 'win32') throw new Error('CLI adapter: process-group kill is not supported on Windows');
 }
 
+const isFile = (p) => { try { return fs.statSync(p).isFile(); } catch { return false; } };
 const inside = (base, p) => { const r = path.relative(base, p); return r === '' || (!r.startsWith('..') && !path.isAbsolute(r)); };
 
 // Returns { base, workDir, command }. dir and command[0] stay inside the folder holding the work copy.
@@ -37,7 +38,7 @@ export function locate(run, runFile) {
     if (!inside(base, file)) throw new Error(`run.json "command[0]" must stay inside ${base}, got ${exe}`);
   }
   // A fixed argument that names a file in the work copy is given as that file's full path (the tool runs in a new folder).
-  const args = fixed.map((a) => { const p = path.resolve(workDir, a); return !path.isAbsolute(a) && !a.startsWith('-') && inside(base, p) && fs.existsSync(p) ? p : a; });
+  const args = fixed.map((a) => { const p = path.resolve(workDir, a); return !path.isAbsolute(a) && !a.startsWith('-') && inside(base, p) && isFile(p) ? p : a; });
   return { base, workDir, command: [file, ...args] };
 }
 
@@ -79,7 +80,7 @@ const sha = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
 // written paths start with cwd/ or home/; text is the content of a UTF-8 file up to 256 KB.
 export async function runCli(ctx, { args = [], stdin = '', keepStdinOpen = false, env = {}, files = {}, timeoutMs = 30000 } = {}) {
   assertPosix();
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-cli-'));
+  const root = fs.mkdtempSync(path.join(process.env.RR_TMP_PARENT || os.tmpdir(), 'rr-cli-'));
   const cwd = path.join(root, 'cwd'), home = path.join(root, 'home');
   fs.mkdirSync(cwd); fs.mkdirSync(home);
   try {

@@ -68,6 +68,7 @@ if (!args.length) {
 } else if (args[0] === 'blob') {
   // not part of the help: big or binary output
   if (args[1] === 'big') process.stdout.write('x'.repeat(1.5 * 1024 * 1024));
+  else if (args[1] === 'token') { process.stdout.write(Buffer.concat([Buffer.from([0xff, 0xfe, 0x00]), Buffer.from(process.env.FIXTURE_TOKEN || '')])); process.stderr.write(Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(process.env.FIXTURE_TOKEN || '')])); }
   else process.stdout.write(Buffer.from([0xff, 0xfe, 0x00, 0x80, 0xc3, 0x28]));
 } else {
   console.error(`error: unknown command ${args[0]}`);

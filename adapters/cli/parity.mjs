@@ -3,7 +3,8 @@
 // and imports prepare and runCli from it. Results: a list of { feature, passed, detail }.
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import os from 'node:os';
+import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { prepare } from './run.mjs';
 
@@ -18,15 +19,33 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 // Install and build once; the tests then skip them (RR_PREPARED).
 prepare(run, appFile);
 const results = [];
-for (const file of fs.readdirSync(testsDir).filter((f) => /^F-.*\.test\.mjs$/.test(f)).sort()) {
-  const r = spawnSync(process.execPath, ['--test', path.join(testsDir, file)], {
-    cwd: here,
-    env: { ...process.env, APP_RUN: appFile, CLI_RUN_MODULE: path.join(here, 'run.mjs'), RR_PREPARED: '1' },
-    encoding: 'utf8', timeout: 60000, killSignal: 'SIGKILL',
+const TIMEOUT_MS = 120000;
+// Each test runs in its own process group with its own temp parent (RR_TMP_PARENT, used by runCli); both are removed afterwards.
+function runTest(file) {
+  return new Promise((resolve) => {
+    const tmpParent = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-cli-parity-'));
+    const child = spawn(process.execPath, ['--test', path.join(testsDir, file)], {
+      cwd: here, detached: true, stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, APP_RUN: appFile, CLI_RUN_MODULE: path.join(here, 'run.mjs'), RR_PREPARED: '1', RR_TMP_PARENT: tmpParent },
+    });
+    let output = '', timedOut = false, done = false;
+    const take = (d) => { output = (output + d).slice(-20000); };
+    child.stdout.on('data', take); child.stderr.on('data', take);
+    const killGroup = () => { try { process.kill(-child.pid, 'SIGKILL'); } catch {} };
+    const timer = setTimeout(() => { timedOut = true; killGroup(); }, TIMEOUT_MS);
+    const finish = (status) => {
+      if (done) return; done = true;
+      clearTimeout(timer); killGroup();
+      fs.rmSync(tmpParent, { recursive: true, force: true });
+      resolve({ status, timedOut, text: output.trim().split('\n') });
+    };
+    child.on('error', (e) => { output += String(e.message); finish(1); });
+    child.on('close', (code) => finish(code));
   });
-  const text = `${r.stdout || ''}${r.stderr || ''}`.trim().split('\n');
-  const timedOut = r.error && r.error.code === 'ETIMEDOUT';
-  results.push({ feature: file.replace(/\.test\.mjs$/, ''), passed: r.status === 0 && !timedOut, detail: (timedOut ? ['timed out after 60 s', ...text] : text).slice(-20).join('\n') });
+}
+for (const file of fs.readdirSync(testsDir).filter((f) => /^F-.*\.test\.mjs$/.test(f)).sort()) {
+  const r = await runTest(file);
+  results.push({ feature: file.replace(/\.test\.mjs$/, ''), passed: r.status === 0 && !r.timedOut, detail: (r.timedOut ? ['timed out after 120 s', ...r.text] : r.text).slice(-20).join('\n') });
 }
 fs.mkdirSync(path.dirname(out), { recursive: true });
 fs.writeFileSync(out, JSON.stringify(results, null, 2));

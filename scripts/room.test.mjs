@@ -80,7 +80,12 @@ test('filterGolden passes a CLI golden through intact', () => {
   for (const [f, t] of Object.entries(files)) { fs.mkdirSync(path.dirname(path.join(src, f)), { recursive: true }); fs.writeFileSync(path.join(src, f), t); }
   fs.writeFileSync(path.join(src, 'run.json'), '{}');
   filterGolden(src, dest);
-  for (const [f, t] of Object.entries(files)) assert.equal(fs.readFileSync(path.join(dest, f), 'utf8'), f === 'network.har' ? t : t, f);
+  // filterGolden copies every file as it is, except run.json (dropped) and the HAR, which it rewrites with its entries filtered (none here).
+  for (const [f, t] of Object.entries(files)) {
+    const got = fs.readFileSync(path.join(dest, f), 'utf8');
+    if (f === 'network.har') assert.deepEqual(JSON.parse(got), JSON.parse(t), f);
+    else assert.equal(got, t, f);
+  }
   assert.equal(fs.existsSync(path.join(dest, 'run.json')), false);
 });
 
