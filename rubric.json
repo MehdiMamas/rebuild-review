@@ -13,6 +13,7 @@
         { "name": "heap-mb", "better": "lower", "floor": 2, "unit": "MB" },
         { "name": "build-ms", "better": "lower", "floor": 2000, "unit": "ms" },
         { "name": "startup-ms", "better": "lower", "floor": "10%", "unit": "ms" },
+        { "name": "import-ms", "better": "lower", "floor": "10%", "unit": "ms" },
         { "name": "latency-ms", "better": "lower", "floor": "10%", "unit": "ms" },
         { "name": "script-ms-per-key", "better": "lower", "floor": 2, "unit": "ms" }
       ]

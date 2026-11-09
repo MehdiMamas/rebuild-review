@@ -75,6 +75,20 @@ Probes: `server-error-on-valid`, `server-error-on-bad-input` (malformed JSON, an
 
 Parity: each test gets `APP_RUN`, `API_MODULE` (the path of `api.mjs`) and `APP_URL`, and imports `prepare`, `call` and `restart` from the module; in a network namespace `APP_URL` is not reachable from the test, so calls go through `call`. 120 seconds per test, each in its own process group with its own temp parent, removed afterwards.
 
+## Library
+
+`adapters/library/` (`run.mjs`, `harness.mjs`, `surface.mjs`, `capture.mjs`, `probes.mjs`, `parity.mjs`, `DRIVING.md`). A package other code imports, with no app to run. Its `run.json` is `{ "platform": "library", "language": "node", "dir", "install", "build", "entry", "env"? }`; `entry` is the package's main entry (a path inside `work/<dir>` or the package name). Only Node packages are driven so far; other languages stop with a plain reason.
+
+A screen is one call: `<export>` with typed-minimal arguments, and `<export>-noargs` when it has required parameters. Calls run in a child process with the isolation of the CLI adapter (empty cwd and `HOME`, allowlisted environment plus `run.env`, no network, 1 MB output cap, process-group kill). Each call is captured twice and a differing value becomes `"<varies>"` (paths in `manifest.json` `volatile`). Parameters of a stream, socket, buffer or file-handle type are not called and are listed in `coverage.json` `callsSkipped`. At most 200 exports are driven; the rest are listed.
+
+Golden extras: `surface.json` (exports with kind, signature and, for classes, members), `steps.json` and `types/` (copies of the package's `.d.ts`). `network.har` is empty.
+
+Probes: `import-side-effects`, `throws-non-error`, `unhandled-rejection`, `process-hang`, `mutates-argument`; `deprecation-warning` is listed, not judged. Values: `import-ms`, `install-size`, `dependency-count`.
+
+Surface compatibility: `surface-missing` (lower is better) counts exports of the original that the rebuild lacks or types incompatibly. It is measured for TypeScript packages only and reads "not measured" for plain JavaScript.
+
+Parity: each test gets `APP_RUN`, `LIB_MODULE` (the path of `run.mjs`), `RR_PREPARED=1` and `RR_TMP_PARENT`; 120 seconds per test in its own process group.
+
 ## Score outputs (optional)
 
 The score phase reads these `timings.json` names. An adapter that lacks one shows up as "not measured" in the score, never as 0. Per-screen names are `<screen>.<name>`; the score uses the worst across screens.
@@ -88,6 +102,7 @@ The score phase reads these `timings.json` names. An adapter that lacks one show
 | `inp-ms` | stand-in for INP: the slowest input event in the typing probe. One typing run, not field INP |
 | `build-ms` | time of the `build` command (install is not timed) |
 | `startup-ms` | CLI: median time of 5 `--help` runs. Backend: time from starting the service to its first answer |
+| `import-ms` | library: median time to import the entry |
 | `latency-ms` | backend: median of 5 calls to the first GET screen that answered |
 | `script-ms-per-key` | see Probes |
 

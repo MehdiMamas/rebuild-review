@@ -10,7 +10,7 @@ A one-shot, expensive review for a project that has grown by piling on features.
 It does not read a diff. It takes the project apart into what it does and what it
 looks like, rebuilds the full project the best and simplest way, and scores the two.
 
-Works on any kind of project: web, Android, iOS, Flutter, desktop, CLI, library, backend.
+Works on any kind of project: web, Android, iOS, Flutter, desktop, CLI, library, backend. Web, Electron, CLI, backend and Node library are driven today.
 The pipeline is the same, and only capture and the test driver change per platform.
 
 Platforms with a capture adapter: web (`adapters/web`), Electron (`adapters/electron`), command-line tools (`adapters/cli`) and HTTP services with no pages (`adapters/backend`). Setup for each is in AGENTS.md.
