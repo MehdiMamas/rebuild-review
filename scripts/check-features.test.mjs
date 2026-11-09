@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { checkText, looksLikeCode, trackedTexts, trimCache } from './check-features.mjs';
+import { checkText, looksLikeCode, trackedTexts, trimCache, cacheDirSafe } from './check-features.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -185,6 +185,29 @@ test('cache: folder 0700, file 0600 (POSIX); cached and uncached calls return id
     assert.equal(fs.statSync(cacheDir).mode & 0o777, 0o700);
     const f = fs.readdirSync(cacheDir)[0];
     assert.equal(fs.statSync(path.join(cacheDir, f)).mode & 0o777, 0o600);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true }); fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('cache: a linked cache folder is never read or written; an open folder of ours is closed to 0700', { skip: process.platform === 'win32' }, () => {
+  const dir = smallRepo();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cf-cachedir-'));
+  try {
+    const real = path.join(root, 'planted');
+    fs.mkdirSync(real);
+    const link = path.join(root, 'texts');
+    fs.symlinkSync(real, link);
+    const seen = [];
+    trackedTexts(dir, { cacheDir: link, onCache: (x) => seen.push(x) });
+    trackedTexts(dir, { cacheDir: link, onCache: (x) => seen.push(x) });
+    assert.deepEqual(seen, ['miss', 'miss'], 'a linked folder must never give a hit');
+    assert.deepEqual(fs.readdirSync(real), [], 'nothing may be written through the link');
+    assert.equal(cacheDirSafe(link), false);
+    const open = path.join(root, 'open');
+    fs.mkdirSync(open, { mode: 0o777 }); fs.chmodSync(open, 0o777);
+    assert.equal(cacheDirSafe(open), true);
+    assert.equal(fs.statSync(open).mode & 0o777, 0o700);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true }); fs.rmSync(root, { recursive: true, force: true });
   }

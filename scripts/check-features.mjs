@@ -67,7 +67,13 @@ const CACHE_CAP = 2 * 1024 ** 3;
 // The file named keep (the one just written) is never removed.
 export function trimCache(dir, cap = CACHE_CAP, keep = null) {
   let files;
-  try { files = fs.readdirSync(dir).map((n) => { const p = path.join(dir, n); const st = fs.statSync(p); return { p, size: st.size, t: st.mtimeMs }; }); } catch { return; }
+  let names;
+  try { names = fs.readdirSync(dir); } catch { return; }
+  files = [];
+  for (const n of names) {
+    const p = path.join(dir, n);
+    try { const st = fs.statSync(p); files.push({ p, size: st.size, t: st.mtimeMs }); } catch { /* another run removed it */ }
+  }
   const now = Date.now();
   files = files.filter((f) => {
     if (f.p.endsWith('.tmp') && now - f.t > 3600 * 1000) { try { fs.rmSync(f.p, { force: true }); } catch { /* gone already */ } return false; }
@@ -83,11 +89,24 @@ export function trimCache(dir, cap = CACHE_CAP, keep = null) {
 
 const FILE_CAP = 256 * 1024 ** 2;
 
+// The cache is used only when it is ours: a real folder (not a link) owned by this user, closed to others, and a
+// cache file that is a regular file owned by this user. Another user's planted folder or file is never read.
+const mine = (st) => typeof process.getuid !== 'function' || st.uid === process.getuid();
+export function cacheDirSafe(dir) {
+  try {
+    const st = fs.lstatSync(dir);
+    if (!st.isDirectory() || !mine(st)) return false;
+    if (process.platform !== 'win32' && (st.mode & 0o077)) fs.chmodSync(dir, 0o700);
+    return true;
+  } catch { return false; }
+}
+const cacheFileSafe = (f) => { try { const st = fs.lstatSync(f); return st.isFile() && mine(st); } catch { return false; } };
+
 // Texts of the tracked files. With a clean tracked tree the result is cached by folder and HEAD in the temp folder
 // (shared by the CLI and room.mjs). opts.onCache gets 'hit' or 'miss'; opts.cacheDir and opts.cap are for tests.
 export function trackedTexts(workDir, opts = {}) {
   const git = (...args) => execFileSync('git', args, { cwd: workDir, maxBuffer: 1 << 30 }).toString();
-  const cacheDir = opts.cacheDir || path.join(os.tmpdir(), 'rebuild-review-texts');
+  const cacheDir = opts.cacheDir || path.join(os.tmpdir(), 'rebuild-review-texts' + (typeof process.getuid === 'function' ? '-' + process.getuid() : ''));
   let cacheFile = null;
   try {
     if (git('status', '--porcelain', '--untracked-files=no').trim() === '') {
@@ -95,7 +114,7 @@ export function trackedTexts(workDir, opts = {}) {
       cacheFile = path.join(cacheDir, key + '.json');
     }
   } catch { cacheFile = null; }
-  if (cacheFile) {
+  if (cacheFile && cacheDirSafe(cacheDir) && cacheFileSafe(cacheFile)) {
     try {
       const cached = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
       if (opts.onCache) opts.onCache('hit');
@@ -118,6 +137,7 @@ export function trackedTexts(workDir, opts = {}) {
     let written = null;
     try {
       fs.mkdirSync(cacheDir, { recursive: true, mode: 0o700 });
+      if (!cacheDirSafe(cacheDir)) throw new Error('cache folder is not ours');
       const json = JSON.stringify(out);
       if (json.length <= FILE_CAP) {
         const tmp = `${cacheFile}.${process.pid}.${Date.now()}.tmp`;
@@ -126,7 +146,7 @@ export function trackedTexts(workDir, opts = {}) {
         written = cacheFile;
       }
     } catch { /* the cache is optional */ }
-    trimCache(cacheDir, opts.cap, written);
+    if (cacheDirSafe(cacheDir)) trimCache(cacheDir, opts.cap, written);
   }
   return out;
 }
