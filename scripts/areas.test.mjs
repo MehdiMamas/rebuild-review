@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { coverage, validate, renumber, featureAreas, buildOrder, failureIds, SINGLE } from './areas.mjs';
+import { coverage, validate, doneAreas, areaHash, renumber, featureAreas, buildOrder, failureIds, SINGLE } from './areas.mjs';
 import { weigh, collate, gaps, areaWeights } from './score.mjs';
 import { areaStackNote, areaBuildNote } from './room.mjs';
 
@@ -178,4 +178,32 @@ test('the report page has a Coverage section listing every area and the excluded
   for (const id of ['cart', 'search', 'admin']) assert.ok(html.includes(`<td>${id}</td>`));
   assert.match(html, /build helper/);
   assert.match(html, /area admin was not rebuilt/);
+});
+
+test('done: a matching marker is skipped, a changed area entry or a missing output file is redone; mark writes the hash', () => {
+  const run = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-done-'));
+  try {
+    const spec = { areas: [{ id: 'a', paths: ['a'], entry: ['a/x'] }, { id: 'b', paths: ['b'], entry: [] }, { id: 'c', paths: ['c'], entry: [] }], exclusions: [] };
+    fs.writeFileSync(path.join(run, 'areas.json'), JSON.stringify(spec));
+    const inv = path.join(run, 'inventory-areas');
+    for (const id of ['a', 'b', 'c']) {
+      fs.mkdirSync(path.join(inv, id), { recursive: true });
+      fs.writeFileSync(path.join(inv, id, 'features.md'), 'f'); fs.writeFileSync(path.join(inv, `${id}-technology.md`), 't');
+      assert.equal(cli('mark', run, id).status, 0);
+    }
+    assert.equal(fs.readFileSync(path.join(inv, 'a.done'), 'utf8').trim(), areaHash(spec.areas[0]));
+    assert.deepEqual(JSON.parse(cli('done', run).stdout), ['a', 'b', 'c']);
+    // c's output file is missing: redone
+    fs.rmSync(path.join(inv, 'c-technology.md'));
+    // b's entry changed: redone
+    spec.areas[1].paths = ['b', 'b2'];
+    fs.writeFileSync(path.join(run, 'areas.json'), JSON.stringify(spec));
+    assert.deepEqual(JSON.parse(cli('done', run).stdout), ['a']);
+    assert.deepEqual(doneAreas(run), ['a']);
+    // an old-style marker (text) does not match
+    fs.writeFileSync(path.join(inv, 'a.done'), 'a round with nothing new');
+    assert.deepEqual(JSON.parse(cli('done', run).stdout), []);
+  } finally {
+    fs.rmSync(run, { recursive: true, force: true });
+  }
 });
