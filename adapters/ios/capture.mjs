@@ -64,7 +64,20 @@ async function main() {
     return same[step.index || 0] || null;
   };
   // Launch fresh and replay steps; returns the settled hierarchy.
-  async function open(udid, steps) {
+  async function open(udid, steps, expectSig) {
+    // A replay can fail on a slow or half-started driver: try up to 3 times, restarting the driver before the last try.
+    let lastErr = null;
+    for (let t = 0; t < 3; t++) {
+      try {
+        if (t === 2 && udid === dev.udid) { driver.stop(); driver = await drv.startDriver(udid, bundle); }
+        const h = await openOnce(udid, steps);
+        if (expectSig && signature(h.elements) !== expectSig) { lastErr = new Error('the screen was not the same when reached again'); continue; }
+        return h;
+      } catch (e) { lastErr = e; }
+    }
+    throw lastErr;
+  }
+  async function openOnce(udid, steps) {
     let h;
     for (let a = 0; a < 4; a++) { // the driver sometimes reports the home screen instead of the app right after a launch: launch again
       sim.launch(udid, bundle, { args: launchArgs, env: launchEnv });
@@ -124,7 +137,7 @@ async function main() {
       const step = { click: name, ...(sameName.length > 1 ? { index: sameName.indexOf(t) } : {}) };
       try {
         let cur = item.h;
-        if (!at) { cur = await open(dev.udid, item.steps); if (signature(cur.elements) !== item.sig) { notCaptured.push(`${item.id}: could not come back to the screen after "${name}"`); continue; } }
+        if (!at) { cur = await open(dev.udid, item.steps, item.sig).catch(() => null); if (!cur) { notCaptured.push(`${item.id}: could not come back to the screen after "${name}"`); continue; } }
         const target = (name ? findByStep(cur.elements, step) : null) || t;
         const t0 = Date.now();
         await tapAt(target);
@@ -178,8 +191,7 @@ async function main() {
   const forProbes = [];
   for (const s of screens) {
     try {
-      const h = await open(dev.udid, s.steps);
-      if (!s.state && signature(h.elements) !== s.sig) throw new Error('the screen was not the same when reached again');
+      const h = await open(dev.udid, s.steps, s.state ? undefined : s.sig);
       s.h = h;
       const dir = path.join(out, 'screens', s.id);
       write(path.join(dir, 'render.json'), render(h.elements, h.size, dev.typeName));
