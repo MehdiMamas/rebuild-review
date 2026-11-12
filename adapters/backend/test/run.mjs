@@ -1,4 +1,4 @@
-// Nine checks for the backend adapter, run against the fixture service in ./fixture. node test/run.mjs
+// Twenty-eight checks for the backend adapter, run against the fixture service in ./fixture. node test/run.mjs
 // The known answers are in answers.json; only this file reads them. A planted problem the probes miss is printed as MISS and
 // is not hidden or tuned away. A check fails only when the thing it protects is broken (a leak, a hang, a missing file, a false alarm on a clean screen).
 import fs from 'node:fs';
@@ -23,6 +23,7 @@ process.env.HOME = realHome; process.env.USERPROFILE = realHome; process.env.RR_
 const api = await import(pathToFileURL(path.join(adapter, 'api.mjs')).href);
 const { prepare, start, stop, restart, call, networkMode, checkEnv, killGroup } = api;
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const results = [];
 const note = (...a) => console.log('   ', ...a);
 function check(n, name, ok, lines = []) {
@@ -410,6 +411,404 @@ const ctx = prepare(JSON.parse(fs.readFileSync(process.env.APP_RUN, 'utf8')), pr
     } else lines.push('start check with a silent listener: not checked here (proxy mode only)');
     check(9, 'a service that never answers is stopped with its child; a child left behind is killed on stop; an outside store, an outside address and Windows are refused',
       /did not answer/.test(hangErr) && gone1 && aliveBefore && gone2 && noStale && helperOk && envRefused && rootOk && noGitNote && slowOk && storeRefused && localOk && outsideAddr && winRefused, lines);
+  }
+
+  // ---- stores (checks 10 onward): a fake container runtime stands in for docker (RR_CONTAINER) and keeps a log of every call ----
+  const storesApi = await import(pathToFileURL(path.join(adapter, 'stores.mjs')).href);
+  const { validateStores, cleanupSync } = storesApi;
+  const linux = process.platform === 'linux';
+  const nsAvail = networkMode() === 'namespace';
+  const IMG = 'kv@sha256:' + 'a'.repeat(64);
+  const fakeDir = path.join(base, 'fake');
+  const fakeBin = path.join(base, 'fake-docker.sh');
+  fs.writeFileSync(fakeBin, `#!/bin/sh\nexec '${process.execPath}' '${path.join(here, 'fake-runtime.mjs')}' "$@"\n`, { mode: 0o755 });
+  process.env.RR_CONTAINER = fakeBin; process.env.RR_FAKE_DIR = fakeDir;
+  const fakeLog = () => { try { return fs.readFileSync(path.join(fakeDir, 'calls.log'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)); } catch { return []; } };
+  const fakeState = () => readJson(path.join(fakeDir, 'state.json')) || { containers: {}, networks: {} };
+  const setState = (fn) => { const s = fakeState(); fn(s); fs.writeFileSync(path.join(fakeDir, 'state.json'), JSON.stringify(s)); };
+  const left = () => { const s = fakeState(); return Object.keys(s.containers).length + Object.keys(s.networks).length; };
+  const callsSince = (mark) => fakeLog().slice(mark).map((a) => a.slice(0, a[0] === 'network' ? 2 : 1).join(' '));
+  const withEnv = async (vars, fn) => {
+    const old = {};
+    for (const [k, v] of Object.entries(vars)) { old[k] = process.env[k]; if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    try { return await fn(); } finally { for (const [k, v] of Object.entries(old)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } }
+  };
+  const kvRun = async (name, extra = {}, storeExtra = {}) => {
+    const sp = await freePort();
+    const r = await makeRun(name, { stores: [{ name: 'kv', image: IMG, port: sp, ...storeExtra }], env: { KV_ADDR: `127.0.0.1:${sp}` }, ...extra });
+    r.sp = sp; return r;
+  };
+  const put = (ctx, key, value) => call(ctx, { method: 'PUT', path: '/kv', body: { key, value } });
+  const get = (ctx, key) => call(ctx, { method: 'GET', path: '/kv', query: { key } });
+  const refusal = async (fn) => { try { await fn(); return ''; } catch (e) { return e.message; } };
+  const down = (ctx) => stop(ctx, { removeRoot: true });
+  const skip = (n, name, why) => check(n, name, true, [`not checked here (${why})`]);
+
+  // 10
+  {
+    const lines = [];
+    const good = { name: 'kv', image: IMG, port: 6400 };
+    const table = [
+      ['an image by tag', [{ ...good, image: 'redis:7' }], /store "kv".*digest/],
+      ['two stores with one name', [good, { ...good, port: 6401 }], /name is used twice/],
+      ['two stores with one port', [good, { ...good, name: 'two' }], /port 6400 is already used/],
+      ['a bad name', [{ ...good, name: 'Bad_Name' }], /name must match/],
+      ['a port out of range', [{ ...good, port: 70000 }], /port must be/],
+      ['an unknown key', [{ ...good, volume: '/x' }], /unknown key "volume"/],
+      ['a non-string env value', [{ ...good, env: { A: 1 } }], /env A must be a string/],
+      ['a ready that is not a list', [{ ...good, ready: 'pg_isready' }], /ready must be a command/],
+      ['a store port equal to the service port', [{ ...good, port: 3000 }], /port of the service itself/],
+      ['more than five stores', Array.from({ length: 6 }, (_, i) => ({ ...good, name: `s${i}`, port: 6400 + i })), /at most 5/],
+    ];
+    let allRefused = true;
+    for (const [what, list, re] of table) {
+      let msg = ''; try { validateStores(list, 3000); } catch (e) { msg = e.message; }
+      const ok = re.test(msg); allRefused = allRefused && ok;
+      lines.push(`${what}: ${ok ? 'refused' : 'NOT refused as expected (' + msg + ')'}`);
+    }
+    let accepted = true; try { validateStores([good, { ...good, name: 'two', port: 6401, env: { A: 'b' }, ready: ['true'], memory: '2g' }], 3000); } catch { accepted = false; }
+    lines.push(`a valid list accepted: ${accepted}`);
+    // through prepare: refusals come before any pull or container
+    const tag = await kvRun('run-tag', {}, { image: 'redis:7' });
+    let mark = fakeLog().length;
+    const tagMsg = await refusal(() => prepare(tag.run, tag.file));
+    const tagOk = /store "kv"/.test(tagMsg) && !fakeLog().slice(mark).some((a) => ['pull', 'run'].includes(a[0]));
+    lines.push(`tag image through prepare: refused naming the store, no pull: ${tagOk}`);
+    const noRt = await kvRun('run-nort');
+    mark = fakeLog().length;
+    const emptyBin = path.join(base, 'empty-bin'); fs.mkdirSync(emptyBin, { recursive: true });
+    const rtMsg = await withEnv({ RR_CONTAINER: undefined, PATH: emptyBin }, () => refusal(() => prepare(noRt.run, noRt.file)));
+    const rtOk = /docker/.test(rtMsg) && /podman/.test(rtMsg) && fakeLog().length === mark;
+    lines.push(`no container runtime: ${rtMsg.slice(0, 90)}; nothing started: ${rtOk}`);
+    const rl = await kvRun('run-rootless');
+    mark = fakeLog().length;
+    const rlMsg = await withEnv({ RR_FAKE_ROOTLESS: '1' }, () => refusal(() => prepare(rl.run, rl.file)));
+    const rlOk = /rootless/.test(rlMsg) && !fakeLog().slice(mark).some((a) => ['pull', 'run', 'network'].includes(a[0]));
+    lines.push(`rootless runtime: ${rlMsg.slice(0, 90)}; nothing started: ${rlOk}`);
+    const pf = await kvRun('run-pullfail');
+    mark = fakeLog().length;
+    const pfMsg = await withEnv({ RR_FAKE_PULL_FAIL: '1' }, () => refusal(() => prepare(pf.run, pf.file)));
+    const pfOk = /manifest for .* not found/.test(pfMsg) && /store "kv"/.test(pfMsg) && !fakeLog().slice(mark).some((a) => a[0] === 'run');
+    lines.push(`pull fails: ${pfMsg.slice(0, 110)}; no container started: ${pfOk}`);
+    const plain = await makeRun('run-nostores');
+    mark = fakeLog().length;
+    const pctx = prepare(plain.run, plain.file);
+    await start(pctx); const pr = await call(pctx, { path: '/items' }); await down(pctx);
+    const plainOk = pr.status === 200 && fakeLog().length === mark;
+    lines.push(`no stores: service answers, the runtime was never called: ${plainOk}`);
+    const pre = await kvRun('run-prepared');
+    mark = fakeLog().length;
+    await withEnv({ RR_PREPARED: '1' }, async () => { prepare(pre.run, pre.file); });
+    const calls = callsSince(mark);
+    const preOk = !calls.includes('pull') && !calls.includes('ps') && !calls.includes('network ls');
+    lines.push(`RR_PREPARED=1 with stores: calls were ${calls.join(', ')}; no pull, no sweep: ${preOk}`);
+    const off = await kvRun('run-offbox', { env: { DATABASE_URL: 'postgres://db.example.com:5432/app' } });
+    const offMsg = await refusal(() => prepare(off.run, off.file));
+    const offOk = /outside this machine/.test(offMsg);
+    lines.push(`run.env at a store off this machine while stores is set: refused: ${offOk}`);
+    check(10, 'stores: bad lists, a missing or rootless runtime, a failed pull and an off-machine env are refused before anything starts; no stores means no runtime lookup; RR_PREPARED=1 skips pull and sweep', allRefused && accepted && tagOk && rtOk && rlOk && pfOk && plainOk && preOk && offOk, lines);
+  }
+
+  // 11 / 12
+  for (const [n, mode] of [[11, 'namespace'], [12, 'proxy']]) {
+    const name = `a service calls its store on 127.0.0.1:<port> and gets answers, in ${mode} mode`;
+    if (!linux || (mode === 'namespace' && !nsAvail)) { skip(n, name, mode === 'namespace' ? 'needs the Linux namespace mode' : 'the fake container listens on 127.0.0.2, Linux only'); continue; }
+    await withEnv({ RR_NET_MODE: mode === 'proxy' ? 'proxy' : undefined }, async () => {
+      const r = await kvRun(`run-reach-${mode}`);
+      const ctx = prepare(r.run, r.file);
+      const lines = [`mode: ${networkMode()}`];
+      let ok = networkMode() === mode;
+      try {
+        await start(ctx);
+        const w = await put(ctx, 'a', '1'); const g = await get(ctx, 'a');
+        lines.push(`write: ${w.status} ${JSON.stringify(w.body)}; read: ${g.status} ${JSON.stringify(g.body)}`);
+        ok = ok && w.status === 200 && g.body && g.body.value === '1';
+        if (mode === 'proxy') {
+          // the proxy-mode port is taken on this machine: refused with a reason, nothing killed, no container started
+          const t = await kvRun('run-port-taken');
+          const holder = net.createServer((s) => s.end('held'));
+          await new Promise((res) => holder.listen(t.sp, '127.0.0.1', res));
+          const mark = fakeLog().length;
+          const tctx = prepare(t.run, t.file);
+          const mark2 = fakeLog().length;
+          const msg = await refusal(() => start(tctx));
+          const stillHeld = holder.listening;
+          holder.close();
+          const taken = /already in use/.test(msg) && stillHeld && !fakeLog().slice(mark2).some((a) => a[0] === 'run' || (a[0] === 'network' && a[1] === 'create'));
+          lines.push(`port taken: ${msg.slice(0, 100)}; listener untouched and no container started: ${taken}`);
+          ok = ok && taken; void mark;
+        }
+      } finally { await down(ctx); }
+      check(n, name, ok, lines);
+    });
+  }
+
+  // 13
+  if (!linux) skip(13, 'a fresh restart replaces the stores and empties them; a restart that keeps the temp root, and a service that died and is started by call, keep them', 'Linux only');
+  else {
+    const lines = [];
+    const r = await kvRun('run-restarts');
+    const ctx = prepare(r.run, r.file);
+    let ok = true;
+    try {
+      await start(ctx);
+      await put(ctx, 'a', '1');
+      const names1 = Object.keys(fakeState().containers);
+      await restart(ctx, { fresh: false });
+      const keep = Object.keys(fakeState().containers).join() === names1.join() && (await get(ctx, 'a')).body.value === '1';
+      lines.push(`restart keeping the temp root: same containers, value kept: ${keep}`);
+      killGroup(ctx.proc); await sleep(400);
+      const viaCall = await get(ctx, 'a');
+      const kept2 = Object.keys(fakeState().containers).join() === names1.join() && viaCall.body && viaCall.body.value === '1';
+      lines.push(`service killed, call starts it again: same containers, value kept: ${kept2}`);
+      await restart(ctx, { fresh: true });
+      const st = Object.keys(fakeState().containers);
+      const fresh = st.length === 1 && !names1.includes(st[0]) && (await get(ctx, 'a')).body.value === '';
+      lines.push(`fresh restart: old containers removed (${names1.length} before, ${st.length} now, names differ), new ones start, value gone: ${fresh}`);
+      ok = keep && kept2 && fresh;
+    } finally { await down(ctx); }
+    check(13, 'a fresh restart replaces the stores and empties them; a restart that keeps the temp root, and a service that died and is started by call, keep them', ok, lines);
+  }
+
+  // 14
+  if (!linux) skip(14, 'a run.env that names a store port not in stores is a service error, not a hang', 'Linux only');
+  else {
+    const free = await freePort();
+    const r = await kvRun('run-unknown-port', { env: { KV_ADDR: '127.0.0.1:' + free } });
+    const ctx = prepare(r.run, r.file);
+    let g; const t0 = Date.now();
+    try { await start(ctx); g = await get(ctx, 'a'); } finally { await down(ctx); }
+    const ms = Date.now() - t0;
+    check(14, 'a run.env that names a store port not in stores is a service error, not a hang', g.status === 502 && /store:/.test(JSON.stringify(g.body)) && ms < 15000, [`answer ${g.status} ${JSON.stringify(g.body)} after ${ms} ms`]);
+  }
+
+  // 15, 16, 17: containers that do not come up
+  for (const [n, name, vars, storeExtra, want] of [
+    [15, 'a container that never becomes ready stops the start, removes everything, and the error names the store and its last log lines', { RR_FAKE_NEVER_READY: '1', RR_STORE_READY_MS: '2500' }, {}, [/store "kv" did not become ready within 3 s/, /still initialising database/]],
+    [16, 'a ready command that hangs ends at the ready limit and everything is removed', { RR_STORE_READY_MS: '2500' }, { ready: ['hang'] }, [/store "kv" did not become ready/]],
+    [17, 'a container that exits at once after run: the error names the store and its last log lines', { RR_FAKE_EXIT_AT_ONCE: '1' }, {}, [/store "kv" exited before it was ready/, /data directory is not writable/]],
+  ]) {
+    if (!linux) { skip(n, name, 'Linux only'); continue; }
+    const r = await kvRun(`run-down-${n}`, {}, storeExtra);
+    const ctx = prepare(r.run, r.file);
+    const t0 = Date.now();
+    const msg = await withEnv(vars, () => refusal(() => start(ctx)));
+    const ms = Date.now() - t0;
+    const ok = want.every((re) => re.test(msg)) && left() === 0 && ctx.root === null && ms < 20000;
+    check(n, name, ok, [`${msg.slice(0, 160)}`, `${ms} ms; containers and networks left: ${left()}; temp root removed: ${ctx.root === null}`]);
+    for (const c of Object.keys(fakeState().containers)) spawnSync(fakeBin, ['rm', '-f', c]);
+  }
+
+  // 18
+  if (!linux) skip(18, 'a service that exits before it answers takes the stores and root down, and a later start brings the stores up again', 'Linux only');
+  else {
+    const r = await kvRun('run-svc-exit', { start: 'exit 3' });
+    const ctx = prepare(r.run, r.file);
+    const msg = await refusal(() => start(ctx));
+    const gone = left() === 0 && ctx.root === null && !ctx.stores.up;
+    ctx.run.start = 'node server.mjs';
+    let again = false;
+    try { await start(ctx); again = ctx.stores.up && left() === 2 && (await put(ctx, 'b', '2')).status === 200; } finally { await down(ctx); }
+    check(18, 'a service that exits before it answers takes the stores and root down, and a later start brings the stores up again', /ended before it answered/.test(msg) && gone && again && left() === 0, [msg.slice(0, 120), `removed after the failure: ${gone}; started again with stores: ${again}`]);
+  }
+
+  // 19: SIGTERM and a normal exit with stores up
+  if (!linux) skip(19, 'SIGTERM, or the process ending, while stores run removes the containers and the network', 'Linux only');
+  else {
+    const lines = [];
+    let ok = true;
+    for (const mode of ['term', 'exit']) {
+      const r = await kvRun(`run-hold-${mode}`);
+      const c = spawn(process.execPath, [path.join(here, 'hold.mjs'), r.file, mode], { env: process.env, stdio: ['ignore', 'pipe', 'pipe'] });
+      let out = ''; c.stdout.on('data', (d) => (out += d)); c.stderr.on('data', (d) => (out += d));
+      const ended = new Promise((res) => c.on('exit', (code, sig) => res(`${code ?? sig}`)));
+      for (let i = 0; i < 300 && !out.includes('up'); i++) await sleep(100);
+      const upSeen = out.includes('up') && left() === 2;
+      if (mode === 'term') c.kill('SIGTERM');
+      const how = await ended;
+      for (let i = 0; i < 50 && left() > 0; i++) await sleep(100);
+      const cleaned = left() === 0;
+      lines.push(`${mode}: stores up while running: ${upSeen}; process ended (${how}); containers and network left: ${left()}`);
+      ok = ok && upSeen && cleaned;
+    }
+    check(19, 'SIGTERM, or the process ending, while stores run removes the containers and the network', ok, lines);
+  }
+
+  // 20: sweep
+  if (!linux) skip(20, 'a run killed hard leaves labelled containers; the next prepare removes them and leaves those of a live owner, a young one and another host alone', 'Linux only');
+  else {
+    const lines = [];
+    const r = await kvRun('run-killed');
+    const c = spawn(process.execPath, [path.join(here, 'hold.mjs'), r.file, 'term'], { env: process.env, stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = ''; c.stdout.on('data', (d) => (out += d));
+    for (let i = 0; i < 300 && !out.includes('up'); i++) await sleep(100);
+    c.kill('SIGKILL'); await new Promise((res) => c.on('exit', res));
+    const orphans = Object.keys(fakeState().containers);
+    const net0 = Object.keys(fakeState().networks);
+    lines.push(`killed hard: ${orphans.length} container and ${net0.length} network left behind`);
+    const d = spawn(process.execPath, ['-e', '0']); await new Promise((res) => d.on('exit', res));
+    const dead = d.pid;
+    const old = Date.now() - 120000;
+    const host = os.hostname();
+    const lab = (owner, h) => ({ 'rr-backend': '1', 'rr-owner': String(owner), 'rr-host': h });
+    setState((s) => {
+      for (const o of orphans) s.containers[o].created = old; // the killed run's, now older than a minute
+      for (const n of net0) s.networks[n].created = old;
+      s.containers['rr-live-owner'] = { labels: lab(process.pid, host), created: old, network: null, port: 1 };
+      s.containers['rr-young'] = { labels: lab(dead, host), created: Date.now(), network: null, port: 1 };
+      s.containers['rr-other-host'] = { labels: lab(dead, 'another-host'), created: old, network: null, port: 1 };
+      s.containers['rr-dead-old'] = { labels: lab(dead, host), created: old, network: null, port: 1 };
+      s.networks['rr-live-net'] = { labels: lab(process.pid, host), created: old };
+    });
+    const next = await kvRun('run-next');
+    prepare(next.run, next.file);
+    const after = Object.keys(fakeState().containers).sort();
+    const nets = Object.keys(fakeState().networks).sort();
+    const swept = !orphans.some((o) => after.includes(o)) && !after.includes('rr-dead-old') && !net0.some((x) => nets.includes(x));
+    const spared = ['rr-live-owner', 'rr-young', 'rr-other-host'].every((x) => after.includes(x)) && nets.includes('rr-live-net');
+    lines.push(`after the next prepare: ${after.join(', ')}; networks ${nets.join(', ')}`);
+    lines.push(`the killed run's and a dead owner's old ones removed: ${swept}; a live owner's, a young one's and another host's left: ${spared}`);
+    setState((s) => { for (const k of ['rr-live-owner', 'rr-young', 'rr-other-host']) delete s.containers[k]; delete s.networks['rr-live-net']; });
+    check(20, 'a run killed hard leaves labelled containers; the next prepare removes them and leaves those of a live owner, a young one and another host alone', swept && spared && left() === 0, lines);
+  }
+
+  // 21
+  if (!linux) skip(21, 'the run of a store container holds an internal network, --pull=never, no -p, the labels and the memory and pids caps', 'Linux only');
+  else {
+    const sp2 = await freePort();
+    const r = await kvRun('run-args', {}, { env: { SECRET: 'stand-in' } });
+    r.run.stores.push({ name: 'cache', image: IMG, port: sp2, memory: '2g' });
+    fs.writeFileSync(r.file, JSON.stringify(r.run));
+    const mark = fakeLog().length;
+    const ctx = prepare(r.run, r.file);
+    await start(ctx); await down(ctx);
+    const calls = fakeLog().slice(mark);
+    const runs = calls.filter((a) => a[0] === 'run'), nc = calls.find((a) => a[0] === 'network' && a[1] === 'create');
+    const netName = nc && nc[nc.length - 1];
+    const val = (a, f) => a[a.indexOf(f) + 1];
+    const has = (a, x) => a.includes(x);
+    const labelsOk = runs.every((a) => ['rr-backend=1', `rr-owner=${process.pid}`, `rr-host=${os.hostname()}`].every((l) => a.some((x, i) => a[i - 1] === '--label' && x === l)));
+    const argsOk = runs.length === 2 && runs.every((a) => val(a, '--network') === netName && has(a, '--pull=never') && !has(a, '-p') && !has(a, '--publish') && !has(a, '-P') && val(a, '--pids-limit') === '512') && val(runs[0], '--memory') === '1g' && val(runs[1], '--memory') === '2g' && has(runs[0], 'SECRET=stand-in');
+    const netOk = nc && has(nc, '--internal') && /^rr-\d+-[0-9a-f]{6}$/.test(netName);
+    const order = calls.findIndex((a) => a[0] === 'network' && a[1] === 'rm') > calls.map((a) => a[0]).lastIndexOf('rm');
+    {
+      check(21, 'the run of a store container holds an internal network, --pull=never, no -p, the labels and the memory and pids caps', !!(labelsOk && argsOk && netOk && order && left() === 0), [`network ${netName}: internal ${!!(nc && has(nc, '--internal'))}`, `${runs.length} runs: labels ${labelsOk}, arguments ${argsOk}`, `containers removed before the network: ${order}`]);
+    }
+  }
+
+  // 22
+  if (!linux) skip(22, 'a store that dies after it was ready: the service call reports a closed connection', 'Linux only');
+  else {
+    const r = await kvRun('run-store-dies');
+    const ctx = prepare(r.run, r.file);
+    let g;
+    try {
+      await start(ctx);
+      await put(ctx, 'a', '1');
+      for (const c of Object.values(fakeState().containers)) { try { process.kill(c.pid, 'SIGKILL'); } catch {} }
+      await sleep(300);
+      g = await get(ctx, 'a');
+    } finally { await down(ctx); }
+    check(22, 'a store that dies after it was ready: the service call reports a closed connection', g.status === 502 && /store: /.test(JSON.stringify(g.body)), [`${g.status} ${JSON.stringify(g.body)}`]);
+  }
+
+  // 23
+  if (!linux) skip(23, 'stop twice, stop with no stores up, stop on a bare context and cleanupSync after stop change nothing', 'Linux only');
+  else {
+    const lines = [];
+    let ok = true;
+    const bare = await refusal(() => api.stop({ proc: null, worker: null, root: null }, { removeRoot: true }));
+    lines.push(`stop on a context without store fields: ${bare === '' ? 'fine' : bare}`); ok = ok && bare === '';
+    const r = await kvRun('run-idempotent');
+    const ctx = prepare(r.run, r.file);
+    let mark = fakeLog().length;
+    await down(ctx); await down(ctx);
+    const none = !callsSince(mark).some((c) => ['rm', 'network rm'].includes(c));
+    lines.push(`stop twice with no stores up made no runtime call: ${none}`); ok = ok && none;
+    await start(ctx);
+    await down(ctx);
+    mark = fakeLog().length;
+    await down(ctx); cleanupSync(ctx); await storesApi.stopStores(ctx);
+    const again = fakeLog().length === mark && left() === 0;
+    lines.push(`stop, cleanupSync and stopStores after a stop made no runtime call: ${again}`); ok = ok && again;
+    check(23, 'stop twice, stop with no stores up, stop on a bare context and cleanupSync after stop change nothing', ok, lines);
+  }
+
+  // 24: the relay
+  {
+    const lines = [];
+    const p1 = await freePort(), p2 = await freePort();
+    const rel = spawn(process.execPath, [path.join(adapter, 'relay.mjs'), `127.0.0.1:${p1}`, `127.0.0.1:${p2}`], { stdio: ['ignore', 'pipe', 'pipe'], env: { PATH: process.env.PATH, RELAY_READY: path.join(base, 'relay.ready') } });
+    let relOut = ''; rel.stdout.on('data', (d) => (relOut += d));
+    for (let i = 0; i < 50 && !fs.existsSync(path.join(base, 'relay.ready')); i++) await sleep(100);
+    const probe = () => new Promise((resolve) => {
+      const c = net.connect(p1, '127.0.0.1'); let got = '';
+      const t = setTimeout(() => { c.destroy(); resolve({ closed: false, got }); }, 3000);
+      c.on('data', (d) => (got += d)); c.on('error', () => {}); c.on('close', () => { clearTimeout(t); resolve({ closed: true, got }); });
+      c.on('connect', () => c.write('hello\n'));
+    });
+    const before = await probe();
+    const aliveAfter = rel.exitCode === null;
+    lines.push(`a connection before the store listens: closed ${before.closed}, relay still running ${aliveAfter}`);
+    const echo = net.createServer((s) => { s.on('error', () => {}); s.on('data', (d) => s.write('echo:' + d)); });
+    await new Promise((res) => echo.listen(p2, '127.0.0.1', res));
+    const after = await probe();
+    echo.close(); rel.kill('SIGKILL');
+    const piped = after.got.startsWith('echo:hello');
+    lines.push(`once the store listens the same relay carries the connection: ${piped}; the relay wrote nothing to stdout: ${relOut === ''}`);
+    check(24, 'a connection made before the store is ready closes cleanly, and the relay carries data once it is', before.closed && aliveAfter && piped && relOut === '', lines);
+  }
+
+  // 25
+  if (!linux || !nsAvail) skip(25, 'a unix socket path over 100 bytes is refused with a plain reason before any container starts', 'needs the Linux namespace mode');
+  else {
+    const longDir = path.join(base, 'a'.repeat(40), 'b'.repeat(40));
+    fs.mkdirSync(longDir, { recursive: true });
+    const r = await kvRun('run-longpath');
+    const ctx = prepare(r.run, r.file);
+    const mark = fakeLog().length;
+    const msg = await withEnv({ RR_TMP_PARENT: longDir }, () => refusal(() => start(ctx)));
+    const ok = /socket path/.test(msg) && /limit is 100/.test(msg) && !fakeLog().slice(mark).some((a) => a[0] === 'run' || (a[0] === 'network' && a[1] === 'create')) && ctx.root === null;
+    check(25, 'a unix socket path over 100 bytes is refused with a plain reason before any container starts', ok, [msg.slice(0, 120)]);
+  }
+
+  // 26: two parity tests that each start the service
+  if (!linux) skip(26, 'two parity tests that each start the service leave no container behind', 'Linux only');
+  else {
+    const r = await kvRun('run-parity');
+    const tests = path.join(r.dir, 'tests');
+    fs.mkdirSync(tests);
+    const body = (kill) => `import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport fs from 'node:fs';\nconst { prepare, call } = await import('file://' + process.env.API_MODULE);\nconst ctx = prepare(JSON.parse(fs.readFileSync(process.env.APP_RUN, 'utf8')), process.env.APP_RUN);\ntest('store', async () => {\n  const r = await call(ctx, { method: 'PUT', path: '/kv', body: { key: 'a', value: '1' } });\n  assert.equal(r.status, 200);\n${kill ? "  process.kill(process.pid, 'SIGKILL');\n" : ''}});\n`;
+    fs.writeFileSync(path.join(tests, 'F-001.test.mjs'), body(false));
+    fs.writeFileSync(path.join(tests, 'F-002.test.mjs'), body(true));
+    const mark = fakeLog().length;
+    const pr = await runNode('parity.mjs', ['--app', r.file, '--tests', tests, '--out', path.join(r.dir, 'results.json')]);
+    const res = readJson(path.join(r.dir, 'results.json')) || [];
+    const started = fakeLog().slice(mark).filter((a) => a[0] === 'run').length;
+    const first = res.find((x) => x.feature === 'F-001');
+    check(26, 'two parity tests that each start the service leave no container behind', pr.code === 0 && first && first.passed && started === 2 && left() === 0, [`parity exited ${pr.code}: ${pr.text.trim().split('\n').pop()}`, `containers started: ${started}; left after the suite: ${left()}`]);
+  }
+
+  // 27: a real runtime, by hand
+  {
+    const image = process.env.RR_REAL_IMAGE, port = Number(process.env.RR_REAL_PORT);
+    if (process.env.RR_REAL_RUNTIME !== '1' || !image || !port) skip(27, 'a real container runtime starts a store and removes it again', 'set RR_REAL_RUNTIME=1, RR_REAL_IMAGE (by digest) and RR_REAL_PORT; not part of CI');
+    else await withEnv({ RR_CONTAINER: process.env.RR_REAL_CONTAINER || undefined, RR_FAKE_DIR: undefined }, async () => {
+      const r = await makeRun('run-real', { stores: [{ name: 'real', image, port }] });
+      const msg = await refusal(async () => { const ctx = prepare(r.run, r.file); try { await start(ctx); const s = await new Promise((res) => { const c = net.connect(port, '127.0.0.1'); c.on('connect', () => { c.destroy(); res(true); }); c.on('error', () => res(false)); }); if (!s) throw new Error('the store port did not answer through the relay'); } finally { await down(ctx); } });
+      check(27, 'a real container runtime starts a store and removes it again', msg === '', [msg || 'store up, reachable on 127.0.0.1, removed']);
+    });
+  }
+
+  // 28: nothing left
+  {
+    const log = fakeLog();
+    const ran = log.filter((a) => a[0] === 'run').map((a) => a[a.indexOf('--name') + 1]);
+    const removed = new Set(log.filter((a) => a[0] === 'rm').map((a) => a[a.length - 1]));
+    const nets = log.filter((a) => a[0] === 'network' && a[1] === 'create').map((a) => a[a.length - 1]);
+    const netsRemoved = new Set(log.filter((a) => a[0] === 'network' && a[1] === 'rm').map((a) => a[a.length - 1]));
+    const unmatched = ran.filter((x) => !removed.has(x)), unmatchedNets = nets.filter((x) => !netsRemoved.has(x));
+    check(28, 'after the suite no store container or network is left, and every run in the fake runtime log has a matching rm', !unmatched.length && !unmatchedNets.length && left() === 0, [`${ran.length} runs, ${nets.length} networks created; unmatched: ${unmatched.length + unmatchedNets.length}; left in the fake: ${left()}`]);
   }
 } finally {
   await api.stop({ proc: null, worker: null, root: null }).catch(() => {});

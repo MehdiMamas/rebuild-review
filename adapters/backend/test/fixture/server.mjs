@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import net from 'node:net';
 import { spawn } from 'node:child_process';
 
 const store = path.join(os.homedir(), '.items.json');
@@ -11,6 +12,18 @@ const load = () => { try { return JSON.parse(fs.readFileSync(store, 'utf8')); } 
 const save = (items) => fs.writeFileSync(store, JSON.stringify(items));
 const send = (res, status, body, type = 'application/json') => { res.writeHead(status, { 'content-type': type }); res.end(typeof body === 'string' ? body : JSON.stringify(body)); };
 const readBody = (req) => new Promise((resolve) => { let t = ''; req.on('data', (d) => (t += d)); req.on('end', () => resolve(t)); });
+
+// One line to the store named by KV_ADDR (host:port) and its one-line answer; a closed connection is an error.
+const kv = (line) => new Promise((resolve, reject) => {
+  const [host, port] = String(process.env.KV_ADDR || '').split(':');
+  const c = net.connect({ host, port: Number(port) });
+  let buf = '';
+  c.setTimeout(3000, () => { c.destroy(); reject(new Error('store timed out')); });
+  c.on('connect', () => c.write(line + '\n'));
+  c.on('data', (d) => { buf += d; if (buf.includes('\n')) { c.end(); resolve(buf.split('\n')[0]); } });
+  c.on('error', (e) => reject(new Error(`store: ${e.code || e.message}`)));
+  c.on('close', () => { if (!buf.includes('\n')) reject(new Error('store: connection closed')); });
+});
 
 http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
@@ -59,6 +72,13 @@ http.createServer(async (req, res) => {
     // Not in the OpenAPI file: fetches an address given in the query (the test points it outside the machine).
     if (req.method === 'GET' && p === '/fetch') {
       try { const r = await fetch(url.searchParams.get('url'), { signal: AbortSignal.timeout(3000) }); return send(res, 200, { status: r.status }); } catch (e) { return send(res, 502, { error: 'fetch failed' }); }
+    }
+    // Not in the OpenAPI file: a value in the store named by KV_ADDR.
+    if (p === '/kv') {
+      try {
+        if (req.method === 'PUT') { const b = JSON.parse(await readBody(req)); return send(res, 200, { reply: await kv(`SET ${b.key} ${b.value}`) }); }
+        if (req.method === 'GET') return send(res, 200, { value: await kv(`GET ${url.searchParams.get('key')}`) });
+      } catch (e) { return send(res, 502, { error: e.message }); }
     }
     // Not in the OpenAPI file: what the service sees of this machine.
     if (req.method === 'GET' && p === '/env') return send(res, 200, { home: os.homedir(), tmp: os.tmpdir(), secret: process.env.RR_SECRET_PARENT || null });
