@@ -45,7 +45,10 @@ async function longRun(name, command, label, phase) {
     }
     dead = 0
     // A cheap agent can drop code 0; an exited command answers at once, so ask again instead of calling it a failure.
-    if (w.state === 'exited' && typeof w.code !== 'number' && ++noCode < 3) continue
+    if (w.state === 'exited' && typeof w.code !== 'number') {
+      if (++noCode >= 3) return { state: 'wait-failed', tail: 'the wait agent answered exited without an exit code 3 times in a row' }
+      continue
+    }
     if (w.state !== 'running') return w
   }
   return { state: 'timeout', tail: 'still running after 8 hours of waiting' }

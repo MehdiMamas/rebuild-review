@@ -46,5 +46,6 @@ test('the per-area inventory step marks areas and lists the finished ones throug
 test('a wait answer without a numeric code is asked again, and code 0 is named in the prompt (#151)', () => {
   const src = readFileSync(file, 'utf8')
   assert.match(src, /state === 'exited' && typeof w\.code !== 'number'/)
+  assert.match(src, /noCode >= 3\) return \{ state: 'wait-failed'/)
   assert.match(src, /0 is a number: always include it/)
 })
