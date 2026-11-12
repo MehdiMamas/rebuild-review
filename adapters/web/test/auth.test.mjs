@@ -25,6 +25,8 @@ function cap(name, { auth, env = {}, args = [] } = {}) {
   const runDir = path.join(tmp, name), port = nextPort++;
   fs.mkdirSync(path.join(runDir, 'work'), { recursive: true });
   fs.copyFileSync(path.join(here, 'site-auth.mjs'), path.join(runDir, 'work', 'site-auth.mjs'));
+  spawnSync('git', ['init', '-q'], { cwd: path.join(runDir, 'work') }); // areas.mjs counts the work copy's tracked files
+  spawnSync('git', ['add', '-A'], { cwd: path.join(runDir, 'work') });
   const hitlog = path.join(runDir, 'hits.log');
   const run = { platform: 'web', start: 'node site-auth.mjs', address: `http://127.0.0.1:${port}`, env: { HITLOG: hitlog, ...env } };
   if (auth !== undefined) run.auth = auth;
