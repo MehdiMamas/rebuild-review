@@ -244,3 +244,9 @@ test('given a typed value with HTML characters -> its escaped forms are masked a
   const q = authSecrets({ steps: [{ type: { into: 'x', text: `it's "x"` } }] });
   assert.equal(redactSecrets('it&#39;s &quot;x&quot; it&#x27;s &quot;x&quot;', q), '*** ***');
 });
+
+test('given a typed value that appears URL-encoded -> it is masked in that form too', async () => {
+  const { expandSecrets, redactSecrets } = await import('../redact.mjs');
+  const s = expandSecrets(['pat@example.test', 'a b']);
+  assert.equal(redactSecrets('/x?email=pat%40example.test&q=a+b&r=a%20b', s), '/x?email=***&q=***&r=***');
+});

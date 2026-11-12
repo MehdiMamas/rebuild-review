@@ -12,6 +12,9 @@ export function expandSecrets(values) {
     out.add(v);
     const j = JSON.stringify(v).slice(1, -1);
     if (j !== v) out.add(j);
+    // URL-encoded forms (encodeURIComponent, and + for spaces).
+    const u = encodeURIComponent(v);
+    if (u !== v) { out.add(u); if (u.includes('%20')) out.add(u.replace(/%20/g, '+')); }
     // page.content() and other HTML writers escape & < > and quotes; mask those forms too.
     const base = v.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     for (const h of [base, base.replace(/"/g, '&quot;'), base.replace(/"/g, '&quot;').replace(/'/g, '&#39;'), base.replace(/"/g, '&quot;').replace(/'/g, '&#x27;')]) if (h !== v) out.add(h);
