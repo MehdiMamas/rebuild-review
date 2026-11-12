@@ -51,5 +51,5 @@ test('a wait answer without a numeric code is asked again, and code 0 is named i
 })
 
 test('the capture prep keeps an auth block already in run.json (#153)', () => {
-  assert.match(readFileSync(file, 'utf8'), /with a .{0,3}base.{0,3} or .{0,3}auth.{0,3} key/)
+  assert.match(readFileSync(file, 'utf8'), /with a .{0,3}base.{0,3}, .{0,3}auth.{0,3} or .{0,3}env.{0,3} key/)
 })
