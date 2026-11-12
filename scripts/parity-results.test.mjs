@@ -97,6 +97,33 @@ test('loop: stop with no progress after 2 rounds that did not improve, and resto
   assert.equal(fs.readFileSync(path.join(f.run, 'rebuild', 'project-from-build-3', 'v'), 'utf8'), '3');
 });
 
+test('loop: a round worse than the best so far stops at once and restores the best build (#143)', () => {
+  const f = runFixture({ rebuild: { 'F-001': false, 'F-002': false, 'F-003': true }, rounds: [['F-001']], builds: [{ n: 1, cost: 1 }, { n: 2, cost: 1 }] });
+  fs.writeFileSync(path.join(f.run, 'project', 'v'), '2');
+  fs.mkdirSync(path.join(f.run, 'rebuild', 'project-from-build-1'));
+  fs.writeFileSync(path.join(f.run, 'rebuild', 'project-from-build-1', 'v'), '1');
+  assert.deepEqual(loop(f.par, f.md, f.run), { action: 'stop', reason: 'no progress', failing: ['F-001', 'F-002'], restored: 1 });
+  assert.equal(fs.readFileSync(path.join(f.run, 'project', 'v'), 'utf8'), '1');
+});
+
+test('loop: a round that ties the best stops at once; a round that lowers the count builds on (#143)', () => {
+  let f = runFixture({ rebuild: { 'F-001': false, 'F-002': true, 'F-003': true }, rounds: [['F-001']], builds: [{ n: 1, cost: 1 }, { n: 2, cost: 1 }] });
+  assert.equal(loop(f.par, f.md, f.run).reason, 'no progress');
+  f = runFixture({ rebuild: { 'F-001': false, 'F-002': true, 'F-003': true }, rounds: [['F-001', 'F-002']], builds: [{ n: 1, cost: 1 }, { n: 2, cost: 1 }] });
+  assert.equal(loop(f.par, f.md, f.run).action, 'build');
+});
+
+test('loop: no result for any feature stops with "suite did not run", in the first round too (#143)', () => {
+  let f = runFixture({ rebuild: {} });
+  fs.writeFileSync(path.join(f.par, 'rebuild.json'), '[]');
+  assert.deepEqual(loop(f.par, f.md, f.run), { action: 'stop', reason: 'suite did not run', failing: ['F-001', 'F-002', 'F-003'] });
+  f = runFixture({ rounds: [['F-001', 'F-002', 'F-003']] });
+  assert.equal(loop(f.par, f.md, f.run).reason, 'suite did not run');
+  // some results present: the suite ran, so it builds
+  f = runFixture({ rebuild: { 'F-001': false } });
+  assert.equal(loop(f.par, f.md, f.run).action, 'build');
+});
+
 test('loop: a tie picks the later build, so nothing is restored', () => {
   const f = runFixture({ rebuild: { 'F-001': false, 'F-002': true, 'F-003': true }, rounds: [['F-001'], ['F-001']], builds: [{ n: 1, cost: 1 }, { n: 2, cost: 1 }, { n: 3, cost: 1 }] });
   fs.mkdirSync(path.join(f.run, 'rebuild', 'project-from-build-1'));

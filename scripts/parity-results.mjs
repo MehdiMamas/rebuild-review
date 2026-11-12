@@ -29,6 +29,7 @@ export function wrongTests(results, kindMap) {
 }
 
 export const MAX_ROUNDS = 5;
+const NO_RESULT = 'no result for this feature';
 export const LOOP_USD = 50; // the floor; a big app gets more from size.json (plan.loopUsd)
 
 const readJson = (f) => JSON.parse(fs.readFileSync(f, 'utf8'));
@@ -83,7 +84,7 @@ export function failing(parDir, featuresMd) {
   const rf = path.join(parDir, 'rebuild.json');
   const by = fs.existsSync(rf) ? Object.fromEntries(readJson(rf).map((r) => [r.feature, r])) : {};
   return Object.keys(kindMap).sort().filter((id) => !un.has(id)).filter((id) => !(by[id] && by[id].passed))
-    .map((id) => ({ feature: id, kind: kindMap[id], detail: by[id] ? String(by[id].detail || '') : 'no result for this feature' }));
+    .map((id) => ({ feature: id, kind: kindMap[id], detail: by[id] ? String(by[id].detail || '') : NO_RESULT }));
 }
 
 // A failure message without stack lines, quoted test source, or absolute file paths, at most 15 lines.
@@ -209,10 +210,13 @@ export function loop(parDir, featuresMd, runDir) {
   rounds.push({ round: rounds.length + 1, build, failing: fails.map((f) => f.feature), costUsd: spent });
   fs.writeFileSync(rf, JSON.stringify(rounds, null, 2));
   fs.writeFileSync(path.join(parDir, 'failures.md'), fails.map((f) => `## ${f.feature} (${f.kind})\n${noMessage(f.detail) ? `The test gave no message for ${f.feature}; read its text in features.md.\n` : ''}${cleanDetail(f.detail, parDir)}\n`).join('\n'));
-  const counts = rounds.map((r) => r.failing.length), low = Math.min(...counts);
+  const counts = rounds.map((r) => r.failing.length);
+  // The suite did not run: no run error, yet every failing feature has no result at all (#143).
+  const suiteDidNotRun = !fs.existsSync(errFile) && fails.length > 0 && fails.every((f) => f.detail === NO_RESULT);
   let out;
   if (!fails.length) out = { action: 'done', reason: 'all tested features pass' };
-  else if (counts.length - 1 - counts.indexOf(low) >= 2) out = { action: 'stop', reason: 'no progress' };
+  else if (suiteDidNotRun) out = { action: 'stop', reason: 'suite did not run' };
+  else if (counts.length >= 2 && counts[counts.length - 1] >= Math.min(...counts.slice(0, -1))) out = { action: 'stop', reason: 'no progress' };
   else if (spent >= readPlan(runDir).loopUsd) out = { action: 'stop', reason: 'budget' };
   else if (rounds.length >= MAX_ROUNDS) out = { action: 'stop', reason: 'rounds' };
   else out = { action: 'build', reason: 'failures go back to the builder' };
