@@ -365,3 +365,33 @@ test('prep probes the host the address names: localhost gets a port free on both
   fs.writeFileSync(rb, JSON.stringify({ address: 'http://203.0.113.9:3000' }));
   await assert.rejects(prep(par, rb), /cannot find a free port on host 203\.0\.113\.9/);
 });
+
+// ---- restore, then the final suite (#130) ----
+const loopCli = (f) => JSON.parse(spawnSync(process.execPath, [new URL('./parity-results.mjs', import.meta.url).pathname, 'loop', f.par, f.md, f.run], { encoding: 'utf8' }).stdout);
+
+test('loop command always prints restored: the build number after a restore, 0 when nothing was restored (#130)', () => {
+  let f = runFixture({ rebuild: { 'F-001': false, 'F-002': false, 'F-003': true }, rounds: [['F-001']], builds: [{ n: 1, cost: 1 }, { n: 2, cost: 1 }] });
+  fs.mkdirSync(path.join(f.run, 'rebuild', 'project-from-build-1'));
+  assert.equal(loopCli(f).restored, 1);
+  f = runFixture({ rebuild: { 'F-001': false, 'F-002': true, 'F-003': true } });
+  const out = loopCli(f);
+  assert.equal(out.action, 'build'); assert.equal(out.restored, 0);
+});
+
+test('after a restore, prep drops the worse build\'s rebuild.json and run-error.txt and reads the restored rebuild-run.json (#130)', async () => {
+  const f = runFixture({ rebuild: { 'F-001': false, 'F-002': false, 'F-003': true }, rounds: [['F-001']], builds: [{ n: 1, cost: 1 }, { n: 2, cost: 1 }] });
+  fs.writeFileSync(path.join(f.run, 'project', 'rebuild-run.json'), JSON.stringify({ address: 'http://localhost:1111' }));
+  const old = path.join(f.run, 'rebuild', 'project-from-build-1');
+  fs.mkdirSync(old);
+  fs.writeFileSync(path.join(old, 'rebuild-run.json'), JSON.stringify({ address: 'http://localhost:2222', start: 'npm start' }));
+  assert.equal(loop(f.par, f.md, f.run).restored, 1);
+  fs.writeFileSync(path.join(f.par, 'run-error.txt'), 'old');
+  const rb = path.join(f.run, 'project', 'rebuild-run.json');
+  const { port } = await prep(f.par, rb);
+  assert.ok(port > 0);
+  assert.equal(fs.existsSync(path.join(f.par, 'rebuild.json')), false);
+  assert.equal(fs.existsSync(path.join(f.par, 'run-error.txt')), false);
+  const run = JSON.parse(fs.readFileSync(rb, 'utf8'));
+  assert.equal(run.start, 'npm start');
+  assert.equal(run.address, `http://localhost:${port}`);
+});

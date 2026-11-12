@@ -248,7 +248,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === new URL(import.meta.url
     console.log(`parity.json: ${merge(x, y).length} features`);
   } else if (cmd === 'loop') {
     const d = loop(x, y, z);
-    console.log(JSON.stringify(d));
+    // restored is always printed (0 = nothing restored): the workflow reruns the suite on a restored build, and a field a relaying agent can drop must not decide that (#130).
+    console.log(JSON.stringify({ ...d, restored: d.restored || 0 }));
     tryEmit(path.resolve(z), { kind: 'decision', what: 'loop', choice: d.action, reason: `${d.reason}; failing ${Array.isArray(d.failing) ? d.failing.length : d.failing}` });
   } else if (cmd === 'prep') {
     try { console.log(JSON.stringify(await prep(x, y))); } catch (e) { console.error(e.message); process.exit(1); }
