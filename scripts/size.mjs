@@ -119,6 +119,29 @@ export function addCost(runDir, phase, usd) {
   return c;
 }
 
+// Spend of the workflow agents per phase (scripts/agent-cost.mjs). It replaces the earlier agent figure, so running it again never counts twice;
+// a phase's usd is its room spend plus its agent spend. notCounted names what the figures leave out.
+export function setAgentCost(runDir, byPhase, notCounted = []) {
+  const f = path.join(runDir, 'cost.json');
+  let c = { phases: {}, totalUsd: 0 };
+  try { c = JSON.parse(fs.readFileSync(f, 'utf8')); } catch { /* none yet */ }
+  const changed = [];
+  for (const ph of new Set([...Object.keys(c.phases), ...Object.keys(byPhase)])) {
+    const e = c.phases[ph] || { usd: 0, runs: 0 }, a = byPhase[ph] || { usd: 0, runs: 0 };
+    const delta = a.usd - (e.agentUsd || 0);
+    if (!byPhase[ph] && !e.agentUsd) continue;
+    c.phases[ph] = { ...e, usd: e.usd + delta, agentUsd: a.usd, agentRuns: a.runs };
+    if (Math.abs(delta) > 1e-9) changed.push([ph, delta]);
+  }
+  c.totalUsd = Object.values(c.phases).reduce((s, x) => s + x.usd, 0);
+  c.notCounted = notCounted;
+  fs.writeFileSync(f, JSON.stringify(c, null, 2));
+  let maxUsd = null;
+  try { maxUsd = JSON.parse(fs.readFileSync(path.join(runDir, 'size.json'), 'utf8')).maxUsd ?? null; } catch { /* no size.json */ }
+  for (const [phase, usd] of changed) tryEmit(runDir, { kind: 'cost', phase, usd, totalUsd: c.totalUsd, maxUsd });
+  return c;
+}
+
 if (process.argv[1] && path.resolve(process.argv[1]) === new URL(import.meta.url).pathname) {
   const argv = process.argv.slice(2), mi = argv.indexOf('--max-usd');
   const maxUsd = mi >= 0 ? argv[mi + 1] : undefined;

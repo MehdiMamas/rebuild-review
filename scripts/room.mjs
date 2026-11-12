@@ -481,7 +481,7 @@ export async function main(argv) {
     fs.rmSync(path.join(runDir, '.canary'), { force: true });
   }
   fs.writeFileSync(resultPath, JSON.stringify(result, null, 2));
-  addCost(runDir, mode === 'stack' ? 'Stack' : 'Rebuild', result.costUsd);
+  addCost(runDir, mode === 'stack' ? 'Stack' : failures ? 'Parity' : 'Rebuild', result.costUsd); // a parity-loop build (--failures) is Parity, the first build Rebuild (#142)
   console.log('RESULT ' + resultPath);
   console.log(JSON.stringify({ ok: result.ok, reason: result.reason }));
   return result.ok ? 0 : 1;
