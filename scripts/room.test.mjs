@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { platformNote, BUDGET_USD, filterGolden, prepareRoom, scanTranscript, wallTried, cloneProject, copyEnv, denyList, writeSettings, fixStack, stackFixPrompt, replaceProject, main, childSpawn, wallEvent, checkChild } from './room.mjs';
+import { platformNote, BUDGET_USD, filterGolden, prepareRoom, scanTranscript, wallTried, cloneProject, copyEnv, dropEnv, denyList, writeSettings, fixStack, stackFixPrompt, replaceProject, main, childSpawn, wallEvent, checkChild } from './room.mjs';
 import { read as readEvents } from './events.mjs';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'room-test-'));
@@ -38,6 +38,34 @@ test('filterGolden removes JS, CSS and map bodies and keeps JSON and images', ()
   assert.equal(by['logo.png'], 'iVBORw0KGgo=');
   assert.equal(fs.existsSync(path.join(dest, 'run.json')), false);
   assert.equal(fs.existsSync(path.join(dest, 'probes.json')), true);
+});
+
+test('given typed auth values that a golden text file still holds -> filterGolden masks them as whole values in the copy and leaves ordinary words', () => {
+  const src = tmp(), dest = path.join(tmp(), 'g');
+  makeGolden(src);
+  const email = 'pat.lee@example.test';
+  fs.writeFileSync(path.join(src, 'screens', 'home', 'render.html'), `<p>Signed in as ${email}, the latest test</p>`);
+  fs.writeFileSync(path.join(src, 'screens', 'home', 'a11y.json'), JSON.stringify({ ariaSnapshot: `- text: ${email}` }));
+  const f = path.join(src, 'network.har');
+  const j = JSON.parse(fs.readFileSync(f, 'utf8'));
+  j.log.entries.push({ request: { url: 'http://127.0.0.1:1/api/me' }, response: { content: { mimeType: 'application/json', text: JSON.stringify({ email }) } } });
+  fs.writeFileSync(f, JSON.stringify(j));
+  filterGolden(src, dest, [email, 'test']);
+  const all = fs.readdirSync(dest, { recursive: true }).map((x) => path.join(dest, x)).filter((x) => fs.statSync(x).isFile());
+  for (const x of all) assert.ok(!fs.readFileSync(x, 'utf8').includes(email), x);
+  assert.equal(fs.readFileSync(path.join(dest, 'screens', 'home', 'render.html'), 'utf8'), '<p>Signed in as ***, the latest ***</p>');
+});
+
+test('given auth in run.json -> prepareRoom hands the builder a golden copy with the echoed email masked', () => {
+  const runDir = tmp(), target = tmp(), email = 'pat.lee@example.test';
+  fs.mkdirSync(path.join(runDir, 'work'));
+  execFileSync('git', ['init', '-q'], { cwd: path.join(runDir, 'work') });
+  makeGolden(path.join(runDir, 'golden'));
+  fs.writeFileSync(path.join(runDir, 'golden', 'screens', 'home', 'a11y.json'), JSON.stringify({ ariaSnapshot: `- text: ${email}` }));
+  fs.writeFileSync(path.join(runDir, 'run.json'), JSON.stringify({ auth: { steps: [{ type: { into: 'Email', text: email } }] } }));
+  const room = prepareRoom({ runDir, target, inputs: ['golden'] });
+  const t = fs.readFileSync(path.join(room, 'input', 'golden', 'screens', 'home', 'a11y.json'), 'utf8');
+  assert.ok(!t.includes(email) && t.includes('***'));
 });
 
 test('filterGolden empties inline scripts and source map comments', () => {
@@ -434,4 +462,55 @@ test('wall events: held and refused rows carry fixed sentences, no paths (#88)',
   assert.deepEqual(rows.map((e) => [e.what, e.choice]), [['wall', 'held'], ['wall', 'refused']]);
   assert.equal(rows[1].reason, 'a target or run folder path appeared in the builder transcript');
   assert.ok(!JSON.stringify(rows).includes(target));
+});
+
+test('given a run.json with auth and no env -> copyEnv copies auth and dropEnv removes it from the builder copy', () => {
+  const runDir = tmp();
+  fs.mkdirSync(path.join(runDir, 'project'));
+  const rb = path.join(runDir, 'project', 'rebuild-run.json');
+  const auth = { steps: [{ open: '/login' }, { type: { into: 'Password', text: 'stand-in-pw-1' } }] };
+  fs.writeFileSync(rb, JSON.stringify({ start: 'x', dir: '.' }));
+  fs.writeFileSync(path.join(runDir, 'run.json'), JSON.stringify({ start: 'y', auth }));
+  copyEnv(runDir);
+  assert.deepEqual(JSON.parse(fs.readFileSync(rb, 'utf8')), { start: 'x', dir: '.', auth });
+  fs.writeFileSync(path.join(runDir, 'run.json'), JSON.stringify({ start: 'y', env: { SETTING: 'stand-in' }, auth }));
+  copyEnv(runDir);
+  assert.deepEqual(JSON.parse(fs.readFileSync(rb, 'utf8')), { start: 'x', dir: '.', env: { SETTING: 'stand-in' }, auth });
+  dropEnv(rb);
+  assert.deepEqual(JSON.parse(fs.readFileSync(rb, 'utf8')), { start: 'x', dir: '.' });
+  fs.writeFileSync(rb, JSON.stringify({ start: 'x', auth }));
+  dropEnv(rb);
+  assert.deepEqual(JSON.parse(fs.readFileSync(rb, 'utf8')), { start: 'x' });
+});
+
+test('given auth in run.json and a finished build -> copyEnv puts auth in rebuild-run.json, and the copy a --failures builder gets has no auth', () => {
+  const { target, runDir } = makeRun('F-001 A user sees a list.\n');
+  const auth = { steps: [{ open: '/login' }, { type: { into: 'Password', text: 'stand-in-pw-1' } }] };
+  fs.writeFileSync(path.join(runDir, 'run.json'), JSON.stringify({ start: 'y', auth }));
+  const proj = repo({ 'rebuild-run.json': JSON.stringify({ start: 'x', dir: '.' }) });
+  fs.cpSync(proj, path.join(runDir, 'project'), { recursive: true });
+  copyEnv(runDir);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(runDir, 'project', 'rebuild-run.json'), 'utf8')).auth, auth);
+  const room = prepareRoom({ runDir, target, inputs: ['features.md'] });
+  const given = JSON.parse(fs.readFileSync(path.join(room, 'project', 'rebuild-run.json'), 'utf8'));
+  assert.equal('auth' in given, false);
+  assert.ok(!fs.readFileSync(path.join(room, 'project', 'rebuild-run.json'), 'utf8').includes('stand-in-pw-1'));
+});
+
+test('given a numeric typed value and a golden JSON with a bare 1234 -> the room copy stays valid JSON and masks only the string holding the value', () => {
+  const src = tmp(), dest = path.join(tmp(), 'g');
+  makeGolden(src);
+  fs.writeFileSync(path.join(src, 'timings.json'), JSON.stringify({ value: 1234, ok: true, label: 'code 1234 sent' }));
+  filterGolden(src, dest, ['1234', 'true']);
+  const t = JSON.parse(fs.readFileSync(path.join(dest, 'timings.json'), 'utf8'));
+  assert.deepEqual(t, { value: 1234, ok: true, label: 'code *** sent' });
+  JSON.parse(fs.readFileSync(path.join(dest, 'network.har'), 'utf8'));
+});
+
+test('given a typed value with & in it -> render.html in the room copy masks its HTML-escaped form', () => {
+  const src = tmp(), dest = path.join(tmp(), 'g');
+  makeGolden(src);
+  fs.writeFileSync(path.join(src, 'screens', 'home', 'render.html'), '<p>a&amp;b1234 and a&b1234 and "q&lt;x&gt;"</p>');
+  filterGolden(src, dest, ['a&b1234', 'q<x>']);
+  assert.equal(fs.readFileSync(path.join(dest, 'screens', 'home', 'render.html'), 'utf8'), '<p>*** and *** and "***"</p>');
 });
