@@ -237,3 +237,10 @@ test('given values of any length in auth -> each is masked as a whole value and 
   assert.deepEqual(authSecrets({ steps: [{ type: { into: 'x', text: '' } }] }), []);
   assert.equal(redactSecrets('anything a', []), 'anything a');
 });
+
+test('given a typed value with HTML characters -> its escaped forms are masked as well', () => {
+  const s = authSecrets({ steps: [{ type: { into: 'x', text: 'a&b1234' } }] });
+  assert.equal(redactSecrets('<i>a&amp;b1234</i> a&b1234', s), '<i>***</i> ***');
+  const q = authSecrets({ steps: [{ type: { into: 'x', text: `it's "x"` } }] });
+  assert.equal(redactSecrets('it&#39;s &quot;x&quot; it&#x27;s &quot;x&quot;', q), '*** ***');
+});

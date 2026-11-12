@@ -496,3 +496,21 @@ test('given auth in run.json and a finished build -> copyEnv puts auth in rebuil
   assert.equal('auth' in given, false);
   assert.ok(!fs.readFileSync(path.join(room, 'project', 'rebuild-run.json'), 'utf8').includes('stand-in-pw-1'));
 });
+
+test('given a numeric typed value and a golden JSON with a bare 1234 -> the room copy stays valid JSON and masks only the string holding the value', () => {
+  const src = tmp(), dest = path.join(tmp(), 'g');
+  makeGolden(src);
+  fs.writeFileSync(path.join(src, 'timings.json'), JSON.stringify({ value: 1234, ok: true, label: 'code 1234 sent' }));
+  filterGolden(src, dest, ['1234', 'true']);
+  const t = JSON.parse(fs.readFileSync(path.join(dest, 'timings.json'), 'utf8'));
+  assert.deepEqual(t, { value: 1234, ok: true, label: 'code *** sent' });
+  JSON.parse(fs.readFileSync(path.join(dest, 'network.har'), 'utf8'));
+});
+
+test('given a typed value with & in it -> render.html in the room copy masks its HTML-escaped form', () => {
+  const src = tmp(), dest = path.join(tmp(), 'g');
+  makeGolden(src);
+  fs.writeFileSync(path.join(src, 'screens', 'home', 'render.html'), '<p>a&amp;b1234 and a&b1234 and "q&lt;x&gt;"</p>');
+  filterGolden(src, dest, ['a&b1234', 'q<x>']);
+  assert.equal(fs.readFileSync(path.join(dest, 'screens', 'home', 'render.html'), 'utf8'), '<p>*** and *** and "***"</p>');
+});

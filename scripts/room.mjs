@@ -63,7 +63,12 @@ export function filterGolden(src, dest, authValues = []) {
         const p = path.join(d, f.name);
         if (f.isDirectory()) mask(p);
         else if (!IMG.test(f.name)) {
-          const t = fs.readFileSync(p, 'utf8'), m = redactSecrets(t, secrets);
+          const t = fs.readFileSync(p, 'utf8');
+          let m;
+          if (/\.(json|har)$/i.test(f.name)) {
+            // Mask string values only: a typed 1234 or true must not turn a bare JSON token into ***.
+            try { m = JSON.stringify(redactSecrets(JSON.parse(t), secrets)); } catch { m = redactSecrets(t, secrets); }
+          } else m = redactSecrets(t, secrets);
           if (m !== t) fs.writeFileSync(p, m);
         }
       }

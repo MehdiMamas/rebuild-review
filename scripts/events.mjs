@@ -1,6 +1,6 @@
 // Run events for the watch page (#82): node scripts/events.mjs <runDir> <kind> '<json>' appends one line to <runDir>/events.jsonl.
 // Kinds: phase {phase, state: start|done|failed|skipped, reason?}, decision {what, choice, reason}, cost {phase, usd, totalUsd, maxUsd}, made {what, path, count?}.
-// Every string is cut to 500 characters; every value of run.json `env` and every `auth` type.text (any length) is replaced by *** where it appears as a whole value (a secret "test" leaves "latest" alone).
+// Every string is cut to 500 characters; every value of run.json `env` is replaced by *** anywhere it appears (also inside a longer word), and every `auth` type.text (any length) where it appears as a whole value (a secret "test" leaves "latest" alone).
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,19 +9,20 @@ import { expandSecrets, redactSecrets } from '../adapters/web/redact.mjs';
 export const KINDS = ['phase', 'decision', 'cost', 'made'];
 const MAX = 500;
 
-function envValues(runDir) {
+function secretsOf(runDir) {
   try {
     const run = JSON.parse(fs.readFileSync(path.join(runDir, 'run.json'), 'utf8'));
     const env = run.env && typeof run.env === 'object' ? Object.values(run.env).map(String).filter((v) => v.length > 0) : [];
     const steps = run.auth && Array.isArray(run.auth.steps) ? run.auth.steps : [];
     const typed = steps.map((s) => s && s.type && s.type.text).filter((t) => typeof t === 'string' && t.length > 0);
-    return expandSecrets([...env, ...typed]);
-  } catch { return []; }
+    return { env: expandSecrets(env), typed: expandSecrets(typed) };
+  } catch { return { env: [], typed: [] }; }
 }
+const redact = (v, sec) => redactSecrets(redactSecrets(v, sec.env, true), sec.typed);
 
 const clean = (v, secrets) => {
   if (typeof v === 'string') {
-    v = redactSecrets(v, secrets);
+    v = redact(v, secrets);
     return v.length > MAX ? v.slice(0, MAX) : v;
   }
   if (Array.isArray(v)) return v.map((x) => clean(x, secrets));
@@ -31,11 +32,11 @@ const clean = (v, secrets) => {
 
 // Text with every run.json env value replaced by ***; the watch page uses it on logs.
 export function mask(runDir, text) {
-  return redactSecrets(text, envValues(runDir));
+  return redact(text, secretsOf(runDir));
 }
 
 export function emit(runDir, ev) {
-  const secrets = envValues(runDir);
+  const secrets = secretsOf(runDir);
   const line = JSON.stringify({ t: new Date().toISOString(), ...clean(ev, secrets) }) + '\n';
   fs.mkdirSync(runDir, { recursive: true });
   fs.appendFileSync(path.join(runDir, 'events.jsonl'), line);

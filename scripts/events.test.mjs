@@ -93,3 +93,11 @@ test('given a secret "test" in auth -> mask and emit leave "latest" and "abcd" a
   emit(d, { kind: 'decision', what: 'latest test', choice: 'a', reason: 'b' });
   assert.ok(fs.readFileSync(path.join(d, 'events.jsonl'), 'utf8').includes('latest ***'));
 });
+
+test('given an env value inside a longer word -> mask and emit still hide it, while a typed auth value keeps the whole-value rule', () => {
+  const d = tmp();
+  fs.writeFileSync(path.join(d, 'run.json'), JSON.stringify({ env: { TOKEN: 'abcd' }, auth: { steps: [{ type: { into: 'x', text: 'test' } }] } }));
+  assert.equal(mask(d, 'xabcdy and latest test'), 'x***y and latest ***');
+  emit(d, { kind: 'decision', what: 'w', choice: 'c', reason: 'xabcdy latest' });
+  assert.equal(read(d, 0).events[0].reason, 'x***y latest');
+});
