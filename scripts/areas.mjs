@@ -150,12 +150,13 @@ export function coverage(runDir) {
     ...areas.filter((a) => a.features && a.tested < a.features).map((a) => `area ${a.id}: ${a.features - a.tested} of ${a.features} features have no test`),
     ...(cov.screensCut || []).map((x) => `screen not captured: ${typeof x === 'string' ? x : JSON.stringify(x)}`),
     ...(cov.buttonsSkipped && cov.buttonsSkipped.length ? [`${cov.buttonsSkipped.length} buttons not pressed`] : []),
+    ...((cov.behindSignIn || []).length ? [`behind a sign-in, not reached: ${cov.behindSignIn.join(', ')}${!cov.auth || !cov.auth.given ? ' (no auth in run.json)' : !cov.auth.signedIn ? ` (sign-in failed: ${cov.auth.reason || 'no reason given'})` : ''}`] : []),
     ...(cov.harEntriesSkipped ? [`${cov.harEntriesSkipped} network entries dropped`] : []),
   ];
   const out = {
     areas, excluded: v.excluded,
     totals: Object.fromEntries(['files', 'lines', 'features', 'tested', 'rebuilt', 'passing'].map((k) => [k, areas.reduce((n, a) => n + a[k], 0)])),
-    screens: { reached: (cov.screensReached || []).length, cut: (cov.screensCut || []).length },
+    screens: { reached: (cov.screensReached || []).length, cut: (cov.screensCut || []).length, signedIn: (cov.screensSignedIn || []).length },
     notReached,
   };
   fs.writeFileSync(path.join(runDir, 'coverage.json'), JSON.stringify(out, null, 2));

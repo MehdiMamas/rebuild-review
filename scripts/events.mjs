@@ -1,6 +1,6 @@
 // Run events for the watch page (#82): node scripts/events.mjs <runDir> <kind> '<json>' appends one line to <runDir>/events.jsonl.
 // Kinds: phase {phase, state: start|done|failed|skipped, reason?}, decision {what, choice, reason}, cost {phase, usd, totalUsd, maxUsd}, made {what, path, count?}.
-// Every string is cut to 500 characters; every value of run.json `env` is replaced by ***.
+// Every string is cut to 500 characters; every value of run.json `env` and every `auth` type.text of 4+ characters is replaced by ***.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,9 +10,11 @@ const MAX = 500;
 
 function envValues(runDir) {
   try {
-    const env = JSON.parse(fs.readFileSync(path.join(runDir, 'run.json'), 'utf8')).env;
-    if (!env || typeof env !== 'object') return [];
-    return Object.values(env).map(String).filter((v) => v.length > 0).sort((a, b) => b.length - a.length);
+    const run = JSON.parse(fs.readFileSync(path.join(runDir, 'run.json'), 'utf8'));
+    const env = run.env && typeof run.env === 'object' ? Object.values(run.env).map(String).filter((v) => v.length > 0) : [];
+    const steps = run.auth && Array.isArray(run.auth.steps) ? run.auth.steps : [];
+    const typed = steps.map((s) => s && s.type && s.type.text).filter((t) => typeof t === 'string' && t.length >= 4);
+    return [...new Set([...env, ...typed])].sort((a, b) => b.length - a.length);
   } catch { return []; }
 }
 

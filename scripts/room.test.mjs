@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { platformNote, BUDGET_USD, filterGolden, prepareRoom, scanTranscript, wallTried, cloneProject, copyEnv, denyList, writeSettings, fixStack, stackFixPrompt, replaceProject, main, childSpawn, wallEvent, checkChild } from './room.mjs';
+import { platformNote, BUDGET_USD, filterGolden, prepareRoom, scanTranscript, wallTried, cloneProject, copyEnv, dropEnv, denyList, writeSettings, fixStack, stackFixPrompt, replaceProject, main, childSpawn, wallEvent, checkChild } from './room.mjs';
 import { read as readEvents } from './events.mjs';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'room-test-'));
@@ -434,4 +434,23 @@ test('wall events: held and refused rows carry fixed sentences, no paths (#88)',
   assert.deepEqual(rows.map((e) => [e.what, e.choice]), [['wall', 'held'], ['wall', 'refused']]);
   assert.equal(rows[1].reason, 'a target or run folder path appeared in the builder transcript');
   assert.ok(!JSON.stringify(rows).includes(target));
+});
+
+test('given a run.json with auth and no env -> copyEnv copies auth and dropEnv removes it from the builder copy', () => {
+  const runDir = tmp();
+  fs.mkdirSync(path.join(runDir, 'project'));
+  const rb = path.join(runDir, 'project', 'rebuild-run.json');
+  const auth = { steps: [{ open: '/login' }, { type: { into: 'Password', text: 'stand-in-pw-1' } }] };
+  fs.writeFileSync(rb, JSON.stringify({ start: 'x', dir: '.' }));
+  fs.writeFileSync(path.join(runDir, 'run.json'), JSON.stringify({ start: 'y', auth }));
+  copyEnv(runDir);
+  assert.deepEqual(JSON.parse(fs.readFileSync(rb, 'utf8')), { start: 'x', dir: '.', auth });
+  fs.writeFileSync(path.join(runDir, 'run.json'), JSON.stringify({ start: 'y', env: { SETTING: 'stand-in' }, auth }));
+  copyEnv(runDir);
+  assert.deepEqual(JSON.parse(fs.readFileSync(rb, 'utf8')), { start: 'x', dir: '.', env: { SETTING: 'stand-in' }, auth });
+  dropEnv(rb);
+  assert.deepEqual(JSON.parse(fs.readFileSync(rb, 'utf8')), { start: 'x', dir: '.' });
+  fs.writeFileSync(rb, JSON.stringify({ start: 'x', auth }));
+  dropEnv(rb);
+  assert.deepEqual(JSON.parse(fs.readFileSync(rb, 'utf8')), { start: 'x' });
 });

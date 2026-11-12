@@ -322,23 +322,25 @@ export function checkChild(r, transcript, runDir, target, where = '') {
 }
 
 // ---- CLI ----
-// run.json's optional "env" (stand-in settings) is copied into the delivered rebuild-run.json so the rebuild starts like the original. Values are never printed.
+// run.json's optional "env" (stand-in settings) and "auth" (sign-in steps) are copied into the delivered rebuild-run.json so the rebuild starts and is captured like the original. Each key is handled on its own. Values are never printed.
 export function copyEnv(runDir) {
   const from = path.join(runDir, 'run.json'), to = path.join(runDir, 'project', 'rebuild-run.json');
   if (!fs.existsSync(from) || !fs.existsSync(to)) return;
-  const env = JSON.parse(fs.readFileSync(from, 'utf8')).env;
-  if (env === undefined) return;
+  const src = JSON.parse(fs.readFileSync(from, 'utf8'));
+  const keys = ['env', 'auth'].filter((k) => src[k] !== undefined);
+  if (!keys.length) return;
   const rb = JSON.parse(fs.readFileSync(to, 'utf8'));
-  rb.env = env;
+  for (const k of keys) rb[k] = src[k];
   fs.writeFileSync(to, JSON.stringify(rb, null, 2) + '\n');
 }
 
-// The builder never sees the settings: remove them from the copy it gets.
-function dropEnv(file) {
+// The builder never sees the settings or the sign-in steps: remove them from the copy it gets.
+export function dropEnv(file) {
   if (!fs.existsSync(file)) return;
   const rb = JSON.parse(fs.readFileSync(file, 'utf8'));
-  if (!('env' in rb)) return;
+  if (!('env' in rb) && !('auth' in rb)) return;
   delete rb.env;
+  delete rb.auth;
   fs.writeFileSync(file, JSON.stringify(rb, null, 2) + '\n');
 }
 

@@ -145,6 +145,23 @@ test('coverage shows every area, the excluded list and what was not reached', ()
   assert.equal(cli('coverage', run).status, 0);
 });
 
+test('coverage lists the routes behind a sign-in, with the reason and the signed-in screen count', () => {
+  const reasons = [
+    [{ given: false, signedIn: false }, ' (no auth in run.json)'],
+    [{ given: true, signedIn: false, reason: 'auth step 3 (click) failed: nothing found by name or text: Go' }, ' (sign-in failed: auth step 3 (click) failed: nothing found by name or text: Go)'],
+    [{ given: true, signedIn: true }, ''],
+  ];
+  for (const [auth, note] of reasons) {
+    const run = scoredRun();
+    fs.writeFileSync(path.join(run, 'golden', 'coverage.json'), JSON.stringify({ screensReached: ['/', '/dashboard'], screensCut: [], buttonsSkipped: [], harEntriesSkipped: 0, auth, behindSignIn: ['/admin', '/dashboard/settings'], screensSignedIn: auth.signedIn ? ['/', '/dashboard'] : [] }));
+    const c = coverage(run);
+    assert.ok(c.notReached.includes(`behind a sign-in, not reached: /admin, /dashboard/settings${note}`), c.notReached.join(' | '));
+    assert.equal(c.screens.signedIn, auth.signedIn ? 2 : 0);
+  }
+  const plain = coverage(scoredRun());
+  assert.ok(!plain.notReached.some((x) => /sign-in/.test(x)));
+});
+
 test('weigh: one area is unchanged; several are weighted by counted lines; collate weighs the areas', () => {
   const part = (delta, overall, count) => ({ overall, values: { ux: { delta, measured: [], judged: { delta, count }, notMeasured: [] } } });
   const one = part(0.2, 20, 3);
