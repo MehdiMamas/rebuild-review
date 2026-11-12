@@ -36,13 +36,16 @@ async function longRun(name, command, label, phase) {
   const started = await agent(`Run exactly this one command with the Bash tool (it returns at once):\nnode ${q(LONG_RUN)} start ${q(LONG_DIR)} ${q(name)} -- ${command}\nReturn ok true if it exited 0, otherwise ok false with its error output as detail. Change nothing else.`, { ...CHEAP, label: `${label}-start`, phase, schema: STARTED })
   if (!started || !started.ok) return { state: 'start-failed', tail: (started && started.detail) || 'start agent died' }
   let dead = 0
+  let noCode = 0
   for (let n = 1; n <= MAX_WAITS; n++) {
-    const w = await agent(`Run exactly this one command with the Bash tool in the foreground (never in the background), with the Bash timeout set to 600000:\nnode ${q(LONG_RUN)} wait ${q(LONG_DIR)} ${q(name)} --seconds ${WAIT_SECONDS}\nIt prints one JSON line. Return its fields state, code (leave it out when null) and tail, copied exactly. Change nothing else.`, { ...CHEAP, label: `${label}-wait-${n}`, phase, schema: WAITED })
+    const w = await agent(`Run exactly this one command with the Bash tool in the foreground (never in the background), with the Bash timeout set to 600000:\nnode ${q(LONG_RUN)} wait ${q(LONG_DIR)} ${q(name)} --seconds ${WAIT_SECONDS}\nIt prints one JSON line. Return its fields state, code and tail, copied exactly. code is a number and 0 is a number: always include it, 0 included; leave it out only when the line prints null. Change nothing else.`, { ...CHEAP, label: `${label}-wait-${n}`, phase, schema: WAITED })
     if (!w || !w.state) {
       if (++dead >= 3) return { state: 'wait-failed', tail: 'the wait agent died or answered nothing 3 times in a row' }
       continue
     }
     dead = 0
+    // A cheap agent can drop code 0; an exited command answers at once, so ask again instead of calling it a failure.
+    if (w.state === 'exited' && typeof w.code !== 'number' && ++noCode < 3) continue
     if (w.state !== 'running') return w
   }
   return { state: 'timeout', tail: 'still running after 8 hours of waiting' }

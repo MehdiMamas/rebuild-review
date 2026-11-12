@@ -42,3 +42,9 @@ test('the per-area inventory step marks areas and lists the finished ones throug
   assert.ok(/areas\.mjs'\)\} mark \$\{q\(runDir\)\} \$\{q\(area\.id\)\}/.test(src), 'mark step')
   assert.ok(/\$\{AJS\} done \$\{q\(runDir\)\}/.test(src), 'done step')
 })
+
+test('a wait answer without a numeric code is asked again, and code 0 is named in the prompt (#151)', () => {
+  const src = readFileSync(file, 'utf8')
+  assert.match(src, /state === 'exited' && typeof w\.code !== 'number'/)
+  assert.match(src, /0 is a number: always include it/)
+})
