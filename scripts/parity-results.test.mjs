@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { kinds, wrongTests, settle, merge, failing, cleanDetail, readCost, loop, MAX_ROUNDS, LOOP_USD } from './parity-results.mjs';
+import { spawnSync } from 'node:child_process';
+import { kinds, wrongTests, settle, merge, failing, cleanDetail, readCost, loop, prep, writeRunError, runErrorText, MAX_ROUNDS, LOOP_USD } from './parity-results.mjs';
 
 const md = '# Features\n\nF-001 keep. Page.\n- **F-002 defect.** No loading\nF-003 Keep: shortcut\nsome other line\n';
 const res = (o) => Object.entries(o).map(([feature, passed]) => ({ feature, passed, detail: '' }));
@@ -153,4 +154,187 @@ test('loop: the budget stop uses the loop budget from size.json, the floor witho
   f = runFixture({ rebuild: { 'F-001': false, 'F-002': true, 'F-003': true }, builds: [{ n: 1, cost: 60 }] });
   fs.writeFileSync(path.join(f.run, 'size.json'), JSON.stringify({ plan: { loopUsd: 200 } }));
   assert.equal(loop(f.par, f.md, f.run).action, 'build');
+});
+
+const prepDir = () => {
+  const par = fs.mkdtempSync(path.join(os.tmpdir(), 'prep-'));
+  fs.writeFileSync(path.join(par, 'rebuild.json'), '[]');
+  fs.writeFileSync(path.join(par, 'run-error.txt'), 'old');
+  return par;
+};
+
+test('prep removes the stale rebuild.json and run-error.txt', async () => {
+  const par = prepDir(), rb = path.join(par, 'rb.json');
+  fs.writeFileSync(rb, JSON.stringify({ start: 'x' }));
+  await prep(par, rb);
+  assert.ok(!fs.existsSync(path.join(par, 'rebuild.json')) && !fs.existsSync(path.join(par, 'run-error.txt')));
+});
+
+test('prep rewrites only the port in address', async () => {
+  const par = prepDir(), rb = path.join(par, 'rb.json');
+  fs.writeFileSync(rb, JSON.stringify({ platform: 'web', address: 'http://127.0.0.1:3000', start: 'next start' }));
+  const { port } = await prep(par, rb);
+  assert.ok(Number.isInteger(port) && port > 0);
+  assert.deepEqual(JSON.parse(fs.readFileSync(rb, 'utf8')), { platform: 'web', address: `http://127.0.0.1:${port}`, start: 'next start' });
+});
+
+test('prep keeps the path, query and hash and a non-http scheme', async () => {
+  const par = prepDir(), rb = path.join(par, 'rb.json');
+  fs.writeFileSync(rb, JSON.stringify({ address: 'ws://localhost:3000/app?x=1#h' }));
+  const { port } = await prep(par, rb);
+  assert.equal(JSON.parse(fs.readFileSync(rb, 'utf8')).address, `ws://localhost:${port}/app?x=1#h`);
+});
+
+test('prep keeps a query-only or hash-only address without adding a slash', async () => {
+  for (const [a, tail] of [['http://127.0.0.1:3000?x=1', '?x=1'], ['http://127.0.0.1:3000#f', '#f'], ['http://127.0.0.1:3000', ''], ['http://127.0.0.1:3000/', '/']]) {
+    const par = prepDir(), rb = path.join(par, 'rb.json');
+    fs.writeFileSync(rb, JSON.stringify({ address: a }));
+    const { port } = await prep(par, rb);
+    assert.equal(JSON.parse(fs.readFileSync(rb, 'utf8')).address, `http://127.0.0.1:${port}${tail}`);
+  }
+});
+
+test('prep refuses an address where the port cannot be set', async () => {
+  for (const a of ['localhost:3000', 'file:///x', 'mailto:a@b.c']) {
+    const par = prepDir(), rb = path.join(par, 'rb.json');
+    fs.writeFileSync(rb, JSON.stringify({ address: a }));
+    await assert.rejects(prep(par, rb), /URL with host and port/, a);
+  }
+});
+
+test('prep leaves a run file with no address alone', async () => {
+  const par = prepDir(), rb = path.join(par, 'rb.json'), text = JSON.stringify({ command: ['app'] });
+  fs.writeFileSync(rb, text);
+  assert.deepEqual(await prep(par, rb), { port: null });
+  assert.equal(fs.readFileSync(rb, 'utf8'), text);
+});
+
+test('prep on a missing or unreadable run file fails with the reason', async () => {
+  const par = prepDir(), rb = path.join(par, 'rb.json');
+  await assert.rejects(prep(par, rb), /cannot read .*rb\.json/);
+  fs.writeFileSync(rb, '{nope');
+  await assert.rejects(prep(par, rb), /cannot read/);
+});
+
+test('run-error writes the reason, and a blank reason still leaves one', () => {
+  const par = fs.mkdtempSync(path.join(os.tmpdir(), 'rerr-'));
+  writeRunError(par, 'exit code 1: port in use');
+  assert.equal(fs.readFileSync(path.join(par, 'run-error.txt'), 'utf8'), 'exit code 1: port in use');
+  writeRunError(par, '  ');
+  assert.match(fs.readFileSync(path.join(par, 'run-error.txt'), 'utf8'), /did not start/);
+});
+
+test('the workflow runs prep in code and a prep failure throws, never "would not start"', () => {
+  const wf = fs.readFileSync(new URL('../workflows/rebuild-review.js', import.meta.url), 'utf8');
+  assert.match(wf, /\.mjs'\)\} prep \$\{q\(PAR\)\}/);
+  assert.match(wf, /throw new Error\(`Parity: preparing the rebuild run failed/);
+  assert.match(wf, /if \(r\.state === 'start-failed'\) throw new Error\(`Parity: starting the rebuild run failed/);
+  assert.match(wf, /if \(r\.state === 'wait-failed'\) throw new Error\(`Parity: waiting for the rebuild run failed/);
+  assert.match(wf, /return \{ state: 'timeout', tail: 'still running after 8 hours of waiting' \}/);
+  assert.match(wf, /return \{ state: 'wait-failed'/);
+  assert.match(wf, /return \{ state: 'start-failed'/);
+  assert.doesNotMatch(wf, /could not start\//);
+  assert.match(wf, /run-error written \[1-9\]/);
+  assert.match(wf, /Parity: run-error\.txt was not confirmed written/);
+  assert.doesNotMatch(wf, /Delete \$\{q\(PAR \+ '\/rebuild\.json'\)\}/);
+});
+
+test('run-error text comes from the long-run files: exit code and log tail, or lost', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rlong-'));
+  fs.writeFileSync(path.join(dir, 'r.log'), 'a\n$(touch nope) `x`\nError: port in use\n');
+  fs.writeFileSync(path.join(dir, 'r.exit'), '1');
+  assert.equal(runErrorText(dir, 'r'), 'exit code 1: a\n$(touch nope) `x`\nError: port in use');
+  fs.rmSync(path.join(dir, 'r.exit'));
+  assert.match(runErrorText(dir, 'r'), /^the command was lost: /);
+  assert.equal(runErrorText(dir, 'none'), 'the command was lost (no output)');
+  fs.writeFileSync(path.join(dir, 'r.exit'), '');
+  assert.match(runErrorText(dir, 'r'), /^the command was lost: /);
+  fs.writeFileSync(path.join(dir, 'r.exit'), '1\n');
+  assert.match(runErrorText(dir, 'r'), /^exit code 1: /);
+  assert.equal(runErrorText(dir, 'none', 'lost'), 'lost (no output)');
+  assert.match(runErrorText(dir, 'r', 'timed out after 8 hours of waiting'), /^timed out after 8 hours of waiting: a\n/);
+  fs.writeFileSync(path.join(dir, 'r.exit'), 'abc');
+  assert.match(runErrorText(dir, 'r'), /^the command was lost: /);
+});
+
+test('run-error reads only the end of a very large log', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rbig-'));
+  fs.writeFileSync(path.join(dir, 'b.log'), 'HEAD-MARKER\n' + 'x'.repeat(5 * 1024 * 1024) + '\nthe last line\n');
+  fs.writeFileSync(path.join(dir, 'b.exit'), '2');
+  const t = runErrorText(dir, 'b');
+  assert.ok(t.length < 4100, `length ${t.length}`);
+  assert.ok(t.startsWith('exit code 2: ') && t.endsWith('the last line') && !t.includes('HEAD-MARKER'));
+});
+
+const cli = (...args) => spawnSync(process.execPath, [new URL('./parity-results.mjs', import.meta.url).pathname, ...args], { encoding: 'utf8' });
+
+test('command line: run-error takes parDir, longDir, name, state and prints a marker only once the file exists', () => {
+  const par = fs.mkdtempSync(path.join(os.tmpdir(), 'cpar-')), dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clong-'));
+  fs.writeFileSync(path.join(dir, 'n.log'), 'boom\n');
+  fs.writeFileSync(path.join(dir, 'n.exit'), '3');
+  let r = cli('run-error', par, dir, 'n');
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /^run-error written \d+ bytes\n$/);
+  assert.equal(fs.readFileSync(path.join(par, 'run-error.txt'), 'utf8'), 'exit code 3: boom');
+  r = cli('run-error', par, dir, 'n', 'timed out after 8 hours of waiting');
+  assert.equal(fs.readFileSync(path.join(par, 'run-error.txt'), 'utf8'), 'timed out after 8 hours of waiting: boom');
+  r = cli('run-error', par, dir, 'missing', 'lost');
+  assert.equal(fs.readFileSync(path.join(par, 'run-error.txt'), 'utf8'), 'lost (no output)');
+});
+
+test('command line: prep prints the port as JSON, rewrites the file, and exits 1 with the reason on a bad run file', () => {
+  const par = prepDir(), rb = path.join(par, 'rb.json');
+  fs.writeFileSync(rb, JSON.stringify({ address: 'http://127.0.0.1:3000' }));
+  let r = cli('prep', par, rb);
+  assert.equal(r.status, 0, r.stderr);
+  const { port } = JSON.parse(r.stdout);
+  assert.equal(JSON.parse(fs.readFileSync(rb, 'utf8')).address, `http://127.0.0.1:${port}`);
+  fs.writeFileSync(rb, 'null');
+  r = cli('prep', par, rb);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /cannot read .*rb\.json/);
+  assert.doesNotMatch(r.stderr, /TypeError/);
+});
+
+test('prep on a run file that is not a plain object fails with the same reason and changes nothing', async () => {
+  for (const text of ['null', '[]', '"x"', '5']) {
+    const par = prepDir(), rb = path.join(par, 'rb.json');
+    fs.writeFileSync(rb, text);
+    await assert.rejects(prep(par, rb), /cannot read .*rb\.json: it is not a JSON object/, text);
+    assert.equal(fs.readFileSync(rb, 'utf8'), text);
+  }
+});
+
+test('prep changes only the port: scheme and host case, path, query, % encoding and ".." stay as written', async () => {
+  const cases = [
+    ['http://127.0.0.1:3000/a b', (p) => `http://127.0.0.1:${p}/a b`],
+    ['HTTP://LocalHost:3000/a/../b?x=1', (p) => `HTTP://LocalHost:${p}/a/../b?x=1`],
+    ['http://127.0.0.1:3000?x=1', (p) => `http://127.0.0.1:${p}?x=1`],
+    ['http://127.0.0.1/p%2Fq#f', (p) => `http://127.0.0.1:${p}/p%2Fq#f`],
+    ['http://u:pw@127.0.0.1:3000/x', (p) => `http://u:pw@127.0.0.1:${p}/x`],
+    ['http://[::1]:3000/x', (p) => `http://[::1]:${p}/x`],
+  ];
+  for (const [a, want] of cases) {
+    const par = prepDir(), rb = path.join(par, 'rb.json');
+    fs.writeFileSync(rb, JSON.stringify({ address: a }));
+    let port;
+    try { ({ port } = await prep(par, rb)); } catch (e) { if (/::1/.test(a) && /free port/.test(e.message)) continue; throw e; } // no IPv6 loopback here
+    assert.equal(JSON.parse(fs.readFileSync(rb, 'utf8')).address, want(port), a);
+  }
+});
+
+test('prep probes the host the address names: localhost gets a port free on both loopback addresses, an unbindable host is an error', async () => {
+  const par = prepDir(), rb = path.join(par, 'rb.json');
+  fs.writeFileSync(rb, JSON.stringify({ address: 'http://localhost:3000/x' }));
+  const { port } = await prep(par, rb);
+  const net = await import('node:net');
+  for (const host of ['127.0.0.1', '::1']) {
+    await new Promise((resolve, reject) => {
+      const s = net.createServer();
+      s.once('error', (e) => (e.code === 'EADDRNOTAVAIL' ? resolve() : reject(e)));
+      s.listen(port, host, () => s.close(resolve));
+    });
+  }
+  fs.writeFileSync(rb, JSON.stringify({ address: 'http://203.0.113.9:3000' }));
+  await assert.rejects(prep(par, rb), /cannot find a free port on host 203\.0\.113\.9/);
 });

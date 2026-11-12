@@ -3,7 +3,10 @@
 //   node parity-results.mjs settle <parDir> <features.md>         moves wrong and flaky tests to removed/, notes them in untested.md, rewrites original.json
 //   node parity-results.mjs merge  <parDir> <features.md>         writes parity.json
 //   node parity-results.mjs loop   <parDir> <features.md> <runDir> records the round, writes failures.md, prints {action, reason, failing}
+//   node parity-results.mjs prep   <parDir> <rebuild-run.json>    clears the last rebuild result and error, gives the rebuild a free port
+//   node parity-results.mjs run-error <parDir> <longDir> <name> [state]   writes run-error.txt from that long run's exit code and log tail (the rebuild would not start)
 import fs from 'node:fs';
+import net from 'node:net';
 import path from 'node:path';
 import { readPlan } from './size.mjs';
 import { tryEmit } from './events.mjs';
@@ -116,6 +119,82 @@ export function readCost(runDir) {
   return { spent, build };
 }
 
+// Try to listen on host:port (0 = any). Resolves the port, or null when this host cannot bind there (address in use, no such address).
+const tryBind = (host, port) => new Promise((resolve) => {
+  const server = net.createServer();
+  server.once('error', () => resolve(null));
+  server.listen(port, host, () => { const p = server.address().port; server.close(() => resolve(p)); });
+});
+
+// A free port on the host the address names. Plain "localhost" can mean 127.0.0.1 or ::1 (the app binds the first one the system
+// resolves), so the port is found by listening on "localhost" itself and then also proven free on both loopback addresses
+// (::1 is skipped when this machine has no IPv6 loopback). Any other host is probed as written; a host this machine cannot bind
+// (a remote name) is an error, because a free port cannot be proven there.
+async function freePort(host) {
+  const h = host.replace(/^\[|\]$/g, '');
+  for (let i = 0; i < 20; i++) {
+    const port = await tryBind(h, 0);
+    if (port === null) throw new Error(`cannot find a free port on host ${host}`);
+    if (h.toLowerCase() !== 'localhost') return port;
+    const v4 = await tryBind('127.0.0.1', port);
+    const v6 = await tryBind('::1', port);
+    const v6Missing = v6 === null && (await tryBind('::1', 0)) === null;
+    if (v4 !== null && (v6 !== null || v6Missing)) return port;
+  }
+  throw new Error(`cannot find a port that is free on every loopback address of ${host}`);
+}
+
+// Splits "scheme://[user@]host[:port]rest" without touching any character: head, host, port text (or null), rest.
+function splitAddress(address) {
+  const m = /^([A-Za-z][A-Za-z0-9+.-]*:\/\/)([^/?#]*)([\s\S]*)$/.exec(address);
+  if (!m) return null;
+  const at = m[2].lastIndexOf('@');
+  const userinfo = at >= 0 ? m[2].slice(0, at + 1) : '';
+  const hp = /^(\[[^\]]*\]|[^:]*)(?::(\d*))?$/.exec(m[2].slice(at + 1));
+  if (!hp || !hp[1]) return null;
+  return { head: m[1] + userinfo, host: hp[1], port: hp[2] ?? null, rest: m[3] };
+}
+
+// Before a suite run on the rebuild: drop the last result and error, and give a web rebuild a free port (only the port in "address" changes:
+// the original text is edited, never reparsed, so scheme and host case, path, query, %-encoding and ".." stay as given).
+// Throws with the reason when rebuild-run.json cannot be read or written: that is a phase error, not "the rebuild would not start".
+export async function prep(parDir, rbFile) {
+  for (const n of ['rebuild.json', 'run-error.txt']) fs.rmSync(path.join(parDir, n), { force: true });
+  let run;
+  try {
+    run = readJson(rbFile);
+    if (run === null || typeof run !== 'object' || Array.isArray(run)) throw new Error('it is not a JSON object');
+  } catch (e) { throw new Error(`cannot read ${rbFile}: ${e.message}`); }
+  if (typeof run.address !== 'string' || !run.address) return { port: null };
+  const parts = splitAddress(run.address);
+  try { new URL(run.address); } catch { throw new Error(`the address in ${rbFile} is not a URL with host and port (like http://localhost:3000): ${run.address}`); }
+  if (!parts) throw new Error(`the address in ${rbFile} is not a URL with host and port (like http://localhost:3000): ${run.address}`);
+  const port = await freePort(parts.host);
+  run.address = `${parts.head}${parts.host}:${port}${parts.rest}`;
+  try { fs.writeFileSync(rbFile, JSON.stringify(run, null, 2) + '\n'); } catch (e) { throw new Error(`cannot write ${rbFile}: ${e.message}`); }
+  return { port };
+}
+
+// The reason is read from the long-run files (<name>.exit, last 20 lines of <name>.log), never passed on a command line,
+// so log text cannot reach a shell.
+// state is the longRun state word from the workflow (exited, lost, could not start, ...), never log text.
+export function runErrorText(longDir, name, state = 'exited') {
+  let code = null, tail = '';
+  try { const t = fs.readFileSync(path.join(longDir, `${name}.exit`), 'utf8').trim(); if (/^-?\d+$/.test(t)) code = Number(t); } catch {}
+  try {
+    const f = path.join(longDir, `${name}.log`), size = fs.statSync(f).size, len = Math.min(size, 4000), buf = Buffer.alloc(len), fd = fs.openSync(f, 'r');
+    try { fs.readSync(fd, buf, 0, len, size - len); } finally { fs.closeSync(fd); }
+    tail = buf.toString('utf8').split('\n').slice(-20).join('\n').trim();
+  } catch {}
+  const head = state !== 'exited' ? String(state) : code === null || Number.isNaN(code) ? 'the command was lost' : `exit code ${code}`;
+  return tail ? `${head}: ${tail}` : `${head} (no output)`;
+}
+
+export function writeRunError(parDir, text) {
+  fs.mkdirSync(parDir, { recursive: true });
+  fs.writeFileSync(path.join(parDir, 'run-error.txt'), String(text).trim() ? String(text) : 'the rebuild did not start (no output)');
+}
+
 export function loop(parDir, featuresMd, runDir) {
   const { spent, build } = readCost(runDir);
   const errFile = path.join(parDir, 'run-error.txt');
@@ -167,5 +246,12 @@ if (process.argv[1] && path.resolve(process.argv[1]) === new URL(import.meta.url
     const d = loop(x, y, z);
     console.log(JSON.stringify(d));
     tryEmit(path.resolve(z), { kind: 'decision', what: 'loop', choice: d.action, reason: `${d.reason}; failing ${Array.isArray(d.failing) ? d.failing.length : d.failing}` });
-  } else { console.error('usage: parity-results.mjs wrong|settle|merge|loop ...'); process.exit(2); }
+  } else if (cmd === 'prep') {
+    try { console.log(JSON.stringify(await prep(x, y))); } catch (e) { console.error(e.message); process.exit(1); }
+  } else if (cmd === 'run-error') {
+    writeRunError(x, runErrorText(y, z, process.argv[6] || 'exited'));
+    const f = path.join(x, 'run-error.txt');
+    if (!fs.existsSync(f)) { console.error(`run-error.txt was not written in ${x}`); process.exit(1); }
+    console.log(`run-error written ${fs.statSync(f).size} bytes`);
+  } else { console.error('usage: parity-results.mjs wrong|settle|merge|loop|prep|run-error ...'); process.exit(2); }
 }
