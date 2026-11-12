@@ -1,5 +1,6 @@
 // Records one known-answer run: what the tool said against what it should have said.
 // node benchmark/calibrate.mjs <runDir> --expect adopt|port|leave --kind same|worse|fixed [--file calibration.json]
+// A run whose verdict is 'none' (no tests ran) is refused: it has no answer to compare.
 // Appends {kind, expected, got, right, overall, sourceLines, commit, date} to benchmark/calibration.json. A wrong verdict is kept.
 import fs from 'node:fs';
 import path from 'node:path';

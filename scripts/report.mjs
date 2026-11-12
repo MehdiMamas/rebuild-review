@@ -234,7 +234,7 @@ export function render(runDir, { embedCap = EMBED_CAP, thresholds, stopped } = {
   } else sec('scores', 'Scores', '<p>There is no score for this run.</p>');
 
   // 3 Actions
-  sec('actions', 'Actions', actions.length ? actions.map((a, i) => `<div class="card"><h3>${i + 1}. ${esc(a.title)}</h3>
+  sec('actions', 'Actions', v.verdict === 'none' ? '<p>No actions: no tests ran, so there is no verdict to act on.</p>' : actions.length ? actions.map((a, i) => `<div class="card"><h3>${i + 1}. ${esc(a.title)}</h3>
 <p><strong>Impact:</strong> ${esc(a.impact)}${a.impactWhy ? ` &ndash; ${esc(a.impactWhy)}` : ''}${a.value ? ` <span class="mut">(${esc(a.value)})</span>` : ''}</p>
 <p><strong>What to change:</strong> ${esc(a.change)}</p>
 <p><strong>Evidence:</strong></p><ul>${a.evidence.map((e) => `<li>${esc(e.kind)}: <code>${esc(e.ref)}</code></li>`).join('')}</ul>

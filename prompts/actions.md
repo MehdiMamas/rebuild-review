@@ -11,4 +11,6 @@ Every action needs at least one evidence item, and every item must be real; code
 - `shot`: a screenshot path relative to the run folder, starting `golden/` or `golden-rebuild/`
 - `feature`: a feature ID that is in `parity/parity.json`, for example `F-003`
 
+When the verdict is `none` (no tests ran on the rebuild), propose nothing: write `[]`.
+
 Do not invent numbers. If there is no score, write `[]`.

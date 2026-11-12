@@ -205,6 +205,17 @@ export function resolveFile(runDir, p) {
   return { file: real, ext: path.extname(real).toLowerCase(), size: st.size };
 }
 
+// What the verdict card shows, as [class, text] lines. Plain ES5 so the page can carry its source (PAGE embeds verdictLines.toString()) and the test runs the same code.
+export function verdictLines(s) {
+  var out = [];
+  if (s.verdict) { out.push(['', s.verdict.choice === 'none' ? 'no verdict' : s.verdict.choice]); out.push(['mut', s.verdict.reason || '']); }
+  var parts = [];
+  if (s.overall !== null) parts.push('Overall ' + s.overall);
+  if (s.gate === 'none') parts.push('gate: no tests ran'); else if (s.gate !== null) parts.push('gate ' + (s.gate ? 'passed' : 'failed'));
+  if (parts.length) { var t = parts.join('; '); out.push(['mut', t.charAt(0).toUpperCase() + t.slice(1)]); }
+  return out;
+}
+
 const PAGE = (nonce) => `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="referrer" content="no-referrer"><title>Run watch</title>
@@ -237,6 +248,7 @@ figcaption{font-size:11px}
 <script nonce="${nonce}">
 (function(){
 var K=new URLSearchParams(location.search).get('k')||'';
+${verdictLines.toString()}
 function $(i){return document.getElementById(i)}
 function el(tag,cls,text){var e=document.createElement(tag);if(cls)e.className=cls;if(text!==undefined)e.textContent=text;return e}
 function usd(n){return '$'+Number(n).toFixed(2)}
@@ -264,9 +276,8 @@ function render(s){
   var sh=$('shots');sh.textContent='';
   s.shots.slice(0,24).forEach(function(p){var f=el('figure'),i=el('img');i.src=url('/file',p);i.alt=p;i.loading='lazy';f.appendChild(i);f.appendChild(el('figcaption','mut',p));sh.appendChild(f)});
   var v=$('s-verdict');
-  if(s.verdict||s.overall!==null){v.hidden=false;var vd=$('verdict');vd.textContent='';
-    if(s.verdict){vd.appendChild(el('div',null,s.verdict.choice==='none'?'no verdict':s.verdict.choice));vd.appendChild(el('div','mut',s.verdict.reason||''))}
-    if(s.overall!==null)vd.appendChild(el('div','mut','Overall '+s.overall+(s.gate===null?'':s.gate==='none'?'; gate: no tests ran':'; gate '+(s.gate?'passed':'failed'))))}
+  var vl=verdictLines(s);
+  if(vl.length){v.hidden=false;var vd=$('verdict');vd.textContent='';vl.forEach(function(l){vd.appendChild(el('div',l[0]||null,l[1]))})}
   else v.hidden=true;
 }
 function addEvent(e){

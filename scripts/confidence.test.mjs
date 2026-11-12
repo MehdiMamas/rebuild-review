@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { wilsonLower, phi, coverage, agreement, margin, trackRecord, confidence } from './confidence.mjs';
 
 const rubric = {
@@ -114,6 +115,18 @@ test('no score gives not measured', () => {
   const r = confidence(run({ score: null }), { rubric, calibration: record(6, 6) });
   assert.equal(r.percent, null);
   assert.equal(r.text, 'not measured');
+});
+
+test('no tests ran gives no percentage and a reason, also from the CLI', () => {
+  const s = goodScore({ gate: { passed: false, rate: null, failing: [] } });
+  const d = run({ score: s });
+  const r = confidence(d, { rubric, calibration: record(6, 6) });
+  assert.equal(r.percent, null);
+  assert.match(r.reason, /no verdict: no tests ran/);
+  const out = spawnSync('node', [new URL('./confidence.mjs', import.meta.url).pathname, d], { encoding: 'utf8' });
+  assert.match(out.stdout, /no verdict: no tests ran/);
+  assert.doesNotMatch(out.stdout, /%/);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(d, 'score/confidence.json'), 'utf8')).percent, null);
 });
 
 test('a target over the calibrated range is capped and says so', () => {

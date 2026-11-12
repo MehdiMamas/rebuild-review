@@ -6,7 +6,7 @@ import net from 'node:net';
 import path from 'node:path';
 import http from 'node:http';
 import { spawn, spawnSync } from 'node:child_process';
-import { PHASES, stopText, estimateStop, lastActivity, buildState } from './watch.mjs';
+import { PHASES, stopText, estimateStop, lastActivity, buildState, verdictLines } from './watch.mjs';
 
 const WATCH = new URL('./watch.mjs', import.meta.url).pathname;
 const EVENTS = new URL('./events.mjs', import.meta.url).pathname;
@@ -358,5 +358,13 @@ test('given no parity test ran, the state has gate none and the page says no ver
   assert.equal(s.gate, 'none');
   assert.equal(s.verdict.choice, 'none');
   const html = (await get(port, `/?k=${k}`)).body.toString();
-  assert.ok(html.includes('no verdict') && html.includes('no tests ran'));
+  assert.ok(html.includes('function verdictLines'), 'the page carries the same function the test runs');
+  assert.deepEqual(verdictLines(s).map((l) => l[1]), ['no verdict', 'no tests ran', 'Overall 3; gate: no tests ran']);
 }));
+
+test('given gate none and no overall, the gate line still says no tests ran', () => {
+  const base = { verdict: null, overall: null, gate: 'none' };
+  assert.deepEqual(verdictLines(base), [['mut', 'Gate: no tests ran']]);
+  assert.deepEqual(verdictLines({ ...base, gate: false, overall: 2 }), [['mut', 'Overall 2; gate failed']]);
+  assert.deepEqual(verdictLines({ verdict: null, overall: null, gate: null }), []);
+});
