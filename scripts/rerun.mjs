@@ -7,7 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { emit } from './events.mjs';
+import { tryEmit } from './events.mjs';
 
 // Same list and order as PHASES in workflows/rebuild-review.js (a test compares them).
 export const PHASES = ['Capture', 'Inventory', 'Stack', 'Rebuild', 'Parity', 'Score', 'Report'];
@@ -30,8 +30,9 @@ export function rerun(runDirArg, from, noBuild = false) {
   try { runDir = fs.realpathSync(runDirArg); } catch { refuse(`run folder not found: ${runDirArg}`); }
   if (!isDir(runDir) || !isFile(path.join(runDir, 'run.json'))) refuse(`${runDirArg} is not a run folder (no run.json)`);
 
-  const need = [['Rebuild.done', isFile], ['project/rebuild-run.json', isFile], ['features.md', isFile], ['golden', isDir]];
-  if (from !== 'Parity') need.push(['parity/parity.json', isFile]);
+  const need = [['Rebuild.done', isFile], ['project/rebuild-run.json', isFile], ['features.md', isFile], ['golden/manifest.json', isFile]];
+  if (from === 'Parity') need.push(['inventory/states.json', isFile]);
+  else need.push(['parity/parity.json', isFile]);
   const missing = need.filter(([n, ok]) => !ok(path.join(runDir, n))).map(([n]) => n);
   if (missing.length) refuse(`cannot rerun: missing ${missing.join(', ')}`);
 
@@ -85,7 +86,7 @@ export function rerun(runDirArg, from, noBuild = false) {
   if (noBuild) fs.writeFileSync(nb, 'rerun without a rebuild\n');
   else if (exists(nb)) { fs.rmSync(nb); removed.push('NoBuild.done'); }
 
-  emit(runDir, { kind: 'phase', phase: from, state: 'start', reason: `rerun from ${from}${noBuild ? ' without a rebuild' : ''}` });
+  tryEmit(runDir, { kind: 'phase', phase: from, state: 'start', reason: `rerun from ${from}${noBuild ? ' without a rebuild' : ''}` });
   return { from, removed, moved, previous, noBuild };
 }
 

@@ -292,7 +292,7 @@ A feature marked "keep" gets a test asserting the behaviour. A feature marked "d
       if (!d) throw new Error('Parity: the loop agent died')
       if (d.restored !== undefined) restored = true
       if (d.action === 'build' && done.has('NoBuild.done')) {
-        await agent(`Write ${q(PAR + '/loop-stop.txt')} containing: not rebuilt: NoBuild.done is set. Touch nothing else.`, { ...CHEAP, label: 'parity-loop-stop', phase: 'Parity' })
+        await agent(`Write ${q(PAR + '/loop-stop.txt')} containing: not rebuilt: NoBuild.done is set. Then run: node ${q(pluginRoot + '/scripts/events.mjs')} ${q(runDir)} decision '{"what":"parity loop","choice":"stop","reason":"not rebuilt: NoBuild.done is set, so the failures above are not sent to the builder"}' . Touch nothing else.`, { ...CHEAP, label: 'parity-loop-stop', phase: 'Parity' })
         break
       }
       if (d.action !== 'build') {

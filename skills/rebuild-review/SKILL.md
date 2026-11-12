@@ -6,7 +6,7 @@ argument-hint: <target-path> [maxUsd=<dollars>] [base=<url@ref|none|keep>] [runD
 
 Run a rebuild review of the target path in `$ARGUMENTS`. The user may add `maxUsd=<dollars>`: the most the run may cost; `base=<url@ref|none|keep>`: the answer to the base question in step 4; `runDir=<dir>`: an existing run folder to resume (skip steps 2 and 3); `from=<Parity|Score|Report>`: redo that phase and the later ones on a finished run (needs `runDir=`; step 3a); `noBuild=1`: with `from=`, start no build round and skip the estimate (no `maxUsd` needed); `unattended=1`: no one is at the keyboard (started by `scripts/unattended.sh`).
 
-Unattended: never ask anything. A missing `base` means `keep`. A missing `maxUsd`, or one below the high end of the estimate, stops the run with that reason and nothing spent. Wait for the Workflow to finish in this turn (do not end the turn while it runs).
+Unattended: never ask anything. A missing `base` means `keep`. A missing `maxUsd` (not needed with `noBuild=1`, which skips the estimate), or one below the high end of the estimate, stops the run with that reason and nothing spent. Wait for the Workflow to finish in this turn (do not end the turn while it runs).
 
 1. Check the path exists and is a directory. If not, say so and stop.
 2. Make the run id from the current time: `date +%Y%m%d-%H%M%S`.

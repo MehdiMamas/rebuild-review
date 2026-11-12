@@ -21,6 +21,7 @@ function fixture({ markers = PHASES.concat(['Foundations']), parity = true } = {
   put(root, 'run.json', '{"platform":"web"}');
   put(root, 'features.md');
   put(root, 'golden/manifest.json');
+  put(root, 'inventory/states.json');
   put(root, 'project/rebuild-run.json', '{"address":"http://127.0.0.1:1"}');
   put(root, 'project/src/app.js', 'code');
   put(root, 'rebuild/build-1.result.json');
