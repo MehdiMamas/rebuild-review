@@ -49,3 +49,7 @@ test('a wait answer without a numeric code is asked again, and code 0 is named i
   assert.match(src, /noCode >= 3\) return \{ state: 'wait-failed'/)
   assert.match(src, /0 is a number: always include it/)
 })
+
+test('the capture prep keeps an auth block already in run.json (#153)', () => {
+  assert.match(readFileSync(file, 'utf8'), /with a .{0,3}base.{0,3}, .{0,3}auth.{0,3} or .{0,3}env.{0,3} key/)
+})
