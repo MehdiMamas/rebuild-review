@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { kinds, wrongTests, settle, merge, failing, cleanDetail, readCost, loop, MAX_ROUNDS, LOOP_USD } from './parity-results.mjs';
+import { kinds, wrongTests, settle, merge, failing, cleanDetail, readCost, loop, prep, writeRunError, MAX_ROUNDS, LOOP_USD } from './parity-results.mjs';
 
 const md = '# Features\n\nF-001 keep. Page.\n- **F-002 defect.** No loading\nF-003 Keep: shortcut\nsome other line\n';
 const res = (o) => Object.entries(o).map(([feature, passed]) => ({ feature, passed, detail: '' }));
@@ -153,4 +153,55 @@ test('loop: the budget stop uses the loop budget from size.json, the floor witho
   f = runFixture({ rebuild: { 'F-001': false, 'F-002': true, 'F-003': true }, builds: [{ n: 1, cost: 60 }] });
   fs.writeFileSync(path.join(f.run, 'size.json'), JSON.stringify({ plan: { loopUsd: 200 } }));
   assert.equal(loop(f.par, f.md, f.run).action, 'build');
+});
+
+const prepDir = () => {
+  const par = fs.mkdtempSync(path.join(os.tmpdir(), 'prep-'));
+  fs.writeFileSync(path.join(par, 'rebuild.json'), '[]');
+  fs.writeFileSync(path.join(par, 'run-error.txt'), 'old');
+  return par;
+};
+
+test('prep removes the stale rebuild.json and run-error.txt', async () => {
+  const par = prepDir(), rb = path.join(par, 'rb.json');
+  fs.writeFileSync(rb, JSON.stringify({ start: 'x' }));
+  await prep(par, rb);
+  assert.ok(!fs.existsSync(path.join(par, 'rebuild.json')) && !fs.existsSync(path.join(par, 'run-error.txt')));
+});
+
+test('prep rewrites only the port in address', async () => {
+  const par = prepDir(), rb = path.join(par, 'rb.json');
+  fs.writeFileSync(rb, JSON.stringify({ platform: 'web', address: 'http://127.0.0.1:3000', start: 'next start' }));
+  const { port } = await prep(par, rb);
+  assert.ok(Number.isInteger(port) && port > 0);
+  assert.deepEqual(JSON.parse(fs.readFileSync(rb, 'utf8')), { platform: 'web', address: `http://127.0.0.1:${port}`, start: 'next start' });
+});
+
+test('prep leaves a run file with no address alone', async () => {
+  const par = prepDir(), rb = path.join(par, 'rb.json'), text = JSON.stringify({ command: ['app'] });
+  fs.writeFileSync(rb, text);
+  assert.deepEqual(await prep(par, rb), { port: null });
+  assert.equal(fs.readFileSync(rb, 'utf8'), text);
+});
+
+test('prep on a missing or unreadable run file fails with the reason', async () => {
+  const par = prepDir(), rb = path.join(par, 'rb.json');
+  await assert.rejects(prep(par, rb), /cannot read .*rb\.json/);
+  fs.writeFileSync(rb, '{nope');
+  await assert.rejects(prep(par, rb), /cannot read/);
+});
+
+test('run-error writes the reason, and a blank reason still leaves one', () => {
+  const par = fs.mkdtempSync(path.join(os.tmpdir(), 'rerr-'));
+  writeRunError(par, 'exit code 1: port in use');
+  assert.equal(fs.readFileSync(path.join(par, 'run-error.txt'), 'utf8'), 'exit code 1: port in use');
+  writeRunError(par, '  ');
+  assert.match(fs.readFileSync(path.join(par, 'run-error.txt'), 'utf8'), /did not start/);
+});
+
+test('the workflow runs prep in code and a prep failure throws, never "would not start"', () => {
+  const wf = fs.readFileSync(new URL('../workflows/rebuild-review.js', import.meta.url), 'utf8');
+  assert.match(wf, /\.mjs'\)\} prep \$\{q\(PAR\)\}/);
+  assert.match(wf, /throw new Error\(`Parity: preparing the rebuild run failed/);
+  assert.doesNotMatch(wf, /Delete \$\{q\(PAR \+ '\/rebuild\.json'\)\}/);
 });

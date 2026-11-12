@@ -258,11 +258,12 @@ A feature marked "keep" gets a test asserting the behaviour. A feature marked "d
   if (hasRb.ok) {
     const suite = async (label) => {
       const adir = await adapterDir()
-      const p = await agent(`Delete ${q(PAR + '/rebuild.json')} and ${q(PAR + '/run-error.txt')} if they exist. If ${q(RB)} has an "address" (a web app), run node ${q(pluginRoot + '/scripts/free-port.mjs')}, which prints a free port, and set the port in "address" to it (http://127.0.0.1:<port>, nothing else in that file changes; the builder's committed copy keeps its own port and is not committed again); an app with no address needs nothing here. Return ok true when done. Change nothing else.`, { ...CHEAP, label: `${label}-prep`, phase: 'Parity', schema: RUN_RESULT })
-      if (!p || !p.ok) return p
+      const p = await agent(`Run exactly: node ${q(pluginRoot + '/scripts/parity-results.mjs')} prep ${q(PAR)} ${q(RB)} . Return ok true if it exited 0, otherwise ok false with its error output as detail. Change nothing else.`, { ...CHEAP, label: `${label}-prep`, phase: 'Parity', schema: RUN_RESULT })
+      if (!p || !p.ok) throw new Error(`Parity: preparing the rebuild run failed: ${(p && p.detail) || 'agent died'}`)
       const r = await longRun(label, `node ${q(adir + '/parity.mjs')} --app ${q(RB)} --tests ${q(TESTS)} --out ${q(PAR + '/rebuild.json')}`, label, 'Parity')
       if (exitedOk(r)) return { ok: true }
-      await agent(`Write ${q(PAR + '/run-error.txt')} containing exactly this text: ${r.tail}\nTouch nothing else.`, { ...CHEAP, label: `${label}-error`, phase: 'Parity' })
+      const w = await agent(`Run exactly: node ${q(pluginRoot + '/scripts/parity-results.mjs')} run-error ${q(PAR)} ${q(whyNot(r))} . Return ok true if it exited 0, otherwise ok false with its error output as detail. Change nothing else.`, { ...CHEAP, label: `${label}-error`, phase: 'Parity', schema: RUN_RESULT })
+      if (!w || !w.ok) throw new Error(`Parity: could not record why the rebuild would not start: ${(w && w.detail) || 'agent died'}`)
       return { ok: false }
     }
     const LOOP_SCHEMA = { type: 'object', required: ['action', 'reason', 'failing'], properties: { action: { type: 'string', enum: ['done', 'build', 'stop'] }, reason: { type: 'string' }, failing: { type: 'array', items: { type: 'string' } }, restored: { type: 'number' } } }

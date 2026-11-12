@@ -3,7 +3,10 @@
 //   node parity-results.mjs settle <parDir> <features.md>         moves wrong and flaky tests to removed/, notes them in untested.md, rewrites original.json
 //   node parity-results.mjs merge  <parDir> <features.md>         writes parity.json
 //   node parity-results.mjs loop   <parDir> <features.md> <runDir> records the round, writes failures.md, prints {action, reason, failing}
+//   node parity-results.mjs prep   <parDir> <rebuild-run.json>    clears the last rebuild result and error, gives the rebuild a free port
+//   node parity-results.mjs run-error <parDir> <text>             writes run-error.txt (the rebuild would not start)
 import fs from 'node:fs';
+import net from 'node:net';
 import path from 'node:path';
 import { readPlan } from './size.mjs';
 import { tryEmit } from './events.mjs';
@@ -116,6 +119,33 @@ export function readCost(runDir) {
   return { spent, build };
 }
 
+const freePort = () => new Promise((resolve, reject) => {
+  const server = net.createServer();
+  server.once('error', reject);
+  server.listen(0, '127.0.0.1', () => { const { port } = server.address(); server.close(() => resolve(port)); });
+});
+
+// Before a suite run on the rebuild: drop the last result and error, and give a web rebuild a free port (only "address" changes).
+// Throws with the reason when rebuild-run.json cannot be read or written: that is a phase error, not "the rebuild would not start".
+export async function prep(parDir, rbFile) {
+  for (const n of ['rebuild.json', 'run-error.txt']) fs.rmSync(path.join(parDir, n), { force: true });
+  let run;
+  try { run = readJson(rbFile); } catch (e) { throw new Error(`cannot read ${rbFile}: ${e.message}`); }
+  if (typeof run.address !== 'string' || !run.address) return { port: null };
+  let url;
+  try { url = new URL(run.address); } catch { throw new Error(`the address in ${rbFile} is not a URL: ${run.address}`); }
+  const port = await freePort();
+  url.port = String(port);
+  run.address = url.origin + (url.pathname === '/' ? '' : url.pathname) + url.search;
+  try { fs.writeFileSync(rbFile, JSON.stringify(run, null, 2) + '\n'); } catch (e) { throw new Error(`cannot write ${rbFile}: ${e.message}`); }
+  return { port };
+}
+
+export function writeRunError(parDir, text) {
+  fs.mkdirSync(parDir, { recursive: true });
+  fs.writeFileSync(path.join(parDir, 'run-error.txt'), String(text).trim() ? String(text) : 'the rebuild did not start (no output)');
+}
+
 export function loop(parDir, featuresMd, runDir) {
   const { spent, build } = readCost(runDir);
   const errFile = path.join(parDir, 'run-error.txt');
@@ -167,5 +197,9 @@ if (process.argv[1] && path.resolve(process.argv[1]) === new URL(import.meta.url
     const d = loop(x, y, z);
     console.log(JSON.stringify(d));
     tryEmit(path.resolve(z), { kind: 'decision', what: 'loop', choice: d.action, reason: `${d.reason}; failing ${Array.isArray(d.failing) ? d.failing.length : d.failing}` });
-  } else { console.error('usage: parity-results.mjs wrong|settle|merge|loop ...'); process.exit(2); }
+  } else if (cmd === 'prep') {
+    try { console.log(JSON.stringify(await prep(x, y))); } catch (e) { console.error(e.message); process.exit(1); }
+  } else if (cmd === 'run-error') {
+    writeRunError(x, y);
+  } else { console.error('usage: parity-results.mjs wrong|settle|merge|loop|prep|run-error ...'); process.exit(2); }
 }
