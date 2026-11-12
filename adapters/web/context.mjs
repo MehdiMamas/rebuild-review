@@ -4,6 +4,9 @@ const SECRET_HEADERS = new Set(['authorization', 'proxy-authorization', 'cookie'
 const SECRET_PARAM = /token|key|secret|auth|pass|session|sig|code/i;
 const TOKEN_LIKE = [/\b(Bearer|Basic)\s+\S+/gi, /eyJ[\w-]+\.[\w-]+\.[\w-]*/g, /[A-Za-z0-9_\-+/=]{32,}/g];
 
+// Buttons, links and probe clicks that end the session or remove the account: never pressed or followed.
+export const SIGN_OUT_RE = /sign.?out|log.?out|log.?off|delete (my )?account/i;
+
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 export function scrub(value) {
@@ -56,7 +59,7 @@ const isApi = (r) => isDataRequest(r.request());
 
 // Makes a context that blocks anything off the app's origin and records a redacted HAR.
 // faults (mutable): { slowMs: delay every fetch/xhr, failApi: answer every fetch/xhr with 500 }
-// storageState: a Playwright storage state file (a signed-in session). allowOrigins: other origins let through.
+// storageState: a Playwright storage state, a file path or an object (a signed-in session). allowOrigins: other origins let through.
 // onBlocked(url): called for each blocked request (the url is redacted). timeout / navTimeout: context defaults in ms.
 export async function makeContext(browser, origin, { viewport, colorScheme = 'light', faults = {}, storageState, allowOrigins = [], onBlocked, timeout, navTimeout, mobile = false, touch = false } = {}) {
   const context = await browser.newContext({ viewport, colorScheme, isMobile: mobile, hasTouch: touch, ...(storageState ? { storageState } : {}) });
