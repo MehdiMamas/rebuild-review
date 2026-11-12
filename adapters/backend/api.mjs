@@ -1,5 +1,5 @@
 // Backend adapter: start the HTTP service named by run.json in isolation and call it.
-// run.json: { platform: "backend", dir?, install?, build?, start, address, openapi?, readyPath?, env? }
+// run.json: { platform: "backend", dir?, install?, build?, start, address, openapi?, readyPath?, env?, stores? }
 // As a module: const ctx = prepare(run, runFile); await call(ctx, { method, path, ... }); await restart(ctx, { fresh: true }); await stop(ctx).
 import fs from 'node:fs';
 import os from 'node:os';
@@ -8,6 +8,7 @@ import { isUtf8 } from 'node:buffer';
 import { spawn, spawnSync, execSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { assertLocalhost, scrub, sleep } from '../web/context.mjs';
+import { validateStores, runtime, pullAll, sweep, startStores, stopStores, cleanupSync, checkSocketPaths, checkPortsFree } from './stores.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ENV_ALLOW = ['PATH', 'LANG', 'SystemRoot'];
@@ -32,9 +33,9 @@ export function checkEnv(env = {}) {
     if (STORE_SCHEME.test(s)) {
       let host = '';
       try { host = new URL(s).hostname; } catch { host = (/^[a-z+]+:\/\/(?:[^@/]*@)?([^:/?#]*)/i.exec(s) || [])[1] || 'unknown'; }
-      if (!LOCAL_HOSTS.has(host.toLowerCase())) throw new Error(`run.json env ${k} points at a store outside this machine (${host}); a run never reviews against a shared or real store. Use a stand-in on this machine.`);
+      if (!LOCAL_HOSTS.has(host.toLowerCase())) throw new Error(`run.json env ${k} points at a store outside this machine (${host}); a run never reviews against a shared or real store. Use a stand-in on this machine, or declare the store in run.json stores to get a throwaway container.`);
     } else if (STORE_HOST_KEY.test(k) && !LOCAL_HOSTS.has(s.toLowerCase())) {
-      throw new Error(`run.json env ${k} points at a store outside this machine (${s}); a run never reviews against a shared or real store. Use a stand-in on this machine.`);
+      throw new Error(`run.json env ${k} points at a store outside this machine (${s}); a run never reviews against a shared or real store. Use a stand-in on this machine, or declare the store in run.json stores to get a throwaway container.`);
     }
   }
 }
@@ -73,9 +74,13 @@ export function checkWorkFiles(workDir, runEnv = {}) {
 }
 
 const prepared = new Map();
+// Containers and networks of every context are removed when this process ends (the signal handlers below call process.exit, which gets here).
+process.on('exit', () => { for (const c of prepared.values()) { try { cleanupSync(c); } catch {} } });
 // Install and build once (RR_PREPARED=1 skips them). Returns the context every other function takes.
 export function prepare(run, runFile) {
   assertPosix();
+  const hasStores = Array.isArray(run.stores) ? run.stores.length > 0 : run.stores !== undefined;
+  if (run.stores !== undefined) { let sp = ''; try { sp = new URL(run.address).port; } catch {} validateStores(run.stores, Number(sp || 80)); }
   const key = path.resolve(runFile);
   if (prepared.has(key)) return prepared.get(key);
   if (run.dir && path.isAbsolute(run.dir)) throw new Error(`run.json "dir" must be relative, got ${run.dir}`);
@@ -85,8 +90,15 @@ export function prepare(run, runFile) {
   const workDir = path.resolve(base, run.dir || '.');
   if (!inside(base, workDir)) throw new Error(`run.json "dir" must stay inside ${base}, got ${run.dir}`);
   checkEnv(run.env);
-  for (const k of ['start', 'install', 'build']) { const sch = typeof run[k] === 'string' && outsideStore(run[k]); if (sch) throw new Error(`run.json ${k} holds a ${sch}:// store URL that points outside this machine; a run never reviews against a shared or real store. Use a stand-in on this machine.`); }
+  for (const k of ['start', 'install', 'build']) { const sch = typeof run[k] === 'string' && outsideStore(run[k]); if (sch) throw new Error(`run.json ${k} holds a ${sch}:// store URL that points outside this machine; a run never reviews against a shared or real store. Use a stand-in on this machine, or declare the store in run.json stores to get a throwaway container.`); }
   checkWorkFiles(workDir, run.env);
+  // Stores: a runtime must work; the sweep and the pulls happen once per run (the parity parent), not in every test process.
+  let storeState = null;
+  if (hasStores) {
+    const rt = runtime();
+    if (process.env.RR_PREPARED !== '1') { sweep(rt); pullAll(rt, run.stores); }
+    storeState = { list: run.stores, rt, mode: null, up: false, net: null, cnames: [], addrs: [], relays: [], relayGone: null, track: trackListed };
+  }
   let buildMs = null;
   if (process.env.RR_PREPARED !== '1') {
     if (run.install) execSync(run.install, { cwd: workDir, stdio: 'inherit' });
@@ -97,7 +109,7 @@ export function prepare(run, runFile) {
   // The baseline is the work copy as the build left it: its untracked files, and a commit of its tracked files (null when the build changed none).
   if (Array.isArray(saved)) saved = { files: saved, built: null };
   const baseline = saved && saved.files ? saved : (() => { const files = untracked(workDir); return files && { files, built: builtState(workDir) }; })();
-  const ctx = { run, runFile: key, workDir, baseline: baseline && new Set(baseline.files), built: baseline && baseline.built, notes: [], origin, port: new URL(origin).port, buildMs, proc: null, worker: null, root: null, log: '', startupMs: null, readyMs: Number(process.env.RR_READY_MS) || 30000 };
+  const ctx = { run, runFile: key, workDir, baseline: baseline && new Set(baseline.files), built: baseline && baseline.built, notes: [], origin, port: new URL(origin).port, buildMs, proc: null, worker: null, root: null, stores: storeState, log: '', startupMs: null, readyMs: Number(process.env.RR_READY_MS) || 30000 };
   prepared.set(key, ctx);
   return ctx;
 }
@@ -105,6 +117,7 @@ export function prepare(run, runFile) {
 let nsOk;
 // 'namespace': the service runs in a new user and network namespace with only loopback (Linux, when unshare and ip are allowed). 'proxy': the proxy variables point at a dead address.
 export function networkMode() {
+  if (process.env.RR_NET_MODE === 'proxy') return 'proxy'; // test use only
   if (nsOk === undefined) nsOk = process.platform === 'linux' && spawnSync('unshare', ['--user', '--net', '--map-root-user', 'sh', '-c', LO_UP], { stdio: 'ignore' }).status === 0;
   return nsOk ? 'namespace' : 'proxy';
 }
@@ -116,6 +129,12 @@ const isLive = (c) => c.exitCode === null && c.signalCode === null && !c.rrExite
 function track(child, onGone) {
   groups.add(child);
   child.on('exit', () => { child.rrExited = true; groups.delete(child); if (onGone) onGone(); });
+}
+// Like track, and the pid goes in <RR_TMP_PARENT>/groups so parity can end it when a test is killed.
+function trackListed(child) {
+  const groupsFile = process.env.RR_TMP_PARENT ? path.join(process.env.RR_TMP_PARENT, 'groups') : null;
+  track(child, groupsFile ? () => forgetPid(groupsFile, child.pid) : null);
+  if (groupsFile && child.pid) fs.appendFileSync(groupsFile, child.pid + '\n');
 }
 export function killGroup(child) { if (child && child.pid && isLive(child)) { try { process.kill(-child.pid, 'SIGKILL'); } catch {} } }
 function killAll() { for (const c of [...groups]) killGroup(c); }
@@ -170,14 +189,28 @@ export async function start(ctx) {
   assertPosix();
   if (ctx.proc) return ctx;
   if (networkMode() === 'proxy' && await fetch(ctx.origin, { signal: AbortSignal.timeout(2000) }).then(() => true, () => false)) throw new Error(`refusing to start: something already answers on ${ctx.origin}`);
+  const stores = ctx.stores;
+  if (stores && !stores.up && networkMode() === 'proxy') await checkPortsFree(stores.list);
   if (!ctx.root) {
     ctx.root = fs.realpathSync(fs.mkdtempSync(path.join(process.env.RR_TMP_PARENT || os.tmpdir(), 'rr-backend-')));
     fs.mkdirSync(path.join(ctx.root, 'home')); fs.mkdirSync(path.join(ctx.root, 'tmp'));
     resetWork(ctx);
   }
+  // Stores start whenever they are not up (not tied to the temp root). A failed start takes stores and root down.
+  if (stores && !stores.up) {
+    try {
+      stores.mode = networkMode();
+      if (stores.mode === 'namespace') checkSocketPaths(ctx.root, stores.list);
+      await startStores(ctx);
+    } catch (e) { await stop(ctx, { removeRoot: true }); throw e; }
+  }
   const env = serviceEnv(ctx);
   let file = 'sh', argv = ['-c', ctx.run.start];
-  if (networkMode() === 'namespace') { file = 'unshare'; argv = ['--user', '--net', '--map-root-user', '--', 'sh', '-c', `${LO_UP}; exec sh -c "$1"`, 'sh', ctx.run.start]; }
+  if (networkMode() === 'namespace') {
+    file = 'unshare'; argv = ['--user', '--net', '--map-root-user', '--', 'sh', '-c', `${LO_UP}; exec sh -c "$1"`, 'sh', ctx.run.start];
+    // One relay per store inside the namespace: 127.0.0.1:<port> to the host-side socket; the wrapper ends with an error when one is not up within 5 s. The root path travels as an argument, never inside the script.
+    if (stores) argv = ['--user', '--net', '--map-root-user', '--', 'sh', '-c', `${LO_UP}; cmd=$1; root=$2; node=$3; relay=$4; waiter=$5; shift 5; for s in "$@"; do n=\${s%%:*}; p=\${s#*:}; rm -f "$root/$n.svc.ready"; RELAY_READY="$root/$n.svc.ready" "$node" "$relay" "127.0.0.1:$p" "unix:$root/$n.sock" & done; "$node" -e "$waiter" "$root" "$@" || exit 1; exec sh -c "$cmd"`, 'sh', ctx.run.start, ctx.root, process.execPath, path.join(HERE, 'relay.mjs'), RELAY_WAIT, ...stores.list.map((x) => `${x.name}:${x.port}`)];
+  }
   const SEP = '\n--- service started again ---\n';
   if (ctx.log) ctx.log += SEP;
   const t0 = Date.now();
@@ -202,23 +235,30 @@ export async function start(ctx) {
   }
   const ready = new URL(ctx.run.readyPath || '/', ctx.origin).pathname;
   for (;;) {
-    if (ctx.worker && ctx.worker.gone) { const w = ctx.worker, lastErr = scrub(w.err.trim().split('\n').pop() || 'no output'); await stop(ctx); throw new Error(`the call helper in the service namespace ended before the service answered (${w.gone}): ${lastErr}`); }
-    if (exited) { const log = ctx.log.split(SEP).pop(); await stop(ctx); throw new Error(`the service ended before it answered (${exited}): ${scrub(log.trim().split('\n').slice(-5).join(' | '))}`); }
+    if (stores && stores.relayGone) { const why = stores.relayGone; await failStart(ctx); throw new Error(`${why} before the service answered`); }
+    if (ctx.worker && ctx.worker.gone) { const w = ctx.worker, lastErr = scrub(w.err.trim().split('\n').pop() || 'no output'); await failStart(ctx); throw new Error(`the call helper in the service namespace ended before the service answered (${w.gone}): ${lastErr}`); }
+    if (exited) { const log = ctx.log.split(SEP).pop(); await failStart(ctx); throw new Error(`the service ended before it answered (${exited}): ${scrub(log.trim().split('\n').slice(-5).join(' | '))}`); }
     const r = await doFetchVia(ctx, { path: ready, timeoutMs: 2000 });
     if (r.status > 0) break;
-    if (Date.now() - t0 > ctx.readyMs) { const log = ctx.log.split(SEP).pop(); await stop(ctx); throw new Error(`the service did not answer on ${ctx.origin} within ${Math.round(ctx.readyMs / 1000)} s: ${scrub(log.trim().split('\n').slice(-5).join(' | '))}`); }
+    if (Date.now() - t0 > ctx.readyMs) { const log = ctx.log.split(SEP).pop(); await failStart(ctx); throw new Error(`the service did not answer on ${ctx.origin} within ${Math.round(ctx.readyMs / 1000)} s: ${scrub(log.trim().split('\n').slice(-5).join(' | '))}`); }
     await sleep(100);
   }
   ctx.startupMs = Date.now() - t0;
   return ctx;
 }
 
-// Kills the service and everything it started (its whole process group).
+// A failed start leaves nothing when stores are in use (stores and root go); without stores the temp root stays, as before.
+const failStart = (ctx) => stop(ctx, { removeRoot: !!ctx.stores });
+// Runs in the wrapper (node -e): waits up to 5 s for the ready file of each in-namespace relay.
+const RELAY_WAIT = "const fs=require('fs'),p=require('path');const root=process.argv[1],names=process.argv.slice(2).map(function(s){return s.split(':')[0]});const t=Date.now();(function w(){const m=names.filter(function(n){return !fs.existsSync(p.join(root,n+'.svc.ready'))});if(!m.length)process.exit(0);if(Date.now()-t>5000){console.error('the in-namespace relay for store '+m.join(', ')+' did not start within 5 s');process.exit(1)}setTimeout(w,10)})()";
+
+// Kills the service and everything it started (its whole process group). With removeRoot the stores and the temp root go too.
 export async function stop(ctx, { removeRoot = false } = {}) {
   for (const p of [ctx.proc, ctx.worker && ctx.worker.child]) killGroup(p);
   const procs = [ctx.proc, ctx.worker && ctx.worker.child].filter(Boolean);
   ctx.proc = null; ctx.worker = null;
   for (const p of procs) if (p.exitCode === null && p.signalCode === null) await new Promise((r) => { p.once('exit', r); setTimeout(r, 1000); });
+  if (removeRoot) await stopStores(ctx);
   if (removeRoot && ctx.root) { fs.rmSync(ctx.root, { recursive: true, force: true }); ctx.root = null; }
 }
 
@@ -314,7 +354,9 @@ async function doFetchVia(ctx, req) {
 // Starts the service first when it is not running.
 export async function call(ctx, req) {
   if (!ctx.proc || ctx.proc.exitCode !== null || ctx.proc.signalCode !== null) { if (ctx.proc) await stop(ctx); await start(ctx); }
-  return doFetchVia(ctx, req);
+  const r = await doFetchVia(ctx, req);
+  if (r.status === 0 && ctx.stores && ctx.stores.relayGone) r.error = `${r.error || 'no answer'} (${ctx.stores.relayGone})`;
+  return r;
 }
 
 // scrub on every string inside a parsed value (keys stay), so a pattern can never break the JSON.

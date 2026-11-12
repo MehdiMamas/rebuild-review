@@ -8,6 +8,7 @@ import os from 'node:os';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { prepare } from './api.mjs';
+import { removeListed } from './stores.mjs';
 
 const arg = (n) => { const i = process.argv.indexOf(`--${n}`); return i > 0 ? process.argv[i + 1] : undefined; };
 const appFile = path.resolve(arg('app') || '');
@@ -31,7 +32,7 @@ function runTest(file) {
     const tmpParent = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-backend-parity-'));
     const child = spawn(process.execPath, ['--test', '--test-force-exit', path.join(testsDir, file)], {
       cwd: here, detached: true, stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, APP_RUN: appFile, API_MODULE: path.join(here, 'api.mjs'), APP_URL: run.address, RR_PREPARED: '1', RR_BASELINE: baselineFile, RR_TMP_PARENT: tmpParent },
+      env: { ...process.env, APP_RUN: appFile, API_MODULE: path.join(here, 'api.mjs'), APP_URL: run.address, RR_PREPARED: '1', RR_BASELINE: baselineFile, RR_TMP_PARENT: tmpParent, RR_STORE_OWNER: String(process.pid) },
     });
     let output = '', timedOut = false, done = false;
     const take = (d) => { output = (output + d).slice(-20000); };
@@ -48,6 +49,8 @@ function runTest(file) {
     const finish = (status) => {
       if (done) return; done = true;
       clearTimeout(timer); killGroup();
+      // Containers and the network the test started (and did not stop) are listed in <tmpParent>/stores.
+      try { removeListed(tmpParent); } catch {}
       fs.rmSync(tmpParent, { recursive: true, force: true });
       resolve({ status, timedOut, text: output.trim().split('\n') });
     };
