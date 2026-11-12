@@ -79,7 +79,7 @@ const queue = [start], seen = new Map();
     // Sent to a sign-in page (by the server or by the page's own script), or refused: the route is behind a sign-in, not a screen.
     const here = new URL(page.url()), asked = new URL(url);
     if (here.pathname !== asked.pathname && LOGIN_RE.test(here.pathname)) { behindSignIn.add(asked.pathname); seen.set(key, null); const to = (here.pathname + here.search); if (!seen.has(to)) queue.push(here.toString().replace(/#.*/, '')); continue; }
-    if ((status === 401 || status === 403) && authInfo.given) { (authInfo.signedIn ? refusedSignedIn : behindSignIn).add(asked.pathname); seen.set(key, null); continue; }
+    if (status === 401 || status === 403) { (authInfo.signedIn ? refusedSignedIn : behindSignIn).add(asked.pathname); seen.set(key, null); continue; }
     seen.set(key, { id: slug(url), url: key, title: await page.title() });
     const hrefs = await page.$$eval('a[href]', (as) => as.map((a) => a.href));
     const found = new Set();
@@ -98,7 +98,7 @@ const queue = [start], seen = new Map();
         await buttons.nth(i).click({ timeout: 1500 });
         await sleep(200);
         const u = new URL(page.url()); u.hash = '';
-        if (u.origin === origin && u.pathname + u.search !== key) { found.add(u.toString()); await page.goto(url); await settle(page); }
+        if (u.origin === origin && u.pathname + u.search !== key) { if (!endsSessionPath(u.pathname, authInfo.signedIn)) found.add(u.toString()); await page.goto(url); await settle(page); }
       } catch {}
     }
     queue.push(...[...found].sort());
