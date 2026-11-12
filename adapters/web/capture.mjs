@@ -144,7 +144,7 @@ for (const s of screens) {
 const stateIds = [];
 if (statesFile) {
   for (const st of JSON.parse(fs.readFileSync(path.resolve(statesFile), 'utf8'))) {
-    const { context, rec } = await makeContext(browser, origin, { viewport: { width: 1440, height: 900 }, allowOrigins });
+    const { context, rec } = await makeContext(browser, origin, { viewport: { width: 1440, height: 900 }, storageState, allowOrigins });
     const page = await context.newPage();
     try {
       for (const step of st.steps) await runStep(page, origin, step);
