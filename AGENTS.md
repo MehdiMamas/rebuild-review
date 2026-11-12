@@ -13,6 +13,12 @@ what it renders, then scores the rebuild against the original. See README.md.
 - Gotcha: the skill and the workflow must not share a name. With both called `rebuild-review:rebuild-review`, the call goes straight to the workflow and the skill text never runs.
 - Gotcha: a clean `CLAUDE_CONFIG_DIR` has no login, so `claude -p` cannot run there; use `--plugin-dir`.
 
+## Rerun from a phase
+
+- `node scripts/rerun.mjs <runDir> --from Parity|Score|Report [--no-build]` (#145; skill args `runDir= from= noBuild=1`; `unattended.sh --run-dir D --from P [--no-build]`). Removes `<Phase>.done` for that phase and later ones, moves old results to `<runDir>/previous-<n>/` (`parity/` results except `tests`, `areas`, `removed`, `untested*.md`; `golden-rebuild/`; `score/`; `report/` incl. `stopped.txt`; for `--from Score` only `score/` and `report/`, for `Report` only `report/`) all-or-nothing, appends a `phase` event. `rounds.json` moves, so the loop starts at round 1. `project/`, `rebuild/`, `golden/`, `events.jsonl`, `cost.json`, `size.json` stay.
+- Refuses with exit 2 and no change when `Rebuild.done`, `project/rebuild-run.json`, `run.json`, `features.md` or `golden/` is missing (`parity/parity.json` too for Score and Report), or a `long/<name>.pid` is alive with no `.exit`.
+- `--no-build` writes `NoBuild.done` (removed by a rerun without it). The workflow reads it with the other `.done` files, so a resume keeps it: the Estimate block is skipped and the parity loop writes `loop-stop.txt` "not rebuilt: NoBuild.done is set" instead of building. A plain resume keeps it; a rerun without the flag clears it. Test: `node --test scripts/rerun.test.mjs` (its phase list must equal `PHASES` in the workflow).
+
 ## Capture (web adapter)
 
 - Contract every adapter follows: `adapters/CONTRACT.md`. Web adapter: `adapters/web/` (`capture.mjs`, `probes.mjs`, `context.mjs`).

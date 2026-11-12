@@ -39,6 +39,7 @@ jobs:
           node --test scripts/long-run.test.mjs
           node --test scripts/events.test.mjs
           node --test scripts/watch.test.mjs
+          node --test scripts/rerun.test.mjs
           node --test benchmark/calibrate.test.mjs
           node --test adapters/web/test/crawl.test.mjs
           node --test adapters/web/test/libs.test.mjs adapters/web/test/browser.test.mjs

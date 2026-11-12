@@ -81,6 +81,16 @@ Measured so far:
 | A private web app, several runs | 3,159 to 6,270 | $6 to $11 | one run: 63 agents, 3.15M tokens, 73 minutes |
 | actualbudget/actual (11 areas) | 351,633 | $185.64 | not priced |
 
+### Rerun from a phase
+
+To redo the last phases of a finished run (for example after the scoring or the tests changed) without building again:
+
+```
+node scripts/rerun.mjs <run folder> --from Parity|Score|Report [--no-build]
+```
+
+then start the review again with that `runDir`. The named phase and every later one are redone; earlier phases, `project/`, `rebuild/`, `golden/`, `parity/tests/` (so no test is rewritten), `events.jsonl`, `cost.json` (it keeps adding) and `size.json` stay. The old results move to `<run folder>/previous-1/` (the next rerun uses `previous-2/`, and so on): `parity/` results, `golden-rebuild/`, `score/` and `report/` for `--from Parity`; `score/` and `report/` for `--from Score`; `report/` for `--from Report`. `--from Score` and `--from Report` use the earlier rebuild capture. `parity/tests/` is kept as it is, so data a test left behind is still there. It refuses (exit 2, nothing changed) when the run is not finished up to the rebuild or a command of the run is still going. With `--no-build` it writes `NoBuild.done`: the estimate is skipped (no `maxUsd` needed) and the parity loop stops with "not rebuilt" instead of building; failures stay in `parity.json`. A plain resume of that folder keeps `NoBuild.done` (run `rerun.mjs` without `--no-build` to clear it). A rerun needs `inventory/states.json` and `golden/manifest.json`. With `scripts/unattended.sh`, use `--run-dir <dir> --from <Phase> [--no-build]`.
+
 ### Big apps
 
 A big app is split into areas inside the run; the run still covers the whole app. Each area is inventoried, tested, rebuilt and judged on its own, and the scores are weighed by lines of code. The report has a Coverage section: features found, tested and rebuilt per area, screens reached, what was not reached and what was excluded (with the reason).
