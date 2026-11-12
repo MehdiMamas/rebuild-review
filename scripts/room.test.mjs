@@ -376,6 +376,35 @@ test('env written by copyEnv stays out of the room, a dirty rebuild-run.json doe
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(runDir, 'project', 'rebuild-run.json'), 'utf8')).env, { SETTING: 'stand-in' });
 });
 
+test('copyEnv copies stores without env, and a delivered rebuild-run.json keeps them; the builder copy keeps name, image and port and has no store env', () => {
+  const stores = [{ name: 'kv', image: 'x@sha256:' + 'a'.repeat(64), port: 6400, env: { PASS: 'stand-in' } }];
+  const { target, runDir } = makeRun('F-001 A user sees a list.\n');
+  fs.writeFileSync(path.join(runDir, 'run.json'), JSON.stringify({ start: 'y', stores }));
+  // the committed file may name the stores with their env (a later round); the room's clone is committed state, and dropEnv strips the env from it
+  const proj = repo({ 'rebuild-run.json': JSON.stringify({ start: 'x', dir: '.', stores }) });
+  fs.cpSync(proj, path.join(runDir, 'project'), { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'project', 'rebuild-run.json'), JSON.stringify({ start: 'x', dir: '.' }));
+  copyEnv(runDir);
+  const delivered = JSON.parse(fs.readFileSync(path.join(runDir, 'project', 'rebuild-run.json'), 'utf8'));
+  assert.deepEqual(delivered.stores, stores);
+  assert.equal('env' in delivered, false);
+  const room = prepareRoom({ runDir, target, inputs: ['features.md'] });
+  const copy = JSON.parse(fs.readFileSync(path.join(room, 'project', 'rebuild-run.json'), 'utf8'));
+  assert.deepEqual(copy.stores, [{ name: 'kv', image: stores[0].image, port: 6400 }]);
+});
+
+test('copyEnv leaves stores unset when run.json has none, and copies env alone', () => {
+  const runDir = tmp();
+  fs.mkdirSync(path.join(runDir, 'project'));
+  const rb = path.join(runDir, 'project', 'rebuild-run.json');
+  fs.writeFileSync(rb, JSON.stringify({ start: 'x' }));
+  fs.writeFileSync(path.join(runDir, 'run.json'), JSON.stringify({ start: 'y', env: { A: 'b' } }));
+  copyEnv(runDir);
+  const out = JSON.parse(fs.readFileSync(rb, 'utf8'));
+  assert.deepEqual(out, { start: 'x', env: { A: 'b' } });
+  assert.equal('stores' in out, false);
+});
+
 test('every BUDGET_USD key room.mjs uses exists, so no child gets --max-budget-usd undefined', () => {
   const src = fs.readFileSync(new URL('./room.mjs', import.meta.url), 'utf8');
   for (const [, key] of src.matchAll(/BUDGET_USD\.(\w+)/g)) assert.ok(key in BUDGET_USD, `BUDGET_USD.${key} does not exist`);
