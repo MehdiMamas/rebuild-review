@@ -287,16 +287,16 @@ A feature marked "keep" gets a test asserting the behaviour. A feature marked "d
       if (!/^run-error written [1-9]\d* bytes\s*$/.test(String(w.output || ''))) throw new Error(`Parity: run-error.txt was not confirmed written (the agent said ok but the command printed: ${String(w.output || 'nothing').slice(0, 200)})`)
       return { ok: false }
     }
-    const LOOP_SCHEMA = { type: 'object', required: ['action', 'reason', 'failing'], properties: { action: { type: 'string', enum: ['done', 'build', 'stop'] }, reason: { type: 'string' }, failing: { type: 'array', items: { type: 'string' } }, restored: { type: 'number' } } }
+    const LOOP_SCHEMA = { type: 'object', required: ['action', 'reason', 'failing', 'restored'], properties: { action: { type: 'string', enum: ['done', 'build', 'stop'] }, reason: { type: 'string' }, failing: { type: 'array', items: { type: 'string' } }, restored: { type: 'number' } } }
     let restored = false
     let started = true
     for (let round = 1; ; round++) {
       const ran = await suite(`parity-rebuild-run-${round}`)
       if (!ran) throw new Error('Parity: the suite agent died')
       started = ran.ok
-      const d = await agent(`Run exactly: node ${q(pluginRoot + '/scripts/parity-results.mjs')} loop ${q(PAR)} ${q(runDir + '/features.md')} ${q(runDir)} . It prints one JSON line. Return its fields action, reason, failing and restored (leave restored out if it is not there). Change nothing else.`, { ...CHEAP, label: `parity-loop-${round}`, phase: 'Parity', schema: LOOP_SCHEMA })
+      const d = await agent(`Run exactly: node ${q(pluginRoot + '/scripts/parity-results.mjs')} loop ${q(PAR)} ${q(runDir + '/features.md')} ${q(runDir)} . It prints one JSON line. Return its fields action, reason, failing and restored, all four always, copied exactly (restored is a number and 0 is a number: include it, 0 included). Change nothing else.`, { ...CHEAP, label: `parity-loop-${round}`, phase: 'Parity', schema: LOOP_SCHEMA })
       if (!d) throw new Error('Parity: the loop agent died')
-      if (d.restored !== undefined) restored = true
+      if (d.restored > 0) restored = true
       if (d.action === 'build' && done.has('NoBuild.done')) {
         await agent(`Write ${q(PAR + '/loop-stop.txt')} containing: not rebuilt: NoBuild.done is set. Then run: node ${q(pluginRoot + '/scripts/events.mjs')} ${q(runDir)} decision '{"what":"parity loop","choice":"stop","reason":"not rebuilt: NoBuild.done is set, so the failures above are not sent to the builder"}' . Touch nothing else.`, { ...CHEAP, label: 'parity-loop-stop', phase: 'Parity' })
         break
