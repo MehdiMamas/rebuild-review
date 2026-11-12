@@ -4,19 +4,47 @@ import path from 'node:path';
 import { spawn, execSync, execFileSync } from 'node:child_process';
 import { assertLocalhost, sleep } from './context.mjs';
 
+// Linux without lsof: the listener of a TCP port found from /proc (socket inode in /proc/net/tcp*, then the pid whose fd links to it).
+function procListeners(port) {
+  const inodes = new Set();
+  for (const f of ['/proc/net/tcp', '/proc/net/tcp6']) {
+    let text = '';
+    try { text = fs.readFileSync(f, 'utf8'); } catch { continue; }
+    for (const line of text.split('\n').slice(1)) {
+      const c = line.trim().split(/\s+/);
+      if (c[3] === '0A' && parseInt(c[1].split(':')[1], 16) === port && c[9] !== '0') inodes.add(c[9]);
+    }
+  }
+  const pids = [];
+  if (!inodes.size) return pids;
+  for (const d of fs.readdirSync('/proc')) {
+    if (!/^\d+$/.test(d)) continue;
+    try {
+      if (fs.readdirSync(`/proc/${d}/fd`).some((fd) => { try { return inodes.has(/^socket:\[(\d+)\]$/.exec(fs.readlinkSync(`/proc/${d}/fd/${fd}`))?.[1]); } catch { return false; } })) pids.push(Number(d));
+    } catch {}
+  }
+  return pids;
+}
+
 // An agent exploring the app can leave it running on the run's port. Stops that process only if it runs from inside this run's work copy (base).
 // Returns null when the port is free again, otherwise why it was left alone.
 async function stopOwnLeftover(origin, base) {
   if (process.platform === 'win32') return 'cannot read its working folder on Windows';
+  const port = Number(new URL(origin).port);
   const lsof = (args) => execFileSync('lsof', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
   let pids;
-  try { pids = lsof(['-nP', '-t', `-iTCP:${new URL(origin).port}`, '-sTCP:LISTEN']).trim().split('\n').filter(Boolean).map(Number); }
-  catch { return 'lsof could not name its process'; }
+  let cwdOf = (pid) => lsof(['-a', '-p', String(pid), '-d', 'cwd', '-Fn']).split('\n').find((l) => l.startsWith('n'))?.slice(1) ?? '';
+  try { pids = lsof(['-nP', '-t', `-iTCP:${port}`, '-sTCP:LISTEN']).trim().split('\n').filter(Boolean).map(Number); }
+  catch (e) {
+    if (e.code !== 'ENOENT' || process.platform !== 'linux') return 'lsof could not name its process';
+    pids = procListeners(port);
+    cwdOf = (pid) => fs.readlinkSync(`/proc/${pid}/cwd`);
+  }
   if (!pids.length) return 'lsof could not name its process';
   const root = fs.realpathSync(base);
   for (const pid of pids) {
     let cwd = '';
-    try { cwd = lsof(['-a', '-p', String(pid), '-d', 'cwd', '-Fn']).split('\n').find((l) => l.startsWith('n'))?.slice(1) ?? ''; } catch {}
+    try { cwd = cwdOf(pid); } catch {}
     const rel = cwd ? path.relative(root, cwd) : '..';
     if (rel.startsWith('..') || path.isAbsolute(rel)) return `process ${pid} runs from outside this run's work copy`;
   }

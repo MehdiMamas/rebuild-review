@@ -25,7 +25,7 @@ test('run.env reaches the started app; PORT still wins; no env still starts', as
   }
 });
 
-test('a leftover from the work copy is replaced; a listener from elsewhere still refuses', { skip: process.platform === 'win32' }, async () => {
+const leftoverCase = async () => {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'app-left-'));
   const work = path.join(base, 'work');
   const other = path.join(base, 'other');
@@ -56,4 +56,17 @@ test('a leftover from the work copy is replaced; a listener from elsewhere still
     await assert.rejects(startApp(runFor(p2), path.join(base, 'run.json')), /refusing to start.*outside this run's work copy/);
     assert.equal(await (await fetch(`http://127.0.0.1:${p2}`)).text(), String(foreign.pid));
   } finally { foreign.kill(); }
+};
+
+test('a leftover from the work copy is replaced; a listener from elsewhere still refuses', { skip: process.platform === 'win32' }, leftoverCase);
+
+test('the same without lsof on Linux (found through /proc)', { skip: process.platform !== 'linux' }, async () => {
+  const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'no-lsof-'));
+  fs.symlinkSync(process.execPath, path.join(bin, 'node'));
+  const saved = process.env.PATH;
+  process.env.PATH = bin;
+  try {
+    assert.throws(() => execFileSync('lsof', ['-v'], { stdio: 'ignore' }), { code: 'ENOENT' });
+    await leftoverCase();
+  } finally { process.env.PATH = saved; }
 });
