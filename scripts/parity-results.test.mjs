@@ -177,6 +177,13 @@ test('prep rewrites only the port in address', async () => {
   assert.deepEqual(JSON.parse(fs.readFileSync(rb, 'utf8')), { platform: 'web', address: `http://127.0.0.1:${port}`, start: 'next start' });
 });
 
+test('prep keeps the path, query and hash and a non-http scheme', async () => {
+  const par = prepDir(), rb = path.join(par, 'rb.json');
+  fs.writeFileSync(rb, JSON.stringify({ address: 'ws://localhost:3000/app?x=1#h' }));
+  const { port } = await prep(par, rb);
+  assert.equal(JSON.parse(fs.readFileSync(rb, 'utf8')).address, `ws://localhost:${port}/app?x=1#h`);
+});
+
 test('prep leaves a run file with no address alone', async () => {
   const par = prepDir(), rb = path.join(par, 'rb.json'), text = JSON.stringify({ command: ['app'] });
   fs.writeFileSync(rb, text);
@@ -214,4 +221,6 @@ test('run-error text comes from the long-run files: exit code and log tail, or l
   fs.rmSync(path.join(dir, 'r.exit'));
   assert.match(runErrorText(dir, 'r'), /^the command was lost: /);
   assert.equal(runErrorText(dir, 'none'), 'the command was lost (no output)');
+  assert.equal(runErrorText(dir, 'none', 'could not start'), 'could not start (no output)');
+  assert.match(runErrorText(dir, 'r', 'still running after 8 hours of waiting'), /^still running after 8 hours of waiting: a\n/);
 });
