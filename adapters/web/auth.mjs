@@ -39,17 +39,17 @@ export async function signIn(browser, origin, auth) {
     ({ context } = await makeContext(browser, origin, { viewport: { width: 1440, height: 900 } }));
     const page = await context.newPage();
     const pwVisible = async () => (await page.locator('input[type=password]:visible').count().catch(() => 0)) > 0;
-    let formPath = null; // the route where a password field was first seen: the sign-in form
+    let formPath = null; // the route where a password field was last seen: the sign-in form (after a sign-up, the sign-in step that follows)
     for (const step of auth.steps) {
       n++; kind = KINDS.find((k) => k in step); await runStep(page, origin, step);
-      if (formPath === null && await pwVisible()) formPath = new URL(page.url()).pathname;
+      if (await pwVisible()) formPath = new URL(page.url()).pathname;
     }
     n = 0;
     await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
     const finalPath = new URL(page.url()).pathname;
     const e = auth.expect;
     if (e) {
-      if (e.path !== undefined && finalPath !== e.path) return { ok: false, reason: `sign-in ended on ${finalPath}, expected ${clean(e.path)}` };
+      if (e.path !== undefined && (e.path.includes('?') ? finalPath + new URL(page.url()).search : finalPath) !== e.path) return { ok: false, reason: `sign-in ended on ${finalPath}, expected ${clean(e.path)}` };
       if (e.text !== undefined && !(await page.getByText(e.text).first().waitFor({ state: 'visible', timeout: 5000 }).then(() => true, () => false))) return { ok: false, reason: 'sign-in finished but the expected text is not visible' };
     } else {
       // No expect: the page must have left the sign-in form (another route, or the password field gone); a cookie alone proves nothing.
