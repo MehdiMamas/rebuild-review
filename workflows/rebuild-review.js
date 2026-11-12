@@ -30,17 +30,25 @@ const WAIT_SECONDS = 540
 const MAX_WAITS = 54 // 54 waits of 540 s are 8 hours
 const STARTED = { type: 'object', required: ['ok'], properties: { ok: { type: 'boolean' }, detail: { type: 'string' } } }
 const WAITED = { type: 'object', required: ['state'], properties: { state: { type: 'string', enum: ['running', 'exited', 'lost'] }, code: { type: 'number' }, tail: { type: 'string' } } }
+// States: exited, lost (the supervisor died without an exit file), start-failed (the start agent failed or died; tail has the reason),
+// wait-failed (the wait agents died or answered nothing 3 times in a row), timeout (all MAX_WAITS waits ended with the command still running).
 async function longRun(name, command, label, phase) {
   const started = await agent(`Run exactly this one command with the Bash tool (it returns at once):\nnode ${q(LONG_RUN)} start ${q(LONG_DIR)} ${q(name)} -- ${command}\nReturn ok true if it exited 0, otherwise ok false with its error output as detail. Change nothing else.`, { ...CHEAP, label: `${label}-start`, phase, schema: STARTED })
-  if (!started || !started.ok) return { state: 'lost', tail: `could not start: ${(started && started.detail) || 'start agent died'}` }
+  if (!started || !started.ok) return { state: 'start-failed', tail: (started && started.detail) || 'start agent died' }
+  let dead = 0
   for (let n = 1; n <= MAX_WAITS; n++) {
     const w = await agent(`Run exactly this one command with the Bash tool in the foreground (never in the background), with the Bash timeout set to 600000:\nnode ${q(LONG_RUN)} wait ${q(LONG_DIR)} ${q(name)} --seconds ${WAIT_SECONDS}\nIt prints one JSON line. Return its fields state, code (leave it out when null) and tail, copied exactly. Change nothing else.`, { ...CHEAP, label: `${label}-wait-${n}`, phase, schema: WAITED })
-    if (w && w.state !== 'running') return w
+    if (!w || !w.state) {
+      if (++dead >= 3) return { state: 'wait-failed', tail: 'the wait agent died or answered nothing 3 times in a row' }
+      continue
+    }
+    dead = 0
+    if (w.state !== 'running') return w
   }
-  return { state: 'lost', tail: 'still running after 8 hours of waiting' }
+  return { state: 'timeout', tail: 'still running after 8 hours of waiting' }
 }
 const exitedOk = (r) => r.state === 'exited' && r.code === 0
-const whyNot = (r) => r.state === 'exited' ? `exit code ${r.code}: ${r.tail}` : `${r.state === 'lost' ? 'the command was lost' : r.state}: ${r.tail}`
+const whyNot = (r) => r.state === 'exited' ? `exit code ${r.code}: ${r.tail}` : `${{ lost: 'the command was lost', 'start-failed': 'could not start', 'wait-failed': 'waiting failed', timeout: 'timed out' }[r.state] || r.state}: ${r.tail}`
 
 // The adapter folder for the platform in run.json, read once by an agent.
 let ADIR = null
@@ -197,6 +205,7 @@ async function runInventory() {
 const PAR = `${runDir}/parity`
 const TESTS = `${PAR}/tests`
 const WRITER = { model: 'sonnet', effort: 'medium' }
+const RUN_ERROR_RESULT = { type: 'object', required: ['ok', 'output'], properties: { ok: { type: 'boolean' }, detail: { type: 'string' }, output: { type: 'string' } } }
 const RUN_RESULT = { type: 'object', required: ['ok'], properties: { ok: { type: 'boolean' }, detail: { type: 'string' } } }
 
 async function runParity() {
@@ -262,10 +271,13 @@ A feature marked "keep" gets a test asserting the behaviour. A feature marked "d
       if (!p || !p.ok) throw new Error(`Parity: preparing the rebuild run failed: ${(p && p.detail) || 'agent died'}`)
       const r = await longRun(label, `node ${q(adir + '/parity.mjs')} --app ${q(RB)} --tests ${q(TESTS)} --out ${q(PAR + '/rebuild.json')}`, label, 'Parity')
       if (exitedOk(r)) return { ok: true }
-      if (r.state === 'lost' && /^could not start/.test(String(r.tail))) throw new Error(`Parity: starting the rebuild run failed: ${r.tail}`)
-      const stateWord = /^still running after/.test(String(r.tail)) ? `timed out: ${r.tail}` : r.state
-      const w = await agent(`Run exactly: node ${q(pluginRoot + '/scripts/parity-results.mjs')} run-error ${q(PAR)} ${q(LONG_DIR)} ${q(label)} ${q(String(stateWord).replace(/[^a-z0-9 :.,-]/gi, ''))} . Return ok true if it exited 0, otherwise ok false with its error output as detail. Change nothing else.`, { ...CHEAP, label: `${label}-error`, phase: 'Parity', schema: RUN_RESULT })
+      if (r.state === 'start-failed') throw new Error(`Parity: starting the rebuild run failed: ${r.tail}`)
+      if (r.state === 'wait-failed') throw new Error(`Parity: waiting for the rebuild run failed: ${r.tail}`)
+      const stateWord = r.state === 'timeout' ? 'timed out after 8 hours of waiting' : r.state
+      const w = await agent(`Run exactly: node ${q(pluginRoot + '/scripts/parity-results.mjs')} run-error ${q(PAR)} ${q(LONG_DIR)} ${q(label)} ${q(String(stateWord).replace(/[^a-z0-9 :.,-]/gi, ''))} . Return ok true if it exited 0, otherwise ok false with its error output as detail. Also return output: the exact text it printed. Change nothing else.`, { ...CHEAP, label: `${label}-error`, phase: 'Parity', schema: RUN_ERROR_RESULT })
       if (!w || !w.ok) throw new Error(`Parity: could not record why the rebuild would not start: ${(w && w.detail) || 'agent died'}`)
+      // The command prints this marker only after run-error.txt exists; without it every feature would read "no result".
+      if (!/^run-error written [1-9]\d* bytes\s*$/.test(String(w.output || ''))) throw new Error(`Parity: run-error.txt was not confirmed written (the agent said ok but the command printed: ${String(w.output || 'nothing').slice(0, 200)})`)
       return { ok: false }
     }
     const LOOP_SCHEMA = { type: 'object', required: ['action', 'reason', 'failing'], properties: { action: { type: 'string', enum: ['done', 'build', 'stop'] }, reason: { type: 'string' }, failing: { type: 'array', items: { type: 'string' } }, restored: { type: 'number' } } }
