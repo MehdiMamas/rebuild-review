@@ -12,6 +12,7 @@ what it renders, then scores the rebuild against the original. See README.md.
 - Test without installing: `claude -p "/rebuild-review:rebuild-review <path>" --plugin-dir <this checkout> --permission-mode bypassPermissions`, against a throwaway git repo; its `git status` must stay clean.
 - Gotcha: the skill and the workflow must not share a name. With both called `rebuild-review:rebuild-review`, the call goes straight to the workflow and the skill text never runs.
 - Gotcha: a clean `CLAUDE_CONFIG_DIR` has no login, so `claude -p` cannot run there; use `--plugin-dir`.
+- Sandbox tools (#126): the first step of a run (`scripts/sandbox-deps.mjs`, before `adapter-deps.mjs`; the run stops in `Setup`) checks on Linux that `bwrap --ro-bind / / --proc /proc --dev /dev --unshare-all true` and `socat -V` work. Missing tools are fetched without sudo (`apt-get download` + `dpkg -x`, libraries they lack included) into `$XDG_CACHE_HOME` or `~/.cache`, then `rebuild-review/sandbox/root` (50 MB cap); `childSpawn` in `scripts/room.mjs` then puts `root/usr/bin` first on the child's `PATH` and sets `LD_LIBRARY_PATH` to the cache libraries, which every command the child runs in the sandbox inherits (only those packages are unpacked). A cached `bwrap` cannot pass Ubuntu 24.04's AppArmor rule for unprivileged user namespaces (it is tied to `/usr/bin/bwrap`): install the system package. A wall child that fails with `startup_failure_reason` is refused as `Sandbox did not start: <reason>`. Test: `node --test scripts/sandbox-deps.test.mjs`.
 
 ## Rerun from a phase
 

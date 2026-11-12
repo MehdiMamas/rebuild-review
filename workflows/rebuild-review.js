@@ -421,10 +421,10 @@ async function stoppedReport(phase, reason) {
 }
 
 const ran = []
-// First step of every run, resumes included: adapter dependencies (scripts/adapter-deps.mjs).
-const deps = await agent(`Run exactly: node ${q(pluginRoot + '/scripts/adapter-deps.mjs')} ${q(pluginRoot)} . Return ok true if it exited 0, otherwise ok false with its error output as detail. Change nothing else.`, { ...CHEAP, label: 'adapter-deps', schema: RUN_RESULT })
+// First step of every run, resumes included: the sandbox tools (scripts/sandbox-deps.mjs), then adapter dependencies (scripts/adapter-deps.mjs).
+const deps = await agent(`Run exactly: node ${q(pluginRoot + '/scripts/sandbox-deps.mjs')} && node ${q(pluginRoot + '/scripts/adapter-deps.mjs')} ${q(pluginRoot)} . Return ok true if it exited 0, otherwise ok false with its error output as detail. Change nothing else.`, { ...CHEAP, label: 'setup', schema: RUN_RESULT })
 if (!deps || !deps.ok) {
-  const reason = `adapter dependencies: ${(deps && deps.detail) || 'agent died'}`
+  const reason = `setup: ${(deps && deps.detail) || 'agent died'}`
   await stoppedReport('Setup', reason)
   return { ran, stopped: 'Setup', reason }
 }
