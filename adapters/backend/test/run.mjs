@@ -619,12 +619,12 @@ const ctx = prepare(JSON.parse(fs.readFileSync(process.env.APP_RUN, 'utf8')), pr
     let ok = true;
     for (const mode of ['term', 'exit']) {
       const r = await kvRun(`run-hold-${mode}`);
-      const c = spawn(process.execPath, [path.join(here, 'hold.mjs'), r.file, mode], { env: process.env, stdio: ['ignore', 'pipe', 'pipe'] });
+      const c = spawn(process.execPath, [path.join(here, 'hold.mjs'), r.file, mode], { env: process.env, stdio: ['pipe', 'pipe', 'pipe'] });
       let out = ''; c.stdout.on('data', (d) => (out += d)); c.stderr.on('data', (d) => (out += d));
       const ended = new Promise((res) => c.on('exit', (code, sig) => res(`${code ?? sig}`)));
       for (let i = 0; i < 300 && !out.includes('up'); i++) await sleep(100);
       const upSeen = out.includes('up') && left() === 2;
-      if (mode === 'term') c.kill('SIGTERM');
+      if (mode === 'term') c.kill('SIGTERM'); else c.stdin.write('go\n');
       const how = await ended;
       for (let i = 0; i < 50 && left() > 0; i++) await sleep(100);
       const cleaned = left() === 0;
