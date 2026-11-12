@@ -56,6 +56,27 @@ test('no score or no rebuild is leave', () => {
   }
 });
 
+test('a gate with no tests run gives no verdict', () => {
+  for (const rate of [null, undefined]) {
+    const v = verdict(sc({ gate: { passed: false, rate, failing: [] } }), T);
+    assert.equal(v.verdict, 'none');
+    assert.match(v.why, /no tests ran on the rebuild/);
+  }
+  assert.equal(verdict(sc({ gate: { passed: false, rate: 0, failing: [] } }), T).verdict, 'port');
+  const d = makeRun({ actions: [] });
+  w(path.join(d, 'score/score.json'), sc({ gate: { passed: false, rate: null, failing: [] } }));
+  const html = render(d, { thresholds: T });
+  assert.match(html, /badge none">no verdict</);
+  assert.match(html, /no verdict: no tests ran on the rebuild/i);
+  assert.doesNotMatch(html, /badge (adopt|port|leave)/);
+  const d2 = makeRun({ actions: [{ title: 'Some proposed action', evidence: [] }] });
+  w(path.join(d2, 'score/score.json'), sc({ gate: { passed: false, rate: null, failing: [] } }));
+  assert.match(render(d2, { thresholds: T }), /Do this first:<\/strong> Get the parity tests to run/);
+  const h2 = render(d2, { thresholds: T });
+  assert.match(h2, /No actions: no tests ran, so there is no verdict to act on\./);
+  assert.doesNotMatch(h2, /Some proposed action<\/h3>/);
+});
+
 test('check-actions drops each false citation and keeps real ones', () => {
   const d = makeRun();
   w(path.join(d, 'golden/screens/home/a.png'), 'x');
@@ -289,4 +310,13 @@ test('the base line names the upstream commit and how it was found; none says so
   w(path.join(d, 'base.json'), { kind: 'none', upstream: null, evidence: [], ownPaths: null, ownLines: null });
   html = render(d, { thresholds: T });
   assert.match(html, /Base:<\/strong> none/);
+});
+
+test('no verdict shows no confidence percentage or parts table', () => {
+  const d = makeRun({ actions: [] });
+  w(path.join(d, 'score/score.json'), sc({ gate: { passed: false, rate: null, failing: [] } }));
+  const html = render(d, { thresholds: T });
+  assert.match(html, /badge none">no verdict</);
+  assert.doesNotMatch(html, /Confidence:/);
+  assert.doesNotMatch(html, /class="parts"/);
 });

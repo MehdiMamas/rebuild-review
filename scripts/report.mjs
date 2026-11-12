@@ -30,7 +30,10 @@ export function verdict(score, thresholds = readJson(DEFAULT_RUBRIC).verdict) {
     return { verdict: 'leave', why: 'There is no score for the rebuild (it did not start or was not measured), so nothing says it is better than the original.' };
   }
   const g = score.gate;
-  const gateText = g.rate === null || g.rate === undefined ? 'Gate: no tests ran' : `Gate ${g.passed ? 'passed' : 'failed'} (${pct(g.rate)})`;
+  if (g.rate === null || g.rate === undefined) {
+    return { verdict: 'none', why: 'No verdict: no tests ran on the rebuild, so nothing shows it works. Run the parity tests on the rebuild, then score again.' };
+  }
+  const gateText = `Gate ${g.passed ? 'passed' : 'failed'} (${pct(g.rate)})`;
   const entries = Object.entries(score.values).map(([name, v]) => [name, v.delta]).filter(([, d]) => typeof d === 'number');
   if (!entries.length) return { verdict: 'leave', why: `There is no score for any value: none was measured. ${gateText}.` };
   const worse = entries.filter(([, d]) => d <= worseValue).map(([n]) => n);
@@ -179,6 +182,7 @@ const FIRST = {
   adopt: 'Move project/ over the original by hand (no checked action was proposed).',
   port: 'Port the better values named above from project/ into the original (no checked action was proposed).',
   leave: 'Keep the original (no checked action was proposed).',
+  none: 'Get the parity tests to run on the rebuild, then score again (no verdict until they do).',
 };
 
 const CSS = `:root{--bg:#fff;--fg:#1a1a1f;--mut:#5a5a66;--card:#f4f4f7;--line:#d8d8e0;--adopt:#0a7d3c;--port:#a35a00;--leave:#8a1f2b;--link:#0b57d0}
@@ -186,7 +190,7 @@ const CSS = `:root{--bg:#fff;--fg:#1a1a1f;--mut:#5a5a66;--card:#f4f4f7;--line:#d
 a{color:var(--link)}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,sans-serif}
 main{max-width:860px;margin:0 auto;padding:16px}section{margin:0 0 28px}h1,h2,h3{line-height:1.25}h2{border-bottom:1px solid var(--line);padding-bottom:4px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 16px;margin:0 0 12px;overflow-wrap:anywhere}
-.badge{display:inline-block;font-weight:700;font-size:1.4rem;text-transform:uppercase}.adopt{color:var(--adopt)}.port{color:var(--port)}.leave{color:var(--leave)}
+.badge{display:inline-block;font-weight:700;font-size:1.4rem;text-transform:uppercase}.adopt{color:var(--adopt)}.port{color:var(--port)}.leave{color:var(--leave)}.none{color:var(--mut)}
 .parts td:nth-child(-n+2),.parts th:nth-child(2){white-space:nowrap}.mut{color:var(--mut)}table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:4px 8px;border-bottom:1px solid var(--line);overflow-wrap:anywhere}
 .pair{display:flex;gap:8px;margin:0 0 12px}.pair figure{flex:1;margin:0;min-width:0}.pair img{max-width:100%;height:auto;border:1px solid var(--line)}
 @media (max-width:600px){.pair{flex-direction:column}}code{overflow-wrap:anywhere}`;
@@ -208,7 +212,7 @@ export function render(runDir, { embedCap = EMBED_CAP, thresholds, stopped } = {
   const sec = (id, title, body) => html.push(`<section id="${id}"><h2>${esc(title)}</h2>${body}</section>`);
 
   // 1 Verdict, with the confidence and what limits it
-  const conf = stopped ? null : confidence(runDir, { rubric: rubric || undefined });
+  const conf = stopped || v.verdict === 'none' ? null : confidence(runDir, { rubric: rubric || undefined });
   const inputText = (o) => Object.entries(o || {}).map(([k, x]) => `${k}: ${x !== null && typeof x === 'object' ? Object.entries(x).map(([a, b]) => `${a} ${b}`).join(', ') : x}`).join('; ');
   const confHtml = !conf ? '' : conf.percent === null
     ? '<p><strong>Confidence:</strong> not measured (there is no score).</p>'
@@ -218,8 +222,8 @@ export function render(runDir, { embedCap = EMBED_CAP, thresholds, stopped } = {
   const baseHtml = !baseInfo ? '' : baseInfo.upstream
     ? `<p><strong>Base:</strong> ${esc(baseInfo.kind)}, ${esc(baseInfo.upstream.url)} at ${esc(baseInfo.upstream.ref)} (commit ${esc(String(baseInfo.upstream.commit).slice(0, 12))}). Found by: ${esc((baseInfo.evidence || []).join('; ') || 'a pinned answer')}. The rebuild is built on that base; code metrics count only the app's own code (${esc(baseInfo.ownLines)} source lines in ${esc((baseInfo.ownPaths || []).length)} files).</p>`
     : '<p><strong>Base:</strong> none (the whole app was rebuilt).</p>';
-  sec('verdict', 'Verdict', `<p><span class="badge ${v.verdict}">${esc(v.verdict)}</span></p><p>${esc(v.why)}</p>` + confHtml +
-    baseHtml + `<div class="card"><strong>Do this first:</strong> ${esc(actions.length ? actions[0].title : FIRST[v.verdict])}</div>`);
+  sec('verdict', 'Verdict', `<p><span class="badge ${v.verdict}">${esc(v.verdict === 'none' ? 'no verdict' : v.verdict)}</span></p><p>${esc(v.why)}</p>` + confHtml +
+    baseHtml + `<div class="card"><strong>Do this first:</strong> ${esc(actions.length && v.verdict !== 'none' ? actions[0].title : FIRST[v.verdict])}</div>`);
 
   // 2 Scores, gate beside them
   if (score && score.values) {
@@ -230,7 +234,7 @@ export function render(runDir, { embedCap = EMBED_CAP, thresholds, stopped } = {
   } else sec('scores', 'Scores', '<p>There is no score for this run.</p>');
 
   // 3 Actions
-  sec('actions', 'Actions', actions.length ? actions.map((a, i) => `<div class="card"><h3>${i + 1}. ${esc(a.title)}</h3>
+  sec('actions', 'Actions', v.verdict === 'none' ? '<p>No actions: no tests ran, so there is no verdict to act on.</p>' : actions.length ? actions.map((a, i) => `<div class="card"><h3>${i + 1}. ${esc(a.title)}</h3>
 <p><strong>Impact:</strong> ${esc(a.impact)}${a.impactWhy ? ` &ndash; ${esc(a.impactWhy)}` : ''}${a.value ? ` <span class="mut">(${esc(a.value)})</span>` : ''}</p>
 <p><strong>What to change:</strong> ${esc(a.change)}</p>
 <p><strong>Evidence:</strong></p><ul>${a.evidence.map((e) => `<li>${esc(e.kind)}: <code>${esc(e.ref)}</code></li>`).join('')}</ul>

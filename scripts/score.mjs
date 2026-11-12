@@ -407,6 +407,6 @@ if (process.argv[1] && path.resolve(process.argv[1]) === new URL(import.meta.url
     console.log(JSON.stringify(g));
   } else if (cmd === 'collate') {
     const r = collate(a, b);
-    console.log(`overall ${r.overall}; gate ${r.gate.passed ? 'passed' : 'failed'}; dropped ${r.dropped.length}; refuted ${r.refuted.length}`);
+    console.log(`overall ${r.overall}; ${r.gate.rate === null || r.gate.rate === undefined ? 'gate: no tests ran' : `gate ${r.gate.passed ? 'passed' : 'failed'}`}; dropped ${r.dropped.length}; refuted ${r.refuted.length}`);
   } else { console.error('usage: score.mjs measure|source|blind|check|gaps|collate ...'); process.exit(2); }
 }

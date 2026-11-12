@@ -93,7 +93,7 @@ A big app is split into areas inside the run; the run still covers the whole app
 
 The run ends with one page, `report/index.html`, with no scripts and its images embedded.
 
-- **Verdict**, decided by code from `rubric.json`: `adopt` (the rebuild passed the feature gate and is better overall, with no value clearly worse), `port` (not adopt, but some value is better, so take those parts), or `leave` (keep the original).
+- **Verdict**, decided by code from `rubric.json`: `adopt` (the rebuild passed the feature gate and is better overall, with no value clearly worse), `port` (not adopt, but some value is better, so take those parts), `leave` (keep the original), or `none`, shown as "no verdict", given when no parity test ran on the rebuild, so nothing shows it works.
 - **Gate:** the share of features whose tests pass on the rebuild. It sits beside the scores and is never blended into them.
 - **Scores:** -100 to +100 overall, positive means the rebuild is better. Each value is half measured numbers, half blind judges. A metric missing on either side reads "not measured", never 0.
 - **Actions:** what to do next. An action whose citation is false is dropped.

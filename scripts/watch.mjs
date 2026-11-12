@@ -180,7 +180,7 @@ export function buildState(runDir, clean = (s) => s) {
     rebuilt: exists('Rebuild.done'),
     areasBuilt: Array.isArray(areasDone) ? areasDone.length : areasDone && typeof areasDone === 'object' ? Object.keys(areasDone).length : null,
     overall: score && Number.isFinite(score.overall) ? score.overall : null,
-    gate: score && score.gate ? !!score.gate.passed : null,
+    gate: score && score.gate ? (score.gate.rate === null || score.gate.rate === undefined ? 'none' : !!score.gate.passed) : null,
     verdict: verdict ? { choice: verdict.choice, reason: verdict.reason } : null,
     shots,
   };
@@ -203,6 +203,17 @@ export function resolveFile(runDir, p) {
   const st = tryStat(real);
   if (!st || !st.isFile()) return { status: 404 };
   return { file: real, ext: path.extname(real).toLowerCase(), size: st.size };
+}
+
+// What the verdict card shows, as [class, text] lines. Plain ES5 so the page can carry its source (PAGE embeds verdictLines.toString()) and the test runs the same code.
+export function verdictLines(s) {
+  var out = [];
+  if (s.verdict) { out.push(['', s.verdict.choice === 'none' ? 'no verdict' : s.verdict.choice]); out.push(['mut', s.verdict.reason || '']); }
+  var parts = [];
+  if (s.overall !== null) parts.push('Overall ' + s.overall);
+  if (s.gate === 'none') parts.push('gate: no tests ran'); else if (s.gate !== null) parts.push('gate ' + (s.gate ? 'passed' : 'failed'));
+  if (parts.length) { var t = parts.join('; '); out.push(['mut', t.charAt(0).toUpperCase() + t.slice(1)]); }
+  return out;
 }
 
 const PAGE = (nonce) => `<!doctype html>
@@ -237,6 +248,7 @@ figcaption{font-size:11px}
 <script nonce="${nonce}">
 (function(){
 var K=new URLSearchParams(location.search).get('k')||'';
+${verdictLines.toString()}
 function $(i){return document.getElementById(i)}
 function el(tag,cls,text){var e=document.createElement(tag);if(cls)e.className=cls;if(text!==undefined)e.textContent=text;return e}
 function usd(n){return '$'+Number(n).toFixed(2)}
@@ -264,9 +276,8 @@ function render(s){
   var sh=$('shots');sh.textContent='';
   s.shots.slice(0,24).forEach(function(p){var f=el('figure'),i=el('img');i.src=url('/file',p);i.alt=p;i.loading='lazy';f.appendChild(i);f.appendChild(el('figcaption','mut',p));sh.appendChild(f)});
   var v=$('s-verdict');
-  if(s.verdict||s.overall!==null){v.hidden=false;var vd=$('verdict');vd.textContent='';
-    if(s.verdict){vd.appendChild(el('div',null,s.verdict.choice));vd.appendChild(el('div','mut',s.verdict.reason||''))}
-    if(s.overall!==null)vd.appendChild(el('div','mut','Overall '+s.overall+(s.gate===null?'':'; gate '+(s.gate?'passed':'failed'))))}
+  var vl=verdictLines(s);
+  if(vl.length){v.hidden=false;var vd=$('verdict');vd.textContent='';vl.forEach(function(l){vd.appendChild(el('div',l[0]||null,l[1]))})}
   else v.hidden=true;
 }
 function addEvent(e){

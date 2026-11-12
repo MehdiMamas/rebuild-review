@@ -121,6 +121,7 @@ export function confidence(runDir, { rubric, calibration } = {}) {
   rubric = rubric || tryJson(DEFAULT_RUBRIC);
   calibration = calibration || tryJson(DEFAULT_CALIBRATION) || [];
   const score = tryJson(path.join(runDir, 'score', 'score.json'));
+  if (score && score.gate && (score.gate.rate === null || score.gate.rate === undefined)) return { percent: null, text: 'no verdict: no tests ran', reason: 'no verdict: no tests ran', limitedBy: null, parts: {}, perValue: {}, outsideRange: false };
   if (!score || !score.values || typeof score.overall !== 'number') return { percent: null, text: 'not measured', limitedBy: null, parts: {}, perValue: {}, outsideRange: false };
   const parts = { coverage: coverage(runDir, rubric), agreement: agreement(runDir, rubric), margin: margin(score, rubric), 'track record': trackRecord(calibration) };
   let limitedBy = Object.keys(parts).reduce((a, b) => (parts[b].percent < parts[a].percent ? b : a));
@@ -149,5 +150,5 @@ if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import
   const c = confidence(runDir);
   fs.mkdirSync(path.join(runDir, 'score'), { recursive: true });
   fs.writeFileSync(path.join(runDir, 'score', 'confidence.json'), JSON.stringify(c, null, 2));
-  console.log(c.percent === null ? 'confidence: not measured' : `confidence ${c.percent}% (limited by ${c.limitedBy})`);
+  console.log(c.reason ? `confidence: ${c.reason}` : c.percent === null ? 'confidence: not measured' : `confidence ${c.percent}% (limited by ${c.limitedBy})`);
 }

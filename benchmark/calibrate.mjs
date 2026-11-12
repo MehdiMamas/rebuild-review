@@ -1,5 +1,6 @@
 // Records one known-answer run: what the tool said against what it should have said.
 // node benchmark/calibrate.mjs <runDir> --expect adopt|port|leave --kind same|worse|fixed [--file calibration.json]
+// A run whose verdict is 'none' (no tests ran) is refused: it has no answer to compare.
 // Appends {kind, expected, got, right, overall, sourceLines, commit, date} to benchmark/calibration.json. A wrong verdict is kept.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -14,6 +15,7 @@ export function record(runDir, { expect, kind, file = path.join(HERE, 'calibrati
   if (!['same', 'worse', 'fixed'].includes(kind)) throw new Error('--kind must be same, worse or fixed');
   const score = JSON.parse(fs.readFileSync(path.join(runDir, 'score', 'score.json'), 'utf8'));
   const got = verdict(score).verdict;
+  if (got === 'none') throw new Error('no verdict: no parity test ran on the rebuild, so this run cannot be recorded; get the tests to run and score again');
   const lines = ((score.values.simplicity || {}).measured || []).find((m) => m.name === 'lines');
   if (!lines) throw new Error('score.json has no measured lines for the original, so the size of the target is unknown');
   if (!commit) commit = execFileSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: HERE, encoding: 'utf8' }).trim();
