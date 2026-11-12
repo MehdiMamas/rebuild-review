@@ -205,6 +205,8 @@ test('the CLI works from a folder with a space in its path', () => {
   fs.copyFileSync(new URL('./confidence.mjs', import.meta.url), path.join(base, 'scripts/confidence.mjs'));
   fs.copyFileSync(new URL('./foundations.mjs', import.meta.url), path.join(base, 'scripts/foundations.mjs'));
   fs.copyFileSync(new URL('./events.mjs', import.meta.url), path.join(base, 'scripts/events.mjs'));
+  fs.mkdirSync(path.join(base, 'adapters/web'), { recursive: true });
+  fs.copyFileSync(new URL('../adapters/web/redact.mjs', import.meta.url), path.join(base, 'adapters/web/redact.mjs'));
   fs.copyFileSync(new URL('../rubric.json', import.meta.url), path.join(base, 'rubric.json'));
   const run = path.join(base, 'run');
   fs.mkdirSync(run);
