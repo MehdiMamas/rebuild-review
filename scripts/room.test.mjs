@@ -4,8 +4,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { platformNote, BUDGET_USD, filterGolden, prepareRoom, scanTranscript, wallTried, cloneProject, copyEnv, dropEnv, denyList, writeSettings, fixStack, stackFixPrompt, replaceProject, main, childSpawn, wallEvent, checkChild } from './room.mjs';
+import { platformNote, BUDGET_USD, filterGolden, prepareRoom, scanTranscript, wallTried, cloneProject, copyEnv, dropEnv, denyList, writeSettings, fixStack, stackFixPrompt, replaceProject, main, childSpawn, wallEvent, checkChild, provewall } from './room.mjs';
 import { read as readEvents } from './events.mjs';
+import { cacheDirFor } from './sandbox-deps.mjs';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'room-test-'));
 
@@ -513,4 +514,65 @@ test('given a typed value with & in it -> render.html in the room copy masks its
   fs.writeFileSync(path.join(src, 'screens', 'home', 'render.html'), '<p>a&amp;b1234 and a&b1234 and "q&lt;x&gt;"</p>');
   filterGolden(src, dest, ['a&b1234', 'q<x>']);
   assert.equal(fs.readFileSync(path.join(dest, 'screens', 'home', 'render.html'), 'utf8'), '<p>*** and *** and "***"</p>');
+});
+
+// #126: sandbox tools fetched into the cache reach the child.
+test('childSpawn: a cache holding the sandbox tools goes first on PATH with LD_LIBRARY_PATH; no cache leaves both alone', () => {
+  const saved = { x: process.env.XDG_CACHE_HOME, l: process.env.LD_LIBRARY_PATH };
+  try {
+    const xdg = tmp();
+    process.env.XDG_CACHE_HOME = xdg;
+    delete process.env.LD_LIBRARY_PATH;
+    const none = childSpawn({ room: os.tmpdir(), model: 'haiku', maxBudgetUsd: 1 }).env;
+    assert.equal(none.PATH, process.env.PATH);
+    assert.equal(none.LD_LIBRARY_PATH, undefined);
+    const root = path.join(xdg, 'rebuild-review', 'sandbox', 'root');
+    fs.mkdirSync(path.join(root, 'usr', 'bin'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'usr', 'lib', 'aarch64-linux-gnu'), { recursive: true });
+    const env = childSpawn({ room: os.tmpdir(), model: 'haiku', maxBudgetUsd: 1 }).env;
+    assert.equal(env.PATH, `${path.join(root, 'usr', 'bin')}${path.delimiter}${process.env.PATH}`);
+    assert.ok(env.LD_LIBRARY_PATH.split(':').includes(path.join(root, 'usr', 'lib', 'aarch64-linux-gnu')));
+  } finally {
+    for (const [k, v] of [['XDG_CACHE_HOME', saved.x], ['LD_LIBRARY_PATH', saved.l]]) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  }
+});
+
+test('denyList does not hold the sandbox tool cache', () => {
+  const runs = path.join(fs.realpathSync(tmp()), 'app-rebuild-review');
+  const runDir = path.join(runs, 'run-1'), target = path.join(path.dirname(runs), 'app');
+  fs.mkdirSync(runDir, { recursive: true }); fs.mkdirSync(target);
+  const cache = cacheDirFor();
+  const inside = (p) => cache === p || cache.startsWith(p + path.sep);
+  assert.equal(denyList(runDir, target).some(inside), false);
+});
+
+// A fake `claude` that prints the given lines (a line "CANARY" prints the canary file), exits with the given code.
+function wallRun(lines, code) {
+  const bin = tmp(), runDir = tmp(), room = tmp();
+  const out = path.join(bin, 'out.txt');
+  fs.writeFileSync(out, lines.join('\n') + '\n');
+  fs.writeFileSync(path.join(bin, 'claude'), `#!/bin/sh\nwhile IFS= read -r l; do :; done\nwhile IFS= read -r l; do if [ "$l" = CANARY ]; then cat "${runDir}/.canary"; echo; else printf '%s\\n' "$l"; fi; done < "${out}"\nexit ${code}\n`, { mode: 0o755 });
+  const saved = process.env.PATH;
+  process.env.PATH = `${bin}${path.delimiter}${saved}`;
+  const p = provewall({ runDir, room, target: runDir, transcriptPath: path.join(runDir, 'wall.jsonl') });
+  return p.finally(() => { process.env.PATH = saved; });
+}
+// The real failing line of #126, with a path and the home folder added.
+const START_FAIL = JSON.stringify({ type: 'result', is_error: true, errors: [`Sandbox required but unavailable: sandbox is enabled but dependencies are missing: bubblewrap (bwrap) not installed, socat not installed ... ${os.homedir()}/x and /usr/bin/bwrap\nsecond line`], startup_failure_reason: 'sandbox_required_unavailable' });
+
+test('provewall: a child that failed with startup_failure_reason is refused with errors[0], paths hidden', async () => {
+  await assert.rejects(wallRun([START_FAIL], 1), (e) => {
+    assert.match(e.message, /^Sandbox did not start: Sandbox required but unavailable: sandbox is enabled but dependencies are missing: bubblewrap \(bwrap\) not installed, socat not installed/);
+    assert.ok(!e.message.includes(os.homedir()) && !e.message.includes('/usr/bin') && !e.message.includes('second line'));
+    assert.ok(e.message.includes('<path>') && e.message.length <= 'Sandbox did not start: '.length + 200);
+    return true;
+  });
+});
+
+test('provewall: a child that failed with no startup_failure_reason keeps the old sentence', async () => {
+  await assert.rejects(wallRun([JSON.stringify({ type: 'result', is_error: true, errors: ['boom'] })], 1), /^Error: Sandbox did not hold: the wall check child failed to run$/);
+});
+
+test('provewall: a transcript with the canary and a startup_failure_reason is refused as a leak', async () => {
+  await assert.rejects(wallRun(['CANARY', START_FAIL], 1), /Sandbox did not hold: the canary content came back/);
 });

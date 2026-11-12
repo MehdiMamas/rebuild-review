@@ -21,8 +21,8 @@ export function packagesFor(libs) {
   for (const l of libs) { const p = LIB_PACKAGES[l]; if (p) packages.add(p); else unmapped.push(l); }
   return { packages: [...packages], unmapped };
 }
-const libDirs = (cacheDir) => ['usr/lib/x86_64-linux-gnu', 'lib/x86_64-linux-gnu', 'usr/lib', 'lib'].map((d) => path.join(cacheDir, 'root', d)).filter((d) => fs.existsSync(d));
-const dirSize = (d) => { let n = 0; for (const e of fs.existsSync(d) ? fs.readdirSync(d, { withFileTypes: true }) : []) { const p = path.join(d, e.name); n += e.isDirectory() ? dirSize(p) : fs.statSync(p).size; } return n; };
+export const libDirs = (cacheDir) => ['usr/lib/x86_64-linux-gnu', 'lib/x86_64-linux-gnu', 'usr/lib/aarch64-linux-gnu', 'lib/aarch64-linux-gnu', 'usr/lib', 'lib'].map((d) => path.join(cacheDir, 'root', d)).filter((d) => fs.existsSync(d));
+export const dirSize = (d) => { let n = 0; for (const e of fs.existsSync(d) ? fs.readdirSync(d, { withFileTypes: true }) : []) { const p = path.join(d, e.name); n += e.isDirectory() ? dirSize(p) : fs.statSync(p).size; } return n; };
 // Linux only, never with sudo: when ldd reports libraries missing for the binary (deps.label names it in errors), downloads their packages with
 // apt-get download, unpacks them with dpkg -x into cacheDir and returns a LD_LIBRARY_PATH value for them ('' when nothing is missing).
 // Stops with the missing names and the first error line when apt-get or the network is not there, a library has no entry in the package map,

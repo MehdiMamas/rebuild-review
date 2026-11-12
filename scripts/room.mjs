@@ -6,6 +6,8 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawnSync, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { cacheDirFor } from './sandbox-deps.mjs';
+import { libDirs } from '../adapters/web/libs.mjs';
 import { checkText, trackedTexts } from './check-features.mjs';
 import { readBase, fetchBase, checkWall, git as baseGit } from './base.mjs';
 import { readCost } from './parity-results.mjs';
@@ -218,6 +220,14 @@ export function childSpawn({ room, model, maxBudgetUsd, mode = PERMISSION_MODE }
     '--setting-sources', 'project', '--disallowedTools', 'WebFetch', 'WebSearch', 'Agent', 'Task', 'Workflow', 'SendMessage', 'SendToProject', 'SendToProjectContext', 'RemoteTrigger', 'ListAgents', 'PushNotification', 'DesignSync', '--disable-slash-commands',
     '--strict-mcp-config', '--no-session-persistence', '--output-format', 'stream-json', '--verbose'];
   args.push('--settings', settingsPath(room));
+  // Tools fetched by sandbox-deps.mjs (bwrap, socat) go first on PATH. The cache is found from this process's XDG_CACHE_HOME/HOME, not the child's env.
+  // LD_LIBRARY_PATH is inherited by every command the child runs in the sandbox; the cache holds only those tools and the libraries they lacked.
+  const cache = cacheDirFor();
+  const cacheBin = path.join(cache, 'root', 'usr', 'bin');
+  if (fs.existsSync(cacheBin)) {
+    env.PATH = [cacheBin, env.PATH].filter(Boolean).join(path.delimiter);
+    env.LD_LIBRARY_PATH = libDirs(cache).join(':');
+  }
   return { args, env };
 }
 
@@ -256,6 +266,17 @@ export function wallTried(transcriptPath, file) {
   return bash && read;
 }
 
+// errors[0] of a transcript line that carries startup_failure_reason: first line, home folder and absolute paths replaced by <path>, 200 characters. '' when there is none.
+export function startupFailure(transcriptPath) {
+  for (const l of fs.readFileSync(transcriptPath, 'utf8').split('\n')) {
+    let j; try { j = JSON.parse(l); } catch { continue; }
+    if (!j || !j.startup_failure_reason || !Array.isArray(j.errors) || !j.errors.length) continue;
+    const home = os.homedir();
+    return String(j.errors[0]).split('\n')[0].split(home).join('<path>').replace(/(?:\/[\w.@+~-]+)+/g, '<path>').slice(0, 200);
+  }
+  return '';
+}
+
 export async function provewall({ runDir, room, target, transcriptPath }) {
   const canary = 'CANARY-' + crypto.randomBytes(12).toString('hex');
   const file = path.join(runDir, '.canary');
@@ -268,7 +289,10 @@ export async function provewall({ runDir, room, target, transcriptPath }) {
     const refuse = (msg) => { wallEvent(runDir, 'wall', false, msg); throw new Error(msg); };
     const hits = scanTranscript(transcriptPath, [canary]);
     if (hits.length) refuse('Sandbox did not hold: the canary content came back');
-    if (r.code !== 0 || r.isError) refuse('Sandbox did not hold: the wall check child failed to run');
+    if (r.code !== 0 || r.isError) {
+      const why = startupFailure(transcriptPath);
+      refuse(why ? `Sandbox did not start: ${why}` : 'Sandbox did not hold: the wall check child failed to run');
+    }
     if (!wallTried(transcriptPath, file)) refuse('Sandbox did not hold: the wall check did not try');
     wallEvent(runDir, 'wall', true, 'canary read refused, sandbox started');
     return r.costUsd;
