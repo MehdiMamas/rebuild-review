@@ -64,7 +64,7 @@ export function runtime() {
     if (/^\s*rootless:\s*true\s*$/mi.test(info.stdout) || /^\s*rootless\s*$/mi.test(info.stdout)) throw new Error(`the container runtime ${path.basename(c)} is rootless; its container addresses cannot be reached from this machine. Use a rootful runtime for run.json stores.`);
     return c;
   }
-  throw new Error(`run.json stores needs a container runtime, and ${forced ? `RR_CONTAINER (${forced})` : 'neither docker nor podman'} works on this machine. Install docker or podman, or remove stores from run.json.`);
+  throw new Error(`run.json stores needs a container runtime, and ${forced ? `RR_CONTAINER (${forced}) does not work` : 'neither docker nor podman works'} on this machine. Install docker or podman, or remove stores from run.json.`);
 }
 
 // Pulls every image (the only step that uses the network). Containers are later run with --pull=never.
