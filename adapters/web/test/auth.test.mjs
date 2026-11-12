@@ -14,7 +14,7 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-auth-test-'));
 test.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
 
 const PASSWORD = 'correct-horse-9';
-const signInSteps = (password = PASSWORD) => [{ open: '/login' }, { type: { into: 'Username', text: 'bob' } }, { type: { into: 'Nickname', text: 'q' } }, { type: { into: 'Password', text: password } }, { click: 'Sign in' }];
+const signInSteps = (password = PASSWORD) => [{ open: '/login?via=steps' }, { type: { into: 'Username', text: 'bob' } }, { type: { into: 'Nickname', text: 'q' } }, { type: { into: 'Password', text: password } }, { click: 'Sign in' }];
 const json = (f) => JSON.parse(fs.readFileSync(f, 'utf8'));
 let nextPort = 4351;
 
@@ -46,9 +46,14 @@ test('given no auth in run.json -> capture behaves as before, signed-out, and co
   assert.deepEqual(v.behindSignIn, ['/dashboard', '/dashboard/settings']);
   assert.deepEqual(v.screensSignedIn, []);
   assert.ok(v.screensReached.includes('/') && v.screensReached.includes('/login'));
-  assert.ok(!v.screensReached.some((u) => u.startsWith('/dashboard')), 'a redirected route is not a screen (signed-out redirect)');
   const area = coverage(c.runDir);
   assert.ok(area.notReached.includes('behind a sign-in, not reached: /dashboard, /dashboard/settings (no auth in run.json)'), area.notReached.join(' | '));
+});
+
+test('given a signed-out run where /dashboard redirects -> it is in behindSignIn and not in screensReached', () => {
+  const v = cov(cap('none'));
+  assert.ok(v.behindSignIn.includes('/dashboard'));
+  assert.ok(!v.screensReached.includes('/dashboard') && !v.screensReached.includes('/dashboard/settings'));
 });
 
 test('given auth steps that sign in -> the crawl reaches /dashboard and /dashboard/settings, coverage.json has auth.signedIn true and both in screensSignedIn, and the dashboard screenshot is not the sign-in page', () => {
@@ -82,7 +87,7 @@ test('given a wrong password where the app sets an anonymous cookie anyway -> si
   assert.equal(cov(c).auth.signedIn, false);
 });
 
-test('given auth steps that name a field the page does not have -> the reason says which step number failed and holds none of the typed values', () => {
+test('given an auth step that names a field the page does not have -> the reason says which step number failed and holds none of the typed values', () => {
   const c = cap('nofield', { auth: { steps: [{ open: '/login' }, { type: { into: 'Username', text: 'bob' } }, { type: { into: 'Security answer', text: 'typed-value-4242' } }] }, args: ['--max-screens', '1'] });
   assert.equal(c.r.status, 0, c.r.stderr);
   const v = cov(c);
@@ -100,7 +105,7 @@ test('given a stand-in password and user name in auth -> neither appears in any 
   assert.ok(!c.r.stdout.includes(PASSWORD) && !c.r.stderr.includes(PASSWORD));
   assert.ok(json(path.join(c.golden, 'manifest.json')).screens.some((s) => s.title === "bob's dashboard"), 'a 3-character value is not redacted from other text');
   const har = json(path.join(c.golden, 'network.har')).log.entries;
-  assert.ok(!har.some((e) => e.request.method === 'POST' && /\/login/.test(e.request.url)), 'the sign-in context is not recorded');
+  assert.ok(har.length > 0 && !har.some((e) => e.request.url.includes('via=steps')), 'the sign-in context is not recorded');
 });
 
 test('given a "Sign out" button on a signed-in screen -> the crawl does not press it and the later screens are still reached signed in', () => {

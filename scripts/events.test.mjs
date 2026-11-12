@@ -70,7 +70,7 @@ test('tryEmit never throws', () => {
   assert.doesNotThrow(() => tryEmit(path.join(f, 'sub'), { kind: 'made', what: 'a' }));
 });
 
-test('given auth values -> mask in events/watch logs hides them', () => {
+test('given auth values in run.json -> events.mjs writes *** for them in events.jsonl', () => {
   const d = tmp();
   fs.writeFileSync(path.join(d, 'run.json'), JSON.stringify({ auth: { steps: [{ open: '/login' }, { type: { into: 'Email', text: 'pat@example.test' } }, { type: { into: 'Password', text: 'stand-in-pw-1' } }, { type: { into: 'Code', text: 'abc' } }] } }));
   emit(d, { kind: 'decision', what: 'signed in as pat@example.test', choice: 'pw stand-in-pw-1', reason: 'code abc' });
@@ -78,5 +78,10 @@ test('given auth values -> mask in events/watch logs hides them', () => {
   assert.ok(!text.includes('pat@example.test') && !text.includes('stand-in-pw-1'));
   assert.ok(text.includes('signed in as ***') && text.includes('pw ***'));
   assert.ok(text.includes('code abc'), 'a 3-character value is too short to mask');
-  assert.equal(mask(d, 'log: stand-in-pw-1 and abc'), 'log: *** and abc');
+});
+
+test('given auth values -> mask in events/watch logs hides them', () => {
+  const d = tmp();
+  fs.writeFileSync(path.join(d, 'run.json'), JSON.stringify({ env: { K: 'env-value-1' }, auth: { steps: [{ type: { into: 'Password', text: 'stand-in-pw-1' } }, { type: { into: 'Code', text: 'abc' } }] } }));
+  assert.equal(mask(d, 'log: stand-in-pw-1 env-value-1 abc'), 'log: *** *** abc');
 });

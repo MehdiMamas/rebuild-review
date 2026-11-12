@@ -454,3 +454,17 @@ test('given a run.json with auth and no env -> copyEnv copies auth and dropEnv r
   dropEnv(rb);
   assert.deepEqual(JSON.parse(fs.readFileSync(rb, 'utf8')), { start: 'x' });
 });
+
+test('given auth in run.json and a finished build -> copyEnv puts auth in rebuild-run.json, and the copy a --failures builder gets has no auth', () => {
+  const { target, runDir } = makeRun('F-001 A user sees a list.\n');
+  const auth = { steps: [{ open: '/login' }, { type: { into: 'Password', text: 'stand-in-pw-1' } }] };
+  fs.writeFileSync(path.join(runDir, 'run.json'), JSON.stringify({ start: 'y', auth }));
+  const proj = repo({ 'rebuild-run.json': JSON.stringify({ start: 'x', dir: '.' }) });
+  fs.cpSync(proj, path.join(runDir, 'project'), { recursive: true });
+  copyEnv(runDir);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(runDir, 'project', 'rebuild-run.json'), 'utf8')).auth, auth);
+  const room = prepareRoom({ runDir, target, inputs: ['features.md'] });
+  const given = JSON.parse(fs.readFileSync(path.join(room, 'project', 'rebuild-run.json'), 'utf8'));
+  assert.equal('auth' in given, false);
+  assert.ok(!fs.readFileSync(path.join(room, 'project', 'rebuild-run.json'), 'utf8').includes('stand-in-pw-1'));
+});
