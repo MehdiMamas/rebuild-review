@@ -4,7 +4,7 @@
 //   node parity-results.mjs merge  <parDir> <features.md>         writes parity.json
 //   node parity-results.mjs loop   <parDir> <features.md> <runDir> records the round, writes failures.md, prints {action, reason, failing}
 //   node parity-results.mjs prep   <parDir> <rebuild-run.json>    clears the last rebuild result and error, gives the rebuild a free port
-//   node parity-results.mjs run-error <parDir> <text>             writes run-error.txt (the rebuild would not start)
+//   node parity-results.mjs run-error <parDir> <longDir> <name>   writes run-error.txt from that long run's exit code and log tail (the rebuild would not start)
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
@@ -141,6 +141,16 @@ export async function prep(parDir, rbFile) {
   return { port };
 }
 
+// The reason is read from the long-run files (<name>.exit, last 20 lines of <name>.log), never passed on a command line,
+// so log text cannot reach a shell.
+export function runErrorText(longDir, name) {
+  let code = null, tail = '';
+  try { code = Number(fs.readFileSync(path.join(longDir, `${name}.exit`), 'utf8').trim()); } catch {}
+  try { tail = fs.readFileSync(path.join(longDir, `${name}.log`), 'utf8').slice(-4000).split('\n').slice(-20).join('\n').trim(); } catch {}
+  const head = code === null || Number.isNaN(code) ? 'the command was lost' : `exit code ${code}`;
+  return tail ? `${head}: ${tail}` : `${head} (no output)`;
+}
+
 export function writeRunError(parDir, text) {
   fs.mkdirSync(parDir, { recursive: true });
   fs.writeFileSync(path.join(parDir, 'run-error.txt'), String(text).trim() ? String(text) : 'the rebuild did not start (no output)');
@@ -200,6 +210,6 @@ if (process.argv[1] && path.resolve(process.argv[1]) === new URL(import.meta.url
   } else if (cmd === 'prep') {
     try { console.log(JSON.stringify(await prep(x, y))); } catch (e) { console.error(e.message); process.exit(1); }
   } else if (cmd === 'run-error') {
-    writeRunError(x, y);
+    writeRunError(x, runErrorText(y, z));
   } else { console.error('usage: parity-results.mjs wrong|settle|merge|loop|prep|run-error ...'); process.exit(2); }
 }

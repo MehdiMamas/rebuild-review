@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { kinds, wrongTests, settle, merge, failing, cleanDetail, readCost, loop, prep, writeRunError, MAX_ROUNDS, LOOP_USD } from './parity-results.mjs';
+import { kinds, wrongTests, settle, merge, failing, cleanDetail, readCost, loop, prep, writeRunError, runErrorText, MAX_ROUNDS, LOOP_USD } from './parity-results.mjs';
 
 const md = '# Features\n\nF-001 keep. Page.\n- **F-002 defect.** No loading\nF-003 Keep: shortcut\nsome other line\n';
 const res = (o) => Object.entries(o).map(([feature, passed]) => ({ feature, passed, detail: '' }));
@@ -204,4 +204,14 @@ test('the workflow runs prep in code and a prep failure throws, never "would not
   assert.match(wf, /\.mjs'\)\} prep \$\{q\(PAR\)\}/);
   assert.match(wf, /throw new Error\(`Parity: preparing the rebuild run failed/);
   assert.doesNotMatch(wf, /Delete \$\{q\(PAR \+ '\/rebuild\.json'\)\}/);
+});
+
+test('run-error text comes from the long-run files: exit code and log tail, or lost', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rlong-'));
+  fs.writeFileSync(path.join(dir, 'r.log'), 'a\n$(touch nope) `x`\nError: port in use\n');
+  fs.writeFileSync(path.join(dir, 'r.exit'), '1');
+  assert.equal(runErrorText(dir, 'r'), 'exit code 1: a\n$(touch nope) `x`\nError: port in use');
+  fs.rmSync(path.join(dir, 'r.exit'));
+  assert.match(runErrorText(dir, 'r'), /^the command was lost: /);
+  assert.equal(runErrorText(dir, 'none'), 'the command was lost (no output)');
 });
