@@ -78,8 +78,8 @@ const queue = [start], seen = new Map();
     try { status = (await page.goto(url))?.status() ?? 0; await settle(page); } catch (e) { notCaptured.push(`${url}: ${scrub(e.message).split('\n')[0]}`); seen.set(key, null); continue; }
     // Sent to a sign-in page (by the server or by the page's own script), or refused: the route is behind a sign-in, not a screen.
     const here = new URL(page.url()), asked = new URL(url);
-    if (here.pathname !== asked.pathname && LOGIN_RE.test(here.pathname)) { behindSignIn.add(asked.pathname); seen.set(key, null); continue; }
-    if (status === 401 || status === 403) { (authInfo.signedIn ? refusedSignedIn : behindSignIn).add(asked.pathname); seen.set(key, null); continue; }
+    if (here.pathname !== asked.pathname && LOGIN_RE.test(here.pathname)) { behindSignIn.add(asked.pathname); seen.set(key, null); const to = (here.pathname + here.search); if (!seen.has(to)) queue.push(here.toString().replace(/#.*/, '')); continue; }
+    if ((status === 401 || status === 403) && authInfo.given) { (authInfo.signedIn ? refusedSignedIn : behindSignIn).add(asked.pathname); seen.set(key, null); continue; }
     seen.set(key, { id: slug(url), url: key, title: await page.title() });
     const hrefs = await page.$$eval('a[href]', (as) => as.map((a) => a.href));
     const found = new Set();
@@ -88,7 +88,7 @@ const queue = [start], seen = new Map();
       if (endsSessionPath(u.pathname, authInfo.signedIn)) { signOutSkipped.push({ screen: key, label: u.pathname }); notCaptured.push(`${key}: link to ${u.pathname} not followed (it would end the session or remove the account)`); continue; }
       found.add(u.toString());
     }
-    const buttons = page.locator('button, [role=button], input[type=submit], input[type=button]');
+    const buttons = page.locator('button, [role=button]');
     const total = await buttons.count();
     if (total > MAX_BUTTONS) { notCaptured.push(`${key}: only the first ${MAX_BUTTONS} of ${total} buttons were tried`); skippedButtons.push({ screen: key, tried: MAX_BUTTONS, skipped: total - MAX_BUTTONS }); }
     for (let i = 0, n = Math.min(total, MAX_BUTTONS); i < n; i++) {
@@ -168,7 +168,7 @@ const open = async (s, { width = 1440, height = 900, colorScheme = 'light' } = {
 const notChecked = [];
 const probeSkipped = [];
 const probes = await runProbes({ notChecked, browser, origin, screens, timings, storageState, labelFilter: (l) => !endsSession(l, authInfo.signedIn), skipped: probeSkipped });
-for (const x of probeSkipped) if (!signOutSkipped.some((y) => y.screen === x.route && y.label === x.label)) signOutSkipped.push({ screen: x.route, label: x.label });
+for (const x of probeSkipped) if (!signOutSkipped.some((y) => y.screen === x.route && y.label === x.label)) { signOutSkipped.push({ screen: x.route, label: x.label }); notCaptured.push(`${x.route}: button "${x.label}" not pressed by a probe (it would end the session or remove the account)`); }
 const a11y = await measureScreens({ notChecked, open, screens, timings, probes });
 if (buildMs !== null) timings.push({ name: 'build-ms', value: buildMs, unit: 'ms' });
 await browser.close();
