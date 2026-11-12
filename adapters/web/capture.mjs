@@ -11,6 +11,7 @@ import { startApp } from './app.mjs';
 import { runProbes } from './probes.mjs';
 import { measureScreens } from './metrics.mjs';
 import { routeKey, pickNext, leftOver } from './crawl.mjs';
+import { parseWidths } from './widths.mjs';
 
 const arg = (n) => { const i = process.argv.indexOf(`--${n}`); return i > 0 ? process.argv[i + 1] : undefined; };
 const appFile = path.resolve(arg('app') || '');
@@ -22,6 +23,8 @@ if (run.platform !== 'web') throw new Error(`web adapter cannot capture platform
 if (run.auth !== undefined) {
   try { validateAuth(run.auth); } catch (e) { console.error(`error: ${e.message}`); process.exit(2); }
 }
+let widths;
+try { widths = parseWidths(arg('widths')); } catch (e) { console.error(`error: ${e.message}`); process.exit(2); }
 const secrets = authSecrets(run.auth);
 const R = (v) => redactSecrets(v, secrets);
 const { origin, workDir, stop, buildMs } = await startApp(run, appFile);
@@ -170,7 +173,7 @@ const notChecked = [];
 const probeSkipped = [];
 const probes = await runProbes({ notChecked, browser, origin, screens, timings, storageState, allowOrigins, labelFilter: (l) => !endsSession(l, authInfo.signedIn), skipped: probeSkipped });
 for (const x of probeSkipped) if (!signOutSkipped.some((y) => y.screen === x.route && y.label === x.label)) { signOutSkipped.push({ screen: x.route, label: x.label }); notCaptured.push(`${x.route}: button "${x.label}" not pressed by a probe (it would end the session or remove the account)`); }
-const a11y = await measureScreens({ notChecked, open, screens, timings, probes });
+const a11y = await measureScreens({ notChecked, open, screens, timings, probes, widths });
 if (buildMs !== null) timings.push({ name: 'build-ms', value: buildMs, unit: 'ms' });
 await browser.close();
 stop();
