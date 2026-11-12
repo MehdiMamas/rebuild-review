@@ -74,7 +74,8 @@ const listed = await agent(
 const done = new Set((listed && listed.done) || [])
 
 // ---- Estimate: measure the target and refuse before any other spending when maxUsd is below the high estimate ----
-{
+// A rerun without a rebuild (scripts/rerun.mjs --no-build writes NoBuild.done) skips it: base.json and size.json stay as they are.
+if (!done.has('NoBuild.done')) {
   const est = await agent(`Run in order: (1) node ${q(pluginRoot + '/scripts/base.mjs')} detect ${q(target)} ${q(runDir)}  (2) node ${q(pluginRoot + '/scripts/size.mjs')} ${q(target)} ${q(runDir)} --max-usd ${q(String(ARGS.maxUsd === undefined ? 'none' : ARGS.maxUsd))} . Step 1 writes base.json (an upstream base the app is built on, or none; size then counts only the app's own files); if it exits non-zero return ok false with its output as detail and do not run step 2. Return ok true with the output of both as detail if both exited 0, otherwise ok false with the output of the failing step as detail (exit 3 of step 2 means maxUsd is too low). Change nothing else.`, { ...CHEAP, label: 'estimate', schema: { type: 'object', required: ['ok'], properties: { ok: { type: 'boolean' }, detail: { type: 'string' } } } })
   if (!est || !est.ok) return { stopped: 'Estimate', reason: (est && est.detail) || 'estimate agent died' }
 }
@@ -290,6 +291,10 @@ A feature marked "keep" gets a test asserting the behaviour. A feature marked "d
       const d = await agent(`Run exactly: node ${q(pluginRoot + '/scripts/parity-results.mjs')} loop ${q(PAR)} ${q(runDir + '/features.md')} ${q(runDir)} . It prints one JSON line. Return its fields action, reason, failing and restored (leave restored out if it is not there). Change nothing else.`, { ...CHEAP, label: `parity-loop-${round}`, phase: 'Parity', schema: LOOP_SCHEMA })
       if (!d) throw new Error('Parity: the loop agent died')
       if (d.restored !== undefined) restored = true
+      if (d.action === 'build' && done.has('NoBuild.done')) {
+        await agent(`Write ${q(PAR + '/loop-stop.txt')} containing: not rebuilt: NoBuild.done is set. Touch nothing else.`, { ...CHEAP, label: 'parity-loop-stop', phase: 'Parity' })
+        break
+      }
       if (d.action !== 'build') {
         if (d.action === 'stop') await agent(`Write ${q(PAR + '/loop-stop.txt')} containing: ${d.reason}. Touch nothing else.`, { ...CHEAP, label: 'parity-loop-stop', phase: 'Parity' })
         break
