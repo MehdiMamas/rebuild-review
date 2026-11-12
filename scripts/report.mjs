@@ -33,7 +33,7 @@ export function verdict(score, thresholds = readJson(DEFAULT_RUBRIC).verdict) {
   if (g.rate === null || g.rate === undefined) {
     return { verdict: 'none', why: 'No verdict: no tests ran on the rebuild, so nothing shows it works. Run the parity tests on the rebuild, then score again.' };
   }
-  const gateText = g.rate === null || g.rate === undefined ? 'Gate: no tests ran' : `Gate ${g.passed ? 'passed' : 'failed'} (${pct(g.rate)})`;
+  const gateText = `Gate ${g.passed ? 'passed' : 'failed'} (${pct(g.rate)})`;
   const entries = Object.entries(score.values).map(([name, v]) => [name, v.delta]).filter(([, d]) => typeof d === 'number');
   if (!entries.length) return { verdict: 'leave', why: `There is no score for any value: none was measured. ${gateText}.` };
   const worse = entries.filter(([, d]) => d <= worseValue).map(([n]) => n);
@@ -212,7 +212,7 @@ export function render(runDir, { embedCap = EMBED_CAP, thresholds, stopped } = {
   const sec = (id, title, body) => html.push(`<section id="${id}"><h2>${esc(title)}</h2>${body}</section>`);
 
   // 1 Verdict, with the confidence and what limits it
-  const conf = stopped ? null : confidence(runDir, { rubric: rubric || undefined });
+  const conf = stopped || v.verdict === 'none' ? null : confidence(runDir, { rubric: rubric || undefined });
   const inputText = (o) => Object.entries(o || {}).map(([k, x]) => `${k}: ${x !== null && typeof x === 'object' ? Object.entries(x).map(([a, b]) => `${a} ${b}`).join(', ') : x}`).join('; ');
   const confHtml = !conf ? '' : conf.percent === null
     ? '<p><strong>Confidence:</strong> not measured (there is no score).</p>'

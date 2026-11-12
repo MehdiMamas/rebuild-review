@@ -180,7 +180,7 @@ export function buildState(runDir, clean = (s) => s) {
     rebuilt: exists('Rebuild.done'),
     areasBuilt: Array.isArray(areasDone) ? areasDone.length : areasDone && typeof areasDone === 'object' ? Object.keys(areasDone).length : null,
     overall: score && Number.isFinite(score.overall) ? score.overall : null,
-    gate: score && score.gate ? !!score.gate.passed : null,
+    gate: score && score.gate ? (score.gate.rate === null || score.gate.rate === undefined ? 'none' : !!score.gate.passed) : null,
     verdict: verdict ? { choice: verdict.choice, reason: verdict.reason } : null,
     shots,
   };
@@ -266,7 +266,7 @@ function render(s){
   var v=$('s-verdict');
   if(s.verdict||s.overall!==null){v.hidden=false;var vd=$('verdict');vd.textContent='';
     if(s.verdict){vd.appendChild(el('div',null,s.verdict.choice==='none'?'no verdict':s.verdict.choice));vd.appendChild(el('div','mut',s.verdict.reason||''))}
-    if(s.overall!==null)vd.appendChild(el('div','mut','Overall '+s.overall+(s.gate===null?'':'; gate '+(s.gate?'passed':'failed'))))}
+    if(s.overall!==null)vd.appendChild(el('div','mut','Overall '+s.overall+(s.gate===null?'':s.gate==='none'?'; gate: no tests ran':'; gate '+(s.gate?'passed':'failed'))))}
   else v.hidden=true;
 }
 function addEvent(e){

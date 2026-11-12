@@ -308,3 +308,12 @@ test('the base line names the upstream commit and how it was found; none says so
   html = render(d, { thresholds: T });
   assert.match(html, /Base:<\/strong> none/);
 });
+
+test('no verdict shows no confidence percentage or parts table', () => {
+  const d = makeRun({ actions: [] });
+  w(path.join(d, 'score/score.json'), sc({ gate: { passed: false, rate: null, failing: [] } }));
+  const html = render(d, { thresholds: T });
+  assert.match(html, /badge none">no verdict</);
+  assert.doesNotMatch(html, /Confidence:/);
+  assert.doesNotMatch(html, /class="parts"/);
+});

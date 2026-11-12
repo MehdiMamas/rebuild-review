@@ -350,3 +350,13 @@ test('given a rerun after the Estimate stop, the stale stop is ignored', () => {
     assert.equal(buildState(run).stopped, null);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+test('given no parity test ran, the state has gate none and the page says no verdict and no tests ran', () => withServer(async ({ port, k, run }) => {
+  fs.writeFileSync(path.join(run, 'score', 'score.json'), JSON.stringify({ overall: 3, gate: { passed: false, rate: null, failing: [] }, values: {} }));
+  ev(run, { what: 'verdict', choice: 'none', reason: 'no tests ran' });
+  const s = buildState(run);
+  assert.equal(s.gate, 'none');
+  assert.equal(s.verdict.choice, 'none');
+  const html = (await get(port, `/?k=${k}`)).body.toString();
+  assert.ok(html.includes('no verdict') && html.includes('no tests ran'));
+}));
