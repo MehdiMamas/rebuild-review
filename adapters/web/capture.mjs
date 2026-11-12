@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { chromium } from 'playwright';
 import { launchChromium } from './browser.mjs';
-import { makeContext, runStep, sleep, scrub, SIGN_OUT_RE } from './context.mjs';
+import { makeContext, runStep, sleep, scrub, endsSession, endsSessionPath } from './context.mjs';
 import { validateAuth, authSecrets, redactSecrets, signIn, LOGIN_RE } from './auth.mjs';
 import { startApp } from './app.mjs';
 import { runProbes } from './probes.mjs';
@@ -31,7 +31,7 @@ const MAX_SCREENS = Number(arg('max-screens')) || 30;
 const MAX_BUTTONS = Number(arg('max-buttons')) || 10;
 const MAX_PER_ROUTE = Number(arg('max-per-route')) || 2;
 const MAX_HAR_BYTES = Number(arg('max-har-bytes')) || 50 * 1024 * 1024;
-const notCaptured = [], skippedButtons = [], signOutSkipped = [], behindSignIn = new Set();
+const notCaptured = [], skippedButtons = [], signOutSkipped = [], behindSignIn = new Set(), refusedSignedIn = new Set();
 let cutScreens = [], sameRouteSkipped = [];
 const slug = (u) => { const p = new URL(u).pathname.replace(/^\/|\/$/g, '').replace(/[^\w-]+/g, '-'); return p || 'root'; };
 const write = (f, data) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, typeof data === 'string' ? data : JSON.stringify(data, null, 2)); };
@@ -78,22 +78,23 @@ const queue = [start], seen = new Map();
     try { status = (await page.goto(url))?.status() ?? 0; await settle(page); } catch (e) { notCaptured.push(`${url}: ${scrub(e.message).split('\n')[0]}`); seen.set(key, null); continue; }
     // Sent to a sign-in page (by the server or by the page's own script), or refused: the route is behind a sign-in, not a screen.
     const here = new URL(page.url()), asked = new URL(url);
-    if ((here.pathname !== asked.pathname && LOGIN_RE.test(here.pathname)) || status === 401 || status === 403) { behindSignIn.add(asked.pathname); seen.set(key, null); continue; }
+    if (here.pathname !== asked.pathname && LOGIN_RE.test(here.pathname)) { behindSignIn.add(asked.pathname); seen.set(key, null); continue; }
+    if (status === 401 || status === 403) { (authInfo.signedIn ? refusedSignedIn : behindSignIn).add(asked.pathname); seen.set(key, null); continue; }
     seen.set(key, { id: slug(url), url: key, title: await page.title() });
     const hrefs = await page.$$eval('a[href]', (as) => as.map((a) => a.href));
     const found = new Set();
     for (const h of hrefs.filter((h) => new URL(h).origin === origin)) {
       const u = new URL(h); u.hash = '';
-      if (SIGN_OUT_RE.test(u.pathname)) { signOutSkipped.push({ screen: key, label: u.pathname }); notCaptured.push(`${key}: link to ${u.pathname} not followed (it would end the session)`); continue; }
+      if (endsSessionPath(u.pathname, authInfo.signedIn)) { signOutSkipped.push({ screen: key, label: u.pathname }); notCaptured.push(`${key}: link to ${u.pathname} not followed (it would end the session or remove the account)`); continue; }
       found.add(u.toString());
     }
-    const buttons = page.locator('button, [role=button]');
+    const buttons = page.locator('button, [role=button], input[type=submit], input[type=button]');
     const total = await buttons.count();
     if (total > MAX_BUTTONS) { notCaptured.push(`${key}: only the first ${MAX_BUTTONS} of ${total} buttons were tried`); skippedButtons.push({ screen: key, tried: MAX_BUTTONS, skipped: total - MAX_BUTTONS }); }
     for (let i = 0, n = Math.min(total, MAX_BUTTONS); i < n; i++) {
       try {
         const label = await buttons.nth(i).evaluate((e) => e.getAttribute('aria-label') || e.innerText || e.value || '');
-        if (SIGN_OUT_RE.test(label)) { const l = label.trim().slice(0, 60); signOutSkipped.push({ screen: key, label: l }); notCaptured.push(`${key}: button "${l}" not pressed (it would end the session)`); continue; }
+        if (endsSession(label, authInfo.signedIn)) { const l = label.trim().slice(0, 60); signOutSkipped.push({ screen: key, label: l }); notCaptured.push(`${key}: button "${l}" not pressed (it would end the session or remove the account)`); continue; }
         await buttons.nth(i).click({ timeout: 1500 });
         await sleep(200);
         const u = new URL(page.url()); u.hash = '';
@@ -122,13 +123,13 @@ for (const s of screens) {
       await settle(page);
       await shot(page, dir, `${size.w}-${theme}`);
       if (size.w === 1440 && theme === 'light') {
-        write(path.join(dir, 'render.html'), await page.content());
-        write(path.join(dir, 'render.css.json'), await page.evaluate(() => [...document.body.querySelectorAll('*')].slice(0, 3000).map((e) => {
+        write(path.join(dir, 'render.html'), R(await page.content()));
+        write(path.join(dir, 'render.css.json'), R(await page.evaluate(() => [...document.body.querySelectorAll('*')].slice(0, 3000).map((e) => {
           const c = getComputedStyle(e), r = e.getBoundingClientRect();
           const p = {}; for (const k of ['display', 'position', 'color', 'background-color', 'font-family', 'font-size', 'font-weight', 'margin', 'padding', 'border', 'gap']) p[k] = c.getPropertyValue(k);
           return { tag: e.tagName.toLowerCase(), id: e.id || undefined, box: [Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height)], style: p };
-        })));
-        write(path.join(dir, 'a11y.json'), { ariaSnapshot: await page.locator('body').ariaSnapshot() });
+        }))));
+        write(path.join(dir, 'a11y.json'), R({ ariaSnapshot: await page.locator('body').ariaSnapshot() }));
         const nav = await page.evaluate(() => { const n = performance.getEntriesByType('navigation')[0]; return n ? { domContentLoaded: n.domContentLoadedEventEnd, load: n.loadEventEnd } : {}; });
         for (const [k, v] of Object.entries(nav)) timings.push({ name: `${s.id}.${k}`, value: Math.round(v), unit: 'ms' });
       }
@@ -147,8 +148,8 @@ if (statesFile) {
     try {
       for (const step of st.steps) await runStep(page, origin, step);
       await shot(page, path.join(out, 'screens', st.id), '1440-light');
-      write(path.join(out, 'screens', st.id, 'render.html'), await page.content());
-      write(path.join(out, 'screens', st.id, 'a11y.json'), { ariaSnapshot: await page.locator('body').ariaSnapshot() });
+      write(path.join(out, 'screens', st.id, 'render.html'), R(await page.content()));
+      write(path.join(out, 'screens', st.id, 'a11y.json'), R({ ariaSnapshot: await page.locator('body').ariaSnapshot() }));
       stateIds.push(st.id);
     } catch (e) { notCaptured.push(`state ${st.id}: ${scrub(e.message).split('\n')[0]}`); }
     collect(rec);
@@ -166,7 +167,7 @@ const open = async (s, { width = 1440, height = 900, colorScheme = 'light' } = {
 };
 const notChecked = [];
 const probeSkipped = [];
-const probes = await runProbes({ notChecked, browser, origin, screens, timings, storageState, labelFilter: (l) => !SIGN_OUT_RE.test(l), skipped: probeSkipped });
+const probes = await runProbes({ notChecked, browser, origin, screens, timings, storageState, labelFilter: (l) => !endsSession(l, authInfo.signedIn), skipped: probeSkipped });
 for (const x of probeSkipped) if (!signOutSkipped.some((y) => y.screen === x.route && y.label === x.label)) signOutSkipped.push({ screen: x.route, label: x.label });
 const a11y = await measureScreens({ notChecked, open, screens, timings, probes });
 if (buildMs !== null) timings.push({ name: 'build-ms', value: buildMs, unit: 'ms' });
@@ -175,7 +176,8 @@ stop();
 
 let appVersion = run.appVersion || null;
 if (!appVersion) try { appVersion = JSON.parse(fs.readFileSync(path.join(workDir, 'package.json'), 'utf8')).version || null; } catch {}
-const behind = [...behindSignIn].sort();
+const behind = [...behindSignIn].sort(), refused = [...refusedSignedIn].sort();
+if (refused.length) notCaptured.push(`refused (401/403) while signed in, not captured: ${refused.join(', ')}`);
 if (behind.length) notCaptured.push(`behind a sign-in, not captured: ${behind.join(', ')}`);
 write(path.join(out, 'manifest.json'), R({
   platform: 'web', appVersion, address: run.address,
@@ -186,7 +188,7 @@ write(path.join(out, 'manifest.json'), R({
 }));
 let harBytes = 0;
 const harKept = har.filter((e) => (harBytes += JSON.stringify(e).length) <= MAX_HAR_BYTES);
-write(path.join(out, 'network.har'), { log: { version: '1.2', creator: { name: 'rebuild-review web adapter', version: '1' }, entries: harKept } });
+write(path.join(out, 'network.har'), R({ log: { version: '1.2', creator: { name: 'rebuild-review web adapter', version: '1' }, entries: harKept } }));
 write(path.join(out, 'coverage.json'), R({
   caps: { maxScreens: MAX_SCREENS, maxButtons: MAX_BUTTONS, maxPerRoute: MAX_PER_ROUTE, maxHarBytes: MAX_HAR_BYTES },
   screensReached: screens.map((s) => s.url),
@@ -195,11 +197,13 @@ write(path.join(out, 'coverage.json'), R({
   buttonsSkipped: skippedButtons,
   harEntriesSkipped: har.length - harKept.length,
   auth: authInfo,
-  screensSignedIn: authInfo.signedIn ? screens.map((s) => s.url) : [],
+  // Every screen captured with the session in use, public ones included; it does not say the screen needs a sign-in.
+  screensCapturedWithSession: authInfo.signedIn ? screens.map((s) => s.url) : [],
   behindSignIn: behind,
+  refusedSignedIn: refused,
   signOutSkipped,
 }));
-write(path.join(out, 'timings.json'), timings);
+write(path.join(out, 'timings.json'), R(timings));
 write(path.join(out, 'probes.json'), R(probes));
 write(path.join(out, 'probes-not-checked.json'), R(notChecked));
 write(path.join(out, 'a11y-violations.json'), R(a11y));

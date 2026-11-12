@@ -5,16 +5,18 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { validateAuth, authSecrets, redactSecrets } from '../auth.mjs';
+import { validateAuth, authSecrets, redactSecrets, LOGIN_RE } from '../auth.mjs';
+import { endsSession, endsSessionPath } from '../context.mjs';
 import { coverage } from '../../../scripts/areas.mjs';
+import { filterGolden } from '../../../scripts/room.mjs';
 
 const here = path.dirname(new URL(import.meta.url).pathname);
 const capture = path.join(here, '..', 'capture.mjs');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-auth-test-'));
 test.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
 
-const PASSWORD = 'correct-horse-9';
-const signInSteps = (password = PASSWORD) => [{ open: '/login?via=steps' }, { type: { into: 'Username', text: 'bob' } }, { type: { into: 'Nickname', text: 'q' } }, { type: { into: 'Password', text: password } }, { click: 'Sign in' }];
+const PASSWORD = 'correct-horse-9', EMAIL = 'pat.lee@example.test';
+const signInSteps = (password = PASSWORD, open = '/login?via=steps') => [{ open }, { type: { into: 'Username', text: 'bob' } }, { type: { into: 'Nickname', text: 'q' } }, { type: { into: 'Email', text: EMAIL } }, { type: { into: 'Password', text: password } }, { click: 'Sign in' }];
 const json = (f) => JSON.parse(fs.readFileSync(f, 'utf8'));
 let nextPort = 4351;
 
@@ -46,7 +48,7 @@ test('given no auth in run.json -> capture behaves as before, signed-out, and co
   const v = cov(c);
   assert.deepEqual(v.auth, { given: false, signedIn: false });
   assert.deepEqual(v.behindSignIn, ['/dashboard', '/dashboard/settings']);
-  assert.deepEqual(v.screensSignedIn, []);
+  assert.deepEqual(v.screensCapturedWithSession, []);
   assert.ok(v.screensReached.includes('/') && v.screensReached.includes('/login'));
   const area = coverage(c.runDir);
   assert.ok(area.notReached.includes('behind a sign-in, not reached: /dashboard, /dashboard/settings (no auth in run.json)'), area.notReached.join(' | '));
@@ -58,19 +60,19 @@ test('given a signed-out run where /dashboard redirects -> it is in behindSignIn
   assert.ok(!v.screensReached.includes('/dashboard') && !v.screensReached.includes('/dashboard/settings'));
 });
 
-test('given auth steps that sign in -> the crawl reaches /dashboard and /dashboard/settings, coverage.json has auth.signedIn true and both in screensSignedIn, and the dashboard screenshot is not the sign-in page', () => {
+test('given auth steps that sign in -> the crawl reaches /dashboard and /dashboard/settings, coverage.json has auth.signedIn true and both in screensCapturedWithSession, and the dashboard screenshot is not the sign-in page', () => {
   const c = cap('good', { auth: { steps: signInSteps() } });
   assert.equal(c.r.status, 0, c.r.stderr);
   const v = cov(c);
   assert.equal(v.auth.signedIn, true);
   assert.deepEqual(v.behindSignIn, []);
-  for (const u of ['/dashboard', '/dashboard/settings']) assert.ok(v.screensSignedIn.includes(u) && v.screensReached.includes(u), u);
+  for (const u of ['/dashboard', '/dashboard/settings']) assert.ok(v.screensCapturedWithSession.includes(u) && v.screensReached.includes(u), u);
   const html = fs.readFileSync(path.join(c.golden, 'screens', 'dashboard', 'render.html'), 'utf8');
-  assert.match(html, /Signed in as bob/);
+  assert.match(html, /Signed in as \*\*\*/);
   assert.doesNotMatch(html, /<h1>Sign in<\/h1>/);
   assert.ok(fs.statSync(path.join(c.golden, 'screens', 'dashboard', '1440-light.png')).size > 0);
   const area = coverage(c.runDir);
-  assert.equal(area.screens.signedIn, v.screensSignedIn.length);
+  assert.equal(area.screens.withSession, v.screensCapturedWithSession.length);
 });
 
 test('given auth steps with a wrong password -> capture continues signed out, coverage.json has auth.signedIn false and a reason that does not contain the password, and the exit code is 0', () => {
@@ -98,16 +100,78 @@ test('given an auth step that names a field the page does not have -> the reason
   assert.ok(!v.auth.reason.includes('typed-value-4242'));
 });
 
-test('given a stand-in password and user name in auth -> neither appears in any file under golden/, in stdout or in stderr', () => {
+test('given a stand-in password, user name and an email the app echoes on a page -> none appears in any text file under golden/ (render.html, a11y.json, the HAR included), in stdout or in stderr', () => {
   const c = cap('good', { auth: { steps: signInSteps() } });
-  // The user name is shown on the dashboard on purpose (render.html, titles); the guarantee is for the password.
   const all = files(c.golden);
   assert.ok(all.length > 10);
-  for (const f of all) assert.ok(!fs.readFileSync(f).includes(PASSWORD), path.relative(c.golden, f));
-  assert.ok(!c.r.stdout.includes(PASSWORD) && !c.r.stderr.includes(PASSWORD));
-  assert.ok(json(path.join(c.golden, 'manifest.json')).screens.some((s) => s.title === "bob's dashboard"), 'a 3-character value is not redacted from other text');
+  const text = all.filter((f) => !f.endsWith('.png'));
+  for (const f of text) for (const v of [PASSWORD, EMAIL, 'bob']) assert.ok(!fs.readFileSync(f, 'utf8').includes(v), `${v} in ${path.relative(c.golden, f)}`);
+  assert.match(fs.readFileSync(path.join(c.golden, 'screens', 'dashboard', 'render.html'), 'utf8'), /Email: \*\*\*/);
+  for (const v of [PASSWORD, EMAIL]) assert.ok(!c.r.stdout.includes(v) && !c.r.stderr.includes(v));
+  assert.ok(json(path.join(c.golden, 'manifest.json')).screens.some((s) => s.title === "***'s dashboard"), 'a 3-character value is masked as a whole value');
   const har = json(path.join(c.golden, 'network.har')).log.entries;
   assert.ok(har.length > 0 && !har.some((e) => e.request.url.includes('via=steps')), 'the sign-in context is not recorded');
+});
+
+test('given the room copy of a golden/ whose text files echo the email -> the second guard holds it nowhere, even when the capture left it in', () => {
+  const c = cap('good', { auth: { steps: signInSteps() } });
+  const leaky = path.join(tmp, 'leaky-golden');
+  fs.cpSync(c.golden, leaky, { recursive: true });
+  fs.appendFileSync(path.join(leaky, 'screens', 'dashboard', 'render.html'), `<p>${EMAIL}</p>`);
+  const copy = path.join(tmp, 'leaky-copy');
+  filterGolden(leaky, copy, [EMAIL, 'bob', PASSWORD]);
+  for (const f of files(copy).filter((f) => !f.endsWith('.png'))) assert.ok(!fs.readFileSync(f, 'utf8').includes(EMAIL), path.relative(copy, f));
+});
+
+test('given a Sign out button, a Delete account button and a "Design outcomes" button on a signed-in screen -> only the first two are never pressed, and the rest of the crawl is still signed in', () => {
+  const c = cap('good', { auth: { steps: signInSteps() } });
+  const v = cov(c);
+  const labels = v.signOutSkipped.map((x) => x.label);
+  assert.ok(labels.includes('Delete account'), JSON.stringify(labels));
+  assert.ok(!labels.includes('Design outcomes'), JSON.stringify(labels));
+  assert.ok(!labels.includes('/catalog/outlet') && v.screensReached.includes('/catalog/outlet'), 'an ordinary link whose path holds "log" and "out" is followed');
+  assert.ok(!c.hits.some((h) => h.startsWith('POST /delete-account')), 'the delete button was pressed');
+  assert.ok(v.screensReached.includes('/dashboard/settings'));
+});
+
+test('given a 403 on a route while signed in -> it is listed as refused while signed in, not as behind a sign-in', () => {
+  const c = cap('good', { auth: { steps: signInSteps() } });
+  const v = cov(c);
+  assert.deepEqual(v.refusedSignedIn, ['/admin']);
+  assert.ok(!v.behindSignIn.includes('/admin'), JSON.stringify(v.behindSignIn));
+  assert.ok(!v.screensReached.includes('/admin'));
+  assert.ok(json(path.join(c.golden, 'manifest.json')).notCaptured.includes('refused (401/403) while signed in, not captured: /admin'));
+  assert.ok(coverage(c.runDir).notReached.includes('refused (401/403) while signed in, not reached: /admin'));
+});
+
+test('given a sign-in form on a route with no sign-in word, a wrong password and an anonymous cookie -> the page never left the form, so signedIn is false with a reason', () => {
+  const c = cap('start-wrong', { auth: { steps: signInSteps('wrong-pass-77', '/start') }, env: { ANON: '1' }, args: ['--max-screens', '2'] });
+  assert.equal(c.r.status, 0, c.r.stderr);
+  const v = cov(c);
+  assert.equal(v.auth.signedIn, false);
+  assert.match(v.auth.reason, /still the sign-in form/);
+  assert.ok(!v.auth.reason.includes('wrong-pass-77'));
+  assert.deepEqual(v.screensCapturedWithSession, []);
+});
+
+test('given the same form on that route and the right password -> signedIn is true', () => {
+  const c = cap('start-right', { auth: { steps: signInSteps(PASSWORD, '/start') }, args: ['--max-screens', '2'] });
+  assert.equal(cov(c).auth.signedIn, true);
+});
+
+test('given labels and paths -> only whole words and path segments end the session', () => {
+  for (const l of ['Sign out', 'Log out', 'Logout', 'sign-out', 'Signout', 'Log off']) assert.ok(endsSession(l), l);
+  for (const l of ['Design outcomes', 'Catalog outlet', 'Blog outdoors', 'Assign outstanding']) assert.equal(endsSession(l), false, l);
+  for (const p of ['/logout', '/auth/log-out/', '/signout', '/sign_out']) assert.ok(endsSessionPath(p), p);
+  for (const p of ['/catalog/outlet', '/blog/outdoors', '/design/outcomes', '/catalog/index']) assert.equal(endsSessionPath(p), false, p);
+  for (const l of ['Delete account', 'Delete my account', 'Close account', 'Deactivate', 'Remove your profile']) assert.ok(endsSession(l, true) && !endsSession(l, false), l);
+  for (const l of ['Delete item', 'Close', 'Close dialog', 'Remove from cart', 'Account settings']) assert.equal(endsSession(l, true), false, l);
+  for (const p of ['/account/delete', '/delete-account', '/deactivate']) assert.ok(endsSessionPath(p, true), p);
+});
+
+test('given paths -> LOGIN_RE matches sign-in segments only', () => {
+  for (const p of ['/login', '/log-in', '/auth/signin', '/sign_in/', '/users/sign-in']) assert.ok(LOGIN_RE.test(p), p);
+  for (const p of ['/catalog/index', '/dialog-info', '/blog/inbox', '/', '/dashboard']) assert.equal(LOGIN_RE.test(p), false, p);
 });
 
 test('given a "Sign out" button on a signed-in screen -> the crawl does not press it and the later screens are still reached signed in', () => {
@@ -115,7 +179,7 @@ test('given a "Sign out" button on a signed-in screen -> the crawl does not pres
   const v = cov(c);
   assert.ok(v.signOutSkipped.some((x) => x.screen === '/dashboard' && x.label === 'Sign out'), JSON.stringify(v.signOutSkipped));
   assert.ok(!c.hits.some((h) => h.startsWith('POST /signout')), 'the button was pressed');
-  assert.ok(v.screensSignedIn.includes('/dashboard/settings'));
+  assert.ok(v.screensCapturedWithSession.includes('/dashboard/settings'));
 });
 
 test('given a GET /logout link and a server-side revoke on sign-out -> later screens and probes are still signed in', () => {
@@ -134,7 +198,7 @@ test('given a signed-in session whose cookie the app drops mid-crawl -> that rou
   const v = cov(c);
   assert.equal(v.auth.signedIn, true);
   assert.ok(v.behindSignIn.includes('/dashboard/settings'), JSON.stringify(v.behindSignIn));
-  assert.ok(!v.screensReached.includes('/dashboard/settings') && !v.screensSignedIn.includes('/dashboard/settings'));
+  assert.ok(!v.screensReached.includes('/dashboard/settings') && !v.screensCapturedWithSession.includes('/dashboard/settings'));
 });
 
 test('given auth with expect -> the final path or visible text decides signedIn', () => {
@@ -162,11 +226,14 @@ test('given an auth block that is not an object, or has no steps, or has an unkn
   });
 });
 
-test('given a one-character or three-character value in auth -> it is not redacted from other text and nothing breaks', () => {
-  const auth = { steps: [{ open: '/login' }, { type: { into: 'Nickname', text: 'q' } }, { type: { into: 'Username', text: 'bob' } }, { type: { into: 'Password', text: 'longer-secret' } }] };
+test('given values of any length in auth -> each is masked as a whole value and ordinary words that contain it are left alone', () => {
+  const auth = { steps: [{ open: '/login' }, { type: { into: 'Nickname', text: 'q' } }, { type: { into: 'Username', text: 'bob' } }, { type: { into: 'Password', text: 'test' } }] };
   assert.doesNotThrow(() => validateAuth(auth));
-  assert.deepEqual(authSecrets(auth), ['longer-secret']);
-  assert.equal(redactSecrets('bob asked a question: q? longer-secret', authSecrets(auth)), 'bob asked a question: q? ***');
-  assert.deepEqual(authSecrets({ steps: [{ type: { into: 'x', text: 'a' } }] }), []);
+  assert.deepEqual(authSecrets(auth), ['test', 'bob', 'q']);
+  assert.equal(redactSecrets('the latest test: bob, bobby and q?', authSecrets(auth)), 'the latest ***: ***, bobby and ***?');
+  assert.equal(redactSecrets('latest contest tests', authSecrets(auth)), 'latest contest tests');
+  assert.equal(redactSecrets('pw!x and pw!', authSecrets({ steps: [{ type: { into: 'x', text: 'pw!' } }] })), '***x and ***');
+  assert.equal(redactSecrets('a.b and axb', authSecrets({ steps: [{ type: { into: 'x', text: 'a.b' } }] })), '*** and axb');
+  assert.deepEqual(authSecrets({ steps: [{ type: { into: 'x', text: '' } }] }), []);
   assert.equal(redactSecrets('anything a', []), 'anything a');
 });

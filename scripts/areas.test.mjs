@@ -153,10 +153,10 @@ test('coverage lists the routes behind a sign-in, with the reason and the signed
   ];
   for (const [auth, note] of reasons) {
     const run = scoredRun();
-    fs.writeFileSync(path.join(run, 'golden', 'coverage.json'), JSON.stringify({ screensReached: ['/', '/dashboard'], screensCut: [], buttonsSkipped: [], harEntriesSkipped: 0, auth, behindSignIn: ['/admin', '/dashboard/settings'], screensSignedIn: auth.signedIn ? ['/', '/dashboard'] : [] }));
+    fs.writeFileSync(path.join(run, 'golden', 'coverage.json'), JSON.stringify({ screensReached: ['/', '/dashboard'], screensCut: [], buttonsSkipped: [], harEntriesSkipped: 0, auth, behindSignIn: ['/admin', '/dashboard/settings'], screensCapturedWithSession: auth.signedIn ? ['/', '/dashboard'] : [] }));
     const c = coverage(run);
     assert.ok(c.notReached.includes(`behind a sign-in, not reached: /admin, /dashboard/settings${note}`), c.notReached.join(' | '));
-    assert.equal(c.screens.signedIn, auth.signedIn ? 2 : 0);
+    assert.equal(c.screens.withSession, auth.signedIn ? 2 : 0);
   }
   const plain = coverage(scoredRun());
   assert.ok(!plain.notReached.some((x) => /sign-in/.test(x)));

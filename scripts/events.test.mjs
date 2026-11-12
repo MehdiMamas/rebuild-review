@@ -77,11 +77,19 @@ test('given auth values in run.json -> events.mjs writes *** for them in events.
   const text = fs.readFileSync(path.join(d, 'events.jsonl'), 'utf8');
   assert.ok(!text.includes('pat@example.test') && !text.includes('stand-in-pw-1'));
   assert.ok(text.includes('signed in as ***') && text.includes('pw ***'));
-  assert.ok(text.includes('code abc'), 'a 3-character value is too short to mask');
+  assert.ok(!text.includes('code abc') && text.includes('code ***'), 'a 3-character value is masked as a whole value');
 });
 
 test('given auth values -> mask in events/watch logs hides them', () => {
   const d = tmp();
   fs.writeFileSync(path.join(d, 'run.json'), JSON.stringify({ env: { K: 'env-value-1' }, auth: { steps: [{ type: { into: 'Password', text: 'stand-in-pw-1' } }, { type: { into: 'Code', text: 'abc' } }] } }));
-  assert.equal(mask(d, 'log: stand-in-pw-1 env-value-1 abc'), 'log: *** *** abc');
+  assert.equal(mask(d, 'log: stand-in-pw-1 env-value-1 abc'), 'log: *** *** ***');
+});
+
+test('given a secret "test" in auth -> mask and emit leave "latest" and "abcd" alone', () => {
+  const d = tmp();
+  fs.writeFileSync(path.join(d, 'run.json'), JSON.stringify({ auth: { steps: [{ type: { into: 'Code', text: 'test' } }] } }));
+  assert.equal(mask(d, 'the latest test, tests'), 'the latest ***, tests');
+  emit(d, { kind: 'decision', what: 'latest test', choice: 'a', reason: 'b' });
+  assert.ok(fs.readFileSync(path.join(d, 'events.jsonl'), 'utf8').includes('latest ***'));
 });

@@ -40,6 +40,34 @@ test('filterGolden removes JS, CSS and map bodies and keeps JSON and images', ()
   assert.equal(fs.existsSync(path.join(dest, 'probes.json')), true);
 });
 
+test('given typed auth values that a golden text file still holds -> filterGolden masks them as whole values in the copy and leaves ordinary words', () => {
+  const src = tmp(), dest = path.join(tmp(), 'g');
+  makeGolden(src);
+  const email = 'pat.lee@example.test';
+  fs.writeFileSync(path.join(src, 'screens', 'home', 'render.html'), `<p>Signed in as ${email}, the latest test</p>`);
+  fs.writeFileSync(path.join(src, 'screens', 'home', 'a11y.json'), JSON.stringify({ ariaSnapshot: `- text: ${email}` }));
+  const f = path.join(src, 'network.har');
+  const j = JSON.parse(fs.readFileSync(f, 'utf8'));
+  j.log.entries.push({ request: { url: 'http://127.0.0.1:1/api/me' }, response: { content: { mimeType: 'application/json', text: JSON.stringify({ email }) } } });
+  fs.writeFileSync(f, JSON.stringify(j));
+  filterGolden(src, dest, [email, 'test']);
+  const all = fs.readdirSync(dest, { recursive: true }).map((x) => path.join(dest, x)).filter((x) => fs.statSync(x).isFile());
+  for (const x of all) assert.ok(!fs.readFileSync(x, 'utf8').includes(email), x);
+  assert.equal(fs.readFileSync(path.join(dest, 'screens', 'home', 'render.html'), 'utf8'), '<p>Signed in as ***, the latest ***</p>');
+});
+
+test('given auth in run.json -> prepareRoom hands the builder a golden copy with the echoed email masked', () => {
+  const runDir = tmp(), target = tmp(), email = 'pat.lee@example.test';
+  fs.mkdirSync(path.join(runDir, 'work'));
+  execFileSync('git', ['init', '-q'], { cwd: path.join(runDir, 'work') });
+  makeGolden(path.join(runDir, 'golden'));
+  fs.writeFileSync(path.join(runDir, 'golden', 'screens', 'home', 'a11y.json'), JSON.stringify({ ariaSnapshot: `- text: ${email}` }));
+  fs.writeFileSync(path.join(runDir, 'run.json'), JSON.stringify({ auth: { steps: [{ type: { into: 'Email', text: email } }] } }));
+  const room = prepareRoom({ runDir, target, inputs: ['golden'] });
+  const t = fs.readFileSync(path.join(room, 'input', 'golden', 'screens', 'home', 'a11y.json'), 'utf8');
+  assert.ok(!t.includes(email) && t.includes('***'));
+});
+
 test('filterGolden empties inline scripts and source map comments', () => {
   const src = tmp(), dest = path.join(tmp(), 'g');
   makeGolden(src);

@@ -1,10 +1,12 @@
 // Optional sign-in for the web capture (run.json "auth"). The session lives in memory only: nothing here writes a file.
 // Messages and reasons never hold a typed value: they name the step number and kind, and redactSecrets runs over the rest.
 import { makeContext, runStep, scrub } from './context.mjs';
+import { authSecrets, redactSecrets } from './redact.mjs';
+export { authSecrets, redactSecrets };
 
-export const LOGIN_RE = /log.?in|sign.?in/i;
+// A path segment that is a sign-in page: /login, /log-in, /auth/sign_in. Not /catalog/index or /dialog-info.
+export const LOGIN_RE = /(^|\/)(log[-_]?in|sign[-_]?in)(\/|$)/i;
 const KINDS = ['open', 'click', 'type', 'press', 'wait'];
-const MIN_SECRET = 4;
 const isStr = (v) => typeof v === 'string';
 
 // Throws a message naming the step number and kind; never a value.
@@ -27,22 +29,6 @@ export function validateAuth(auth) {
   }
 }
 
-// The typed values worth hiding: type.text of at least 4 characters (a shorter one would mangle every string it touches), longest first.
-export function authSecrets(auth) {
-  const steps = auth && Array.isArray(auth.steps) ? auth.steps : [];
-  const vals = steps.map((s) => s && s.type && s.type.text).filter((t) => isStr(t) && t.length >= MIN_SECRET);
-  return [...new Set(vals)].sort((a, b) => b.length - a.length);
-}
-
-// Strings, arrays and objects with every secret replaced by ***.
-export function redactSecrets(value, secrets) {
-  if (!secrets || !secrets.length) return value;
-  if (typeof value === 'string') { for (const s of secrets) value = value.split(s).join('***'); return value; }
-  if (Array.isArray(value)) return value.map((x) => redactSecrets(x, secrets));
-  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, x]) => [k, redactSecrets(x, secrets)]));
-  return value;
-}
-
 // Runs the steps once in a fresh context that is not recorded (its requests, console and blocked lists stay out of golden/;
 // the sign-in request is the one that carries the password). { ok: true, storageState } or { ok: false, reason }.
 export async function signIn(browser, origin, auth) {
@@ -52,7 +38,12 @@ export async function signIn(browser, origin, auth) {
   try {
     ({ context } = await makeContext(browser, origin, { viewport: { width: 1440, height: 900 } }));
     const page = await context.newPage();
-    for (const step of auth.steps) { n++; kind = KINDS.find((k) => k in step); await runStep(page, origin, step); }
+    const pwVisible = async () => (await page.locator('input[type=password]:visible').count().catch(() => 0)) > 0;
+    let formPath = null; // the route where a password field was first seen: the sign-in form
+    for (const step of auth.steps) {
+      n++; kind = KINDS.find((k) => k in step); await runStep(page, origin, step);
+      if (formPath === null && await pwVisible()) formPath = new URL(page.url()).pathname;
+    }
     n = 0;
     await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
     const finalPath = new URL(page.url()).pathname;
@@ -60,7 +51,11 @@ export async function signIn(browser, origin, auth) {
     if (e) {
       if (e.path !== undefined && finalPath !== e.path) return { ok: false, reason: `sign-in ended on ${finalPath}, expected ${clean(e.path)}` };
       if (e.text !== undefined && !(await page.getByText(e.text).first().waitFor({ state: 'visible', timeout: 5000 }).then(() => true, () => false))) return { ok: false, reason: 'sign-in finished but the expected text is not visible' };
-    } else if (LOGIN_RE.test(finalPath)) return { ok: false, reason: `sign-in ended on ${finalPath}, a sign-in page` };
+    } else {
+      // No expect: the page must have left the sign-in form (another route, or the password field gone); a cookie alone proves nothing.
+      if (formPath !== null && finalPath === formPath && await pwVisible()) return { ok: false, reason: `sign-in ended on ${finalPath}, still the sign-in form (the password field is still shown)` };
+      if (formPath === null && LOGIN_RE.test(finalPath)) return { ok: false, reason: `sign-in ended on ${finalPath}, a sign-in page` };
+    }
     const state = await context.storageState();
     if (!e && !state.cookies.length && !state.origins.some((o) => o.localStorage.length)) return { ok: false, reason: 'sign-in finished but no session was stored' };
     return { ok: true, storageState: state };

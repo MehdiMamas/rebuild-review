@@ -11,6 +11,7 @@ import { readBase, fetchBase, checkWall, git as baseGit } from './base.mjs';
 import { readCost } from './parity-results.mjs';
 import { readPlan, addCost } from './size.mjs';
 import { tryEmit } from './events.mjs';
+import { expandSecrets, redactSecrets } from '../adapters/web/redact.mjs';
 import { buildOrder, failureIds, featureAreas } from './areas.mjs';
 
 // Stack and build budgets come from <runDir>/size.json (floors 3 and 25 when there is none).
@@ -25,7 +26,9 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const KEEP_BODY = /json|image|font/i;
 
 // ---- golden filter ----
-export function filterGolden(src, dest) {
+// authValues: the typed sign-in values of run.json auth. A second guard behind the capture: any text file in the copy that still holds one
+// of them as a whole value is masked (screenshots and other images cannot be).
+export function filterGolden(src, dest, authValues = []) {
   fs.cpSync(src, dest, { recursive: true, filter: (s) => path.basename(s) !== 'run.json' || path.dirname(s) !== src });
   const har = path.join(dest, 'network.har');
   if (fs.existsSync(har)) {
@@ -53,6 +56,20 @@ export function filterGolden(src, dest) {
     }
   };
   walk(dest);
+  const secrets = expandSecrets(authValues);
+  if (secrets.length) {
+    const mask = (d) => {
+      for (const f of fs.readdirSync(d, { withFileTypes: true })) {
+        const p = path.join(d, f.name);
+        if (f.isDirectory()) mask(p);
+        else if (!IMG.test(f.name)) {
+          const t = fs.readFileSync(p, 'utf8'), m = redactSecrets(t, secrets);
+          if (m !== t) fs.writeFileSync(p, m);
+        }
+      }
+    };
+    mask(dest);
+  }
 }
 
 // ---- room ----
@@ -70,6 +87,13 @@ export function wallEvent(runDir, what, held, reason) {
   tryEmit(runDir, { kind: 'decision', what, choice: held ? 'held' : 'refused', reason });
 }
 
+function authValuesOf(runDir) {
+  try {
+    const steps = JSON.parse(fs.readFileSync(path.join(runDir, 'run.json'), 'utf8')).auth?.steps;
+    return Array.isArray(steps) ? steps.map((s) => s && s.type && s.type.text).filter((t) => typeof t === 'string' && t) : [];
+  } catch { return []; }
+}
+
 export function prepareRoom({ runDir, target, inputs }) {
   const work = path.join(runDir, 'work');
   const srcTexts = trackedTexts(work);
@@ -84,7 +108,7 @@ export function prepareRoom({ runDir, target, inputs }) {
   for (const f of inputs) {
     const s = path.join(runDir, f);
     if (!fs.existsSync(s)) continue;
-    if (f === 'golden') filterGolden(s, path.join(inp, 'golden'));
+    if (f === 'golden') filterGolden(s, path.join(inp, 'golden'), authValuesOf(runDir));
     else fs.copyFileSync(s, path.join(inp, f));
   }
   const forbidden = [...new Set([target, runDir, fs.realpathSync(target), fs.realpathSync(runDir)])];

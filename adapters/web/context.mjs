@@ -4,8 +4,17 @@ const SECRET_HEADERS = new Set(['authorization', 'proxy-authorization', 'cookie'
 const SECRET_PARAM = /token|key|secret|auth|pass|session|sig|code/i;
 const TOKEN_LIKE = [/\b(Bearer|Basic)\s+\S+/gi, /eyJ[\w-]+\.[\w-]+\.[\w-]*/g, /[A-Za-z0-9_\-+/=]{32,}/g];
 
-// Buttons, links and probe clicks that end the session or remove the account: never pressed or followed.
-export const SIGN_OUT_RE = /sign.?out|log.?out|log.?off|delete (my )?account/i;
+// Buttons, links and probe clicks that end the session or remove the account: never pressed or followed. Whole words and path
+// segments only: "Design outcomes", /catalog/outlet and /blog/outdoors are ordinary.
+const OUT = '(log|sign)[ _-]?(out|off)';
+const GONE = '(delete|remove|close|deactivate|terminate)';
+export const SIGN_OUT_PATH_RE = new RegExp(`(^|/)(${OUT.replace('[ _-]', '[_-]')})(/|$)`, 'i');
+export const SIGN_OUT_LABEL_RE = new RegExp(`\\b${OUT}\\b`, 'i');
+// Destructive account controls: only skipped when a session is in use (signed out they cannot be reached).
+export const DESTRUCTIVE_PATH_RE = new RegExp(`(^|/)(${GONE}[_-]?(my[_-])?(account|profile)|deactivate|account/${GONE})(/|$)`, 'i');
+export const DESTRUCTIVE_LABEL_RE = new RegExp(`\\b${GONE}\\b[^.]{0,30}\\b(account|profile)\\b|\\bdeactivate\\b`, 'i');
+export const endsSession = (label, signedIn = false) => SIGN_OUT_LABEL_RE.test(label) || (signedIn && DESTRUCTIVE_LABEL_RE.test(label));
+export const endsSessionPath = (p, signedIn = false) => SIGN_OUT_PATH_RE.test(p) || (signedIn && DESTRUCTIVE_PATH_RE.test(p));
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
