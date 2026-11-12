@@ -56,3 +56,11 @@ test('envOrigins keeps loopback http(s) URLs of run.json env, once, never the ap
   assert.deepEqual(envOrigins(env, 'http://127.0.0.1:3000'), ['http://127.0.0.1:54321', 'http://localhost:8080']);
   assert.deepEqual(envOrigins(undefined, 'http://127.0.0.1:3000'), []);
 });
+
+import { readFileSync } from 'node:fs';
+test('every makeContext call in capture.mjs that is not the sign-in passes the session and the env origins (#159)', () => {
+  const src = readFileSync(new URL('../capture.mjs', import.meta.url), 'utf8');
+  const calls = src.split('\n').filter((l) => l.includes('makeContext(browser'));
+  assert.ok(calls.length >= 4);
+  for (const l of calls) { assert.match(l, /allowOrigins/); assert.match(l, /storageState/); }
+});
