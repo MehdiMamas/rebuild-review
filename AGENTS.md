@@ -22,6 +22,8 @@ what it renders, then scores the rebuild against the original. See README.md.
 - Test: `cd adapters/web && pnpm test` (about 3 minutes). It runs seven numbered checks on a `bench:init` copy of `benchmark/`, never on the repo folder, and prints which planted defects the probes flagged.
 - `startApp` (`adapters/web/app.mjs`) stops a leftover of the app on the run's port when the listener's working folder is inside the run's work copy (agents exploring the app can leave one); any other listener, a missing `lsof` or Windows still refuses. Test: `node --test scripts/app-env.test.mjs`.
 - Gotcha: `work/` holds source, so the sandbox for the rebuild step (#7) must deny reads of it as well as the target.
+- Sign-in (#144): `run.json` `auth: { steps, expect? }` (`adapters/web/auth.mjs`); the session is in memory only, stand-in values only; `states.json` states stay signed out. `SIGN_OUT_RE` in `context.mjs` is the one pattern for controls never pressed (crawl buttons and links, probe clicks). `scripts/room.mjs` `copyEnv`/`dropEnv` handle `env` and `auth` apart; `scripts/events.mjs` masks `auth` typed values of 4+ characters. Parity tests and finders are not signed in yet.
+- Test: `cd adapters/web && node --test test/auth.test.mjs` (runs capture against `test/site-auth.mjs`, several minutes, needs Chromium; run it on `pc` with `xvfb-run -a`).
 
 ## Capture (Electron adapter)
 
