@@ -45,9 +45,9 @@ export async function startApp(run, appFile) {
     if (why) throw new Error(`refusing to start: something already answers on ${origin} (${why})`);
   }
   // Install, build and start the app in the work copy (never the target itself).
-  if (run.install) execSync(run.install, { cwd: workDir, stdio: 'inherit' });
+  if (run.install) execSync(run.install, { cwd: workDir, stdio: 'inherit', env: { ...process.env, ...run.env } });
   let buildMs = null;
-  if (run.build) { const t0 = Date.now(); execSync(run.build, { cwd: workDir, stdio: 'inherit' }); buildMs = Date.now() - t0; }
+  if (run.build) { const t0 = Date.now(); execSync(run.build, { cwd: workDir, stdio: 'inherit', env: { ...process.env, ...run.env } }); buildMs = Date.now() - t0; }
   const port = new URL(origin).port;
   const server = spawn(run.start, { cwd: workDir, shell: true, detached: true, stdio: 'ignore', env: { ...process.env, ...run.env, PORT: port } });
   const stop = () => { try { process.kill(-server.pid); } catch {} server.kill(); };
