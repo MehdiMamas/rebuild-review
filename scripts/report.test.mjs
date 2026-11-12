@@ -56,6 +56,21 @@ test('no score or no rebuild is leave', () => {
   }
 });
 
+test('a gate with no tests run gives no verdict', () => {
+  for (const rate of [null, undefined]) {
+    const v = verdict(sc({ gate: { passed: false, rate, failing: [] } }), T);
+    assert.equal(v.verdict, 'none');
+    assert.match(v.why, /no tests ran on the rebuild/);
+  }
+  assert.equal(verdict(sc({ gate: { passed: false, rate: 0, failing: [] } }), T).verdict, 'port');
+  const d = makeRun({ actions: [] });
+  w(path.join(d, 'score/score.json'), sc({ gate: { passed: false, rate: null, failing: [] } }));
+  const html = render(d, { thresholds: T });
+  assert.match(html, /badge none">no verdict</);
+  assert.match(html, /no verdict: no tests ran on the rebuild/i);
+  assert.doesNotMatch(html, /badge (adopt|port|leave)/);
+});
+
 test('check-actions drops each false citation and keeps real ones', () => {
   const d = makeRun();
   w(path.join(d, 'golden/screens/home/a.png'), 'x');
