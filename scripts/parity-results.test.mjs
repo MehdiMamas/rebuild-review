@@ -184,6 +184,23 @@ test('prep keeps the path, query and hash and a non-http scheme', async () => {
   assert.equal(JSON.parse(fs.readFileSync(rb, 'utf8')).address, `ws://localhost:${port}/app?x=1#h`);
 });
 
+test('prep keeps a query-only or hash-only address without adding a slash', async () => {
+  for (const [a, tail] of [['http://h:3000?x=1', '?x=1'], ['http://h:3000#f', '#f'], ['http://h:3000', ''], ['http://h:3000/', '/']]) {
+    const par = prepDir(), rb = path.join(par, 'rb.json');
+    fs.writeFileSync(rb, JSON.stringify({ address: a }));
+    const { port } = await prep(par, rb);
+    assert.equal(JSON.parse(fs.readFileSync(rb, 'utf8')).address, `http://h:${port}${tail}`);
+  }
+});
+
+test('prep refuses an address where the port cannot be set', async () => {
+  for (const a of ['localhost:3000', 'file:///x', 'mailto:a@b.c']) {
+    const par = prepDir(), rb = path.join(par, 'rb.json');
+    fs.writeFileSync(rb, JSON.stringify({ address: a }));
+    await assert.rejects(prep(par, rb), /URL with host and port|not a URL/, a);
+  }
+});
+
 test('prep leaves a run file with no address alone', async () => {
   const par = prepDir(), rb = path.join(par, 'rb.json'), text = JSON.stringify({ command: ['app'] });
   fs.writeFileSync(rb, text);
@@ -210,6 +227,8 @@ test('the workflow runs prep in code and a prep failure throws, never "would not
   const wf = fs.readFileSync(new URL('../workflows/rebuild-review.js', import.meta.url), 'utf8');
   assert.match(wf, /\.mjs'\)\} prep \$\{q\(PAR\)\}/);
   assert.match(wf, /throw new Error\(`Parity: preparing the rebuild run failed/);
+  assert.match(wf, /if \(r\.state === 'lost' && \/\^could not start\/\.test\(String\(r\.tail\)\)\) throw new Error\(`Parity: starting the rebuild run failed: \$\{r\.tail\}`\)/);
+  assert.match(wf, /still running after 8 hours of waiting/);
   assert.doesNotMatch(wf, /Delete \$\{q\(PAR \+ '\/rebuild\.json'\)\}/);
 });
 
@@ -221,6 +240,10 @@ test('run-error text comes from the long-run files: exit code and log tail, or l
   fs.rmSync(path.join(dir, 'r.exit'));
   assert.match(runErrorText(dir, 'r'), /^the command was lost: /);
   assert.equal(runErrorText(dir, 'none'), 'the command was lost (no output)');
-  assert.equal(runErrorText(dir, 'none', 'could not start'), 'could not start (no output)');
-  assert.match(runErrorText(dir, 'r', 'still running after 8 hours of waiting'), /^still running after 8 hours of waiting: a\n/);
+  fs.writeFileSync(path.join(dir, 'r.exit'), '');
+  assert.match(runErrorText(dir, 'r'), /^the command was lost: /);
+  fs.writeFileSync(path.join(dir, 'r.exit'), '1\n');
+  assert.match(runErrorText(dir, 'r'), /^exit code 1: /);
+  assert.equal(runErrorText(dir, 'none', 'lost'), 'lost (no output)');
+  assert.match(runErrorText(dir, 'r', 'timed out: still running after 8 hours of waiting'), /^timed out: still running after 8 hours of waiting: a\n/);
 });

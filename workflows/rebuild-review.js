@@ -262,7 +262,9 @@ A feature marked "keep" gets a test asserting the behaviour. A feature marked "d
       if (!p || !p.ok) throw new Error(`Parity: preparing the rebuild run failed: ${(p && p.detail) || 'agent died'}`)
       const r = await longRun(label, `node ${q(adir + '/parity.mjs')} --app ${q(RB)} --tests ${q(TESTS)} --out ${q(PAR + '/rebuild.json')}`, label, 'Parity')
       if (exitedOk(r)) return { ok: true }
-      const w = await agent(`Run exactly: node ${q(pluginRoot + '/scripts/parity-results.mjs')} run-error ${q(PAR)} ${q(LONG_DIR)} ${q(label)} ${q(String(r.state).replace(/[^a-z0-9 :.,-]/gi, ''))} . Return ok true if it exited 0, otherwise ok false with its error output as detail. Change nothing else.`, { ...CHEAP, label: `${label}-error`, phase: 'Parity', schema: RUN_RESULT })
+      if (r.state === 'lost' && /^could not start/.test(String(r.tail))) throw new Error(`Parity: starting the rebuild run failed: ${r.tail}`)
+      const stateWord = /^still running after/.test(String(r.tail)) ? `timed out: ${r.tail}` : r.state
+      const w = await agent(`Run exactly: node ${q(pluginRoot + '/scripts/parity-results.mjs')} run-error ${q(PAR)} ${q(LONG_DIR)} ${q(label)} ${q(String(stateWord).replace(/[^a-z0-9 :.,-]/gi, ''))} . Return ok true if it exited 0, otherwise ok false with its error output as detail. Change nothing else.`, { ...CHEAP, label: `${label}-error`, phase: 'Parity', schema: RUN_RESULT })
       if (!w || !w.ok) throw new Error(`Parity: could not record why the rebuild would not start: ${(w && w.detail) || 'agent died'}`)
       return { ok: false }
     }

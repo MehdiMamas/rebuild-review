@@ -136,7 +136,12 @@ export async function prep(parDir, rbFile) {
   try { url = new URL(run.address); } catch { throw new Error(`the address in ${rbFile} is not a URL: ${run.address}`); }
   const port = await freePort();
   url.port = String(port);
-  run.address = url.href.endsWith('/') && !run.address.endsWith('/') ? url.href.slice(0, -1) : url.href;
+  if (url.port !== String(port)) throw new Error(`the address in ${rbFile} must be a URL with host and port (like http://localhost:3000): ${run.address}`);
+  // Keep the original text except the port: URL adds a "/" before "?", "#" or the end when the original had none.
+  const afterAuthority = run.address.replace(/^[^:]*:\/\/[^/?#]*/, '');
+  let href = url.href;
+  if (!/^\//.test(afterAuthority)) href = href.replace(/^([^:]*:\/\/[^/?#]*)\//, '$1');
+  run.address = href;
   try { fs.writeFileSync(rbFile, JSON.stringify(run, null, 2) + '\n'); } catch (e) { throw new Error(`cannot write ${rbFile}: ${e.message}`); }
   return { port };
 }
@@ -146,7 +151,7 @@ export async function prep(parDir, rbFile) {
 // state is the longRun state word from the workflow (exited, lost, could not start, ...), never log text.
 export function runErrorText(longDir, name, state = 'exited') {
   let code = null, tail = '';
-  try { code = Number(fs.readFileSync(path.join(longDir, `${name}.exit`), 'utf8').trim()); } catch {}
+  try { const t = fs.readFileSync(path.join(longDir, `${name}.exit`), 'utf8').trim(); if (/^-?\d+$/.test(t)) code = Number(t); } catch {}
   try { tail = fs.readFileSync(path.join(longDir, `${name}.log`), 'utf8').slice(-4000).split('\n').slice(-20).join('\n').trim(); } catch {}
   const head = state !== 'exited' ? String(state) : code === null || Number.isNaN(code) ? 'the command was lost' : `exit code ${code}`;
   return tail ? `${head}: ${tail}` : `${head} (no output)`;
