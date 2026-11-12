@@ -69,6 +69,9 @@ test('a gate with no tests run gives no verdict', () => {
   assert.match(html, /badge none">no verdict</);
   assert.match(html, /no verdict: no tests ran on the rebuild/i);
   assert.doesNotMatch(html, /badge (adopt|port|leave)/);
+  const d2 = makeRun({ actions: [{ title: 'Some proposed action', evidence: [] }] });
+  w(path.join(d2, 'score/score.json'), sc({ gate: { passed: false, rate: null, failing: [] } }));
+  assert.match(render(d2, { thresholds: T }), /Do this first:<\/strong> Get the parity tests to run/);
 });
 
 test('check-actions drops each false citation and keeps real ones', () => {

@@ -223,7 +223,7 @@ export function render(runDir, { embedCap = EMBED_CAP, thresholds, stopped } = {
     ? `<p><strong>Base:</strong> ${esc(baseInfo.kind)}, ${esc(baseInfo.upstream.url)} at ${esc(baseInfo.upstream.ref)} (commit ${esc(String(baseInfo.upstream.commit).slice(0, 12))}). Found by: ${esc((baseInfo.evidence || []).join('; ') || 'a pinned answer')}. The rebuild is built on that base; code metrics count only the app's own code (${esc(baseInfo.ownLines)} source lines in ${esc((baseInfo.ownPaths || []).length)} files).</p>`
     : '<p><strong>Base:</strong> none (the whole app was rebuilt).</p>';
   sec('verdict', 'Verdict', `<p><span class="badge ${v.verdict}">${esc(v.verdict === 'none' ? 'no verdict' : v.verdict)}</span></p><p>${esc(v.why)}</p>` + confHtml +
-    baseHtml + `<div class="card"><strong>Do this first:</strong> ${esc(actions.length ? actions[0].title : FIRST[v.verdict])}</div>`);
+    baseHtml + `<div class="card"><strong>Do this first:</strong> ${esc(actions.length && v.verdict !== 'none' ? actions[0].title : FIRST[v.verdict])}</div>`);
 
   // 2 Scores, gate beside them
   if (score && score.values) {

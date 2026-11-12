@@ -265,7 +265,7 @@ function render(s){
   s.shots.slice(0,24).forEach(function(p){var f=el('figure'),i=el('img');i.src=url('/file',p);i.alt=p;i.loading='lazy';f.appendChild(i);f.appendChild(el('figcaption','mut',p));sh.appendChild(f)});
   var v=$('s-verdict');
   if(s.verdict||s.overall!==null){v.hidden=false;var vd=$('verdict');vd.textContent='';
-    if(s.verdict){vd.appendChild(el('div',null,s.verdict.choice));vd.appendChild(el('div','mut',s.verdict.reason||''))}
+    if(s.verdict){vd.appendChild(el('div',null,s.verdict.choice==='none'?'no verdict':s.verdict.choice));vd.appendChild(el('div','mut',s.verdict.reason||''))}
     if(s.overall!==null)vd.appendChild(el('div','mut','Overall '+s.overall+(s.gate===null?'':'; gate '+(s.gate?'passed':'failed'))))}
   else v.hidden=true;
 }
