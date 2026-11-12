@@ -70,6 +70,18 @@ const isApi = (r) => isDataRequest(r.request());
 // faults (mutable): { slowMs: delay every fetch/xhr, failApi: answer every fetch/xhr with 500 }
 // storageState: a Playwright storage state, a file path or an object (a signed-in session). allowOrigins: other origins let through.
 // onBlocked(url): called for each blocked request (the url is redacted). timeout / navTimeout: context defaults in ms.
+// Origins of the stand-in services named in run.json "env" (a local Supabase, a mock API): http(s) URLs on a loopback host, other than the app's own origin.
+export function envOrigins(env, appOrigin) {
+  const out = new Set();
+  for (const v of Object.values(env && typeof env === 'object' ? env : {})) {
+    let u;
+    try { u = new URL(String(v)); } catch { continue; }
+    if (!/^https?:$/.test(u.protocol) || !['localhost', '127.0.0.1', '[::1]'].includes(u.hostname) || u.origin === appOrigin) continue;
+    out.add(u.origin);
+  }
+  return [...out];
+}
+
 export async function makeContext(browser, origin, { viewport, colorScheme = 'light', faults = {}, storageState, allowOrigins = [], onBlocked, timeout, navTimeout, mobile = false, touch = false } = {}) {
   const context = await browser.newContext({ viewport, colorScheme, isMobile: mobile, hasTouch: touch, ...(storageState ? { storageState } : {}) });
   if (timeout) context.setDefaultTimeout(timeout);

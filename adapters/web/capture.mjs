@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { chromium } from 'playwright';
 import { launchChromium } from './browser.mjs';
-import { makeContext, runStep, sleep, scrub, endsSession, endsSessionPath } from './context.mjs';
+import { makeContext, envOrigins, runStep, sleep, scrub, endsSession, endsSessionPath } from './context.mjs';
 import { validateAuth, authSecrets, redactSecrets, signIn, LOGIN_RE } from './auth.mjs';
 import { startApp } from './app.mjs';
 import { runProbes } from './probes.mjs';
@@ -48,9 +48,10 @@ function collect(rec) {
 
 // 0. Sign in once (optional). The session is kept in memory and given to the crawl, the screen shots and the probes.
 let storageState;
+const allowOrigins = envOrigins(run.env, origin);
 const authInfo = { given: run.auth !== undefined, signedIn: false };
 if (authInfo.given) {
-  const r = await signIn(browser, origin, run.auth);
+  const r = await signIn(browser, origin, run.auth, allowOrigins);
   if (r.ok) { storageState = r.storageState; authInfo.signedIn = true; }
   else { authInfo.reason = r.reason; notCaptured.push(`sign-in failed, captured signed out: ${r.reason}`); }
 }
@@ -59,7 +60,7 @@ if (authInfo.given) {
 const start = new URL(run.address).toString();
 const queue = [start], seen = new Map();
 {
-  const { context, rec } = await makeContext(browser, origin, { viewport: { width: 1440, height: 900 }, storageState });
+  const { context, rec } = await makeContext(browser, origin, { viewport: { width: 1440, height: 900 }, storageState, allowOrigins });
   const page = await context.newPage();
   const counts = new Map(), seenKey = (u) => new URL(u).pathname + new URL(u).search;
   while (queue.length) {
@@ -116,7 +117,7 @@ for (const s of screens) { let id = s.id, n = 2; while (ids.has(id)) id = `${s.i
 for (const s of screens) {
   const dir = path.join(out, 'screens', s.id);
   for (const size of SIZES) for (const theme of THEMES) {
-    const { context, rec } = await makeContext(browser, origin, { viewport: { width: size.w, height: size.h }, colorScheme: theme, storageState });
+    const { context, rec } = await makeContext(browser, origin, { viewport: { width: size.w, height: size.h }, colorScheme: theme, storageState, allowOrigins });
     const page = await context.newPage();
     try {
       await page.goto(new URL(s.url, origin).toString());
@@ -143,7 +144,7 @@ for (const s of screens) {
 const stateIds = [];
 if (statesFile) {
   for (const st of JSON.parse(fs.readFileSync(path.resolve(statesFile), 'utf8'))) {
-    const { context, rec } = await makeContext(browser, origin, { viewport: { width: 1440, height: 900 } });
+    const { context, rec } = await makeContext(browser, origin, { viewport: { width: 1440, height: 900 }, allowOrigins });
     const page = await context.newPage();
     try {
       for (const step of st.steps) await runStep(page, origin, step);
@@ -161,13 +162,13 @@ if (statesFile) {
 // A fresh context per call: it blocks the outside, records, and goto()s the screen's address.
 const open = async (s, { width = 1440, height = 900, colorScheme = 'light' } = {}) => {
   const faults = {};
-  const { context, rec } = await makeContext(browser, origin, { viewport: { width, height }, colorScheme, faults, storageState });
+  const { context, rec } = await makeContext(browser, origin, { viewport: { width, height }, colorScheme, faults, storageState, allowOrigins });
   const page = await context.newPage();
   return { page, rec, faults, close: () => context.close(), go: () => page.goto(new URL(s.url, origin).toString(), { waitUntil: 'load' }) };
 };
 const notChecked = [];
 const probeSkipped = [];
-const probes = await runProbes({ notChecked, browser, origin, screens, timings, storageState, labelFilter: (l) => !endsSession(l, authInfo.signedIn), skipped: probeSkipped });
+const probes = await runProbes({ notChecked, browser, origin, screens, timings, storageState, allowOrigins, labelFilter: (l) => !endsSession(l, authInfo.signedIn), skipped: probeSkipped });
 for (const x of probeSkipped) if (!signOutSkipped.some((y) => y.screen === x.route && y.label === x.label)) { signOutSkipped.push({ screen: x.route, label: x.label }); notCaptured.push(`${x.route}: button "${x.label}" not pressed by a probe (it would end the session or remove the account)`); }
 const a11y = await measureScreens({ notChecked, open, screens, timings, probes });
 if (buildMs !== null) timings.push({ name: 'build-ms', value: buildMs, unit: 'ms' });

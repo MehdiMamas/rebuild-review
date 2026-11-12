@@ -31,12 +31,12 @@ export function validateAuth(auth) {
 
 // Runs the steps once in a fresh context that is not recorded (its requests, console and blocked lists stay out of golden/;
 // the sign-in request is the one that carries the password). { ok: true, storageState } or { ok: false, reason }.
-export async function signIn(browser, origin, auth) {
+export async function signIn(browser, origin, auth, allowOrigins = []) {
   const secrets = authSecrets(auth);
   const clean = (m) => redactSecrets(scrub(String(m).split('\n')[0]), secrets);
   let context, n = 0, kind = '';
   try {
-    ({ context } = await makeContext(browser, origin, { viewport: { width: 1440, height: 900 } }));
+    ({ context } = await makeContext(browser, origin, { viewport: { width: 1440, height: 900 }, allowOrigins }));
     const page = await context.newPage();
     const pwVisible = async () => (await page.locator('input[type=password]:visible').count().catch(() => 0)) > 0;
     let formPath = null; // the route where a password field was last seen: the sign-in form (after a sign-up, the sign-in step that follows)
