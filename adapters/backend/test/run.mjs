@@ -782,11 +782,11 @@ const ctx = prepare(JSON.parse(fs.readFileSync(process.env.APP_RUN, 'utf8')), pr
     fs.writeFileSync(path.join(tests, 'F-001.test.mjs'), body(false));
     fs.writeFileSync(path.join(tests, 'F-002.test.mjs'), body(true));
     const mark = fakeLog().length;
-    const pr = await runNode('parity.mjs', ['--app', r.file, '--tests', tests, '--out', path.join(r.dir, 'results.json')]);
+    const pr = await runNode('parity.mjs', ['--app', r.file, '--tests', tests, '--out', path.join(r.dir, 'results.json')], { RR_CONTAINER: fakeBin, RR_FAKE_DIR: fakeDir });
     const res = readJson(path.join(r.dir, 'results.json')) || [];
     const started = fakeLog().slice(mark).filter((a) => a[0] === 'run').length;
     const first = res.find((x) => x.feature === 'F-001');
-    check(26, 'two parity tests that each start the service leave no container behind', pr.code === 0 && first && first.passed && started === 2 && left() === 0, [`parity exited ${pr.code}: ${pr.text.trim().split('\n').pop()}`, `containers started: ${started}; left after the suite: ${left()}`]);
+    check(26, 'two parity tests that each start the service leave no container behind', pr.code === 0 && first && first.passed && started === 2 && left() === 0, [`parity exited ${pr.code}: ${pr.text.trim().split('\n').slice(-4).join(' | ')}`, `containers started: ${started}; left after the suite: ${left()}`]);
   }
 
   // 27: a real runtime, by hand
