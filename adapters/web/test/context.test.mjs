@@ -49,3 +49,10 @@ test('locate waits for an element that renders after the load event, and still f
     await browser.close();
   }
 });
+
+import { envOrigins } from '../context.mjs';
+test('envOrigins keeps loopback http(s) URLs of run.json env, once, never the app origin or remote hosts (#157)', () => {
+  const env = { A: 'http://127.0.0.1:54321', B: 'http://127.0.0.1:54321/rest/v1', C: 'http://127.0.0.1:3000', D: 'https://x.supabase.co', E: 'not a url', F: 'sk-123', G: 'http://localhost:8080/x' };
+  assert.deepEqual(envOrigins(env, 'http://127.0.0.1:3000'), ['http://127.0.0.1:54321', 'http://localhost:8080']);
+  assert.deepEqual(envOrigins(undefined, 'http://127.0.0.1:3000'), []);
+});
