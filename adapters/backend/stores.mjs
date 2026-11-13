@@ -212,7 +212,7 @@ export async function startStores(ctx) {
       if (rr.status !== 0) throw new Error(`store "${st.name}": could not start its container: ${lastLine(rr)}`);
       const ins = rtRun(s.rt, ['inspect', '--format', '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}', cname]);
       const addr = ins.status === 0 ? ins.stdout.trim() : '';
-      if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(addr)) throw new Error(`store "${st.name}": no address for its container${ins.status === 0 ? '' : ': ' + lastLine(ins)}`);
+      if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(addr)) throw new Error(`store "${st.name}": no address for its container (it probably exited at once): ${logTail(s, cname)}${ins.status === 0 ? '' : ' | ' + lastLine(ins)}`);
       s.addrs[i] = addr;
       await waitStoreReady(s, st, cname, addr);
     }
