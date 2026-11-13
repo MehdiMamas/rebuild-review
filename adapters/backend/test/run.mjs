@@ -591,11 +591,12 @@ const ctx = prepare(JSON.parse(fs.readFileSync(process.env.APP_RUN, 'utf8')), pr
     check(14, 'a run.env that names a store port not in stores is a service error, not a hang', g.status === 502 && /store:/.test(JSON.stringify(g.body)) && ms < 15000, [`answer ${g.status} ${JSON.stringify(g.body)} after ${ms} ms`]);
   }
 
-  // 15, 16, 17: containers that do not come up
+  // 15, 16, 17, 30: containers that do not come up
   for (const [n, name, vars, storeExtra, want] of [
     [15, 'a container that never becomes ready stops the start, removes everything, and the error names the store and its last log lines', { RR_FAKE_NEVER_READY: '1', RR_STORE_READY_MS: '2500' }, {}, [/store "kv" did not become ready within 3 s/, /still initialising database/]],
     [16, 'a ready command that hangs ends at the ready limit and everything is removed', { RR_STORE_READY_MS: '2500' }, { ready: ['hang'] }, [/store "kv" did not become ready/]],
     [17, 'a container that exits at once after run: the error names the store and its last log lines', { RR_FAKE_EXIT_AT_ONCE: '1' }, {}, [/store "kv" exited before it was ready/, /data directory is not writable/]],
+    [30, 'a container whose inspect gives no address stops the start with an error naming the store, and everything is removed', { RR_FAKE_NO_ADDRESS: '1' }, {}, [/store "kv": no address for its container \(it probably exited at once\)/]],
   ]) {
     if (!linux) { skip(n, name, 'Linux only'); continue; }
     const r = await kvRun(`run-down-${n}`, {}, storeExtra);

@@ -1,7 +1,7 @@
 // A stand-in for docker, used through RR_CONTAINER. It keeps its state and a log of every call in RR_FAKE_DIR.
 // Commands: version, info, pull, network create|rm|ls|inspect, run, inspect, logs, rm, exec, ps. A "container" is a tiny TCP key/value server on 127.0.0.2:<port> (the port comes from the label rr-port that every run carries).
 // Its server speaks lines: "GET k" answers the value and a newline, "SET k v" answers OK.
-// Switches (read from the environment of the call): RR_FAKE_PULL_FAIL=1 (pull fails), RR_FAKE_NEVER_READY=1 (the container runs and never listens), RR_FAKE_EXIT_AT_ONCE=1 (the container exits at once), RR_FAKE_ROOTLESS=1 (info says rootless).
+// Switches (read from the environment of the call): RR_FAKE_PULL_FAIL=1 (pull fails), RR_FAKE_NEVER_READY=1 (the container runs and never listens), RR_FAKE_EXIT_AT_ONCE=1 (the container exits at once), RR_FAKE_ROOTLESS=1 (info says rootless), RR_FAKE_NO_ADDRESS=1 (inspect prints no address).
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
@@ -93,6 +93,7 @@ if (argv[0] === '--serve') {
     const f = flag('--format') || flag('-f') || '';
     if (f.includes('State')) out(String(alive(c.pid)));
     else if (f.includes('rr-owner')) out(`${c.labels['rr-owner']} ${c.labels['rr-host']} ${new Date(c.created).toISOString()}`);
+    else if (process.env.RR_FAKE_NO_ADDRESS) out('');
     else out('127.0.0.2');
   } else if (cmd === 'logs') {
     const c = st.containers[argv[argv.length - 1]];
