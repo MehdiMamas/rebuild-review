@@ -349,7 +349,7 @@ test('prepareRoom gives the committed project only: no ignored files, no uncommi
   fs.mkdirSync(path.join(proj, 'node_modules')); fs.writeFileSync(path.join(proj, 'node_modules', 'x.js'), 'x');
   fs.writeFileSync(path.join(proj, 'dirty.js'), 'd');
   execFileSync('git', ['-C', proj, 'remote', 'add', 'origin', runDir]);
-  fs.cpSync(proj, path.join(runDir, 'project'), { recursive: true });
+  execFileSync('git', ['clone', '-q', proj, path.join(runDir, 'project')]);
   const room = prepareRoom({ runDir, target, inputs: ['features.md'] });
   const p = path.join(room, 'project');
   assert.equal(fs.existsSync(path.join(p, 'a.js')), true);
@@ -363,7 +363,7 @@ test('env written by copyEnv stays out of the room, a dirty rebuild-run.json doe
   const { target, runDir } = makeRun('F-001 A user sees a list.\n');
   fs.writeFileSync(path.join(runDir, 'run.json'), JSON.stringify({ start: 'y', env: { SETTING: 'stand-in' } }));
   const proj = repo({ 'rebuild-run.json': JSON.stringify({ start: 'x', dir: '.' }) });
-  fs.cpSync(proj, path.join(runDir, 'project'), { recursive: true });
+  execFileSync('git', ['clone', '-q', proj, path.join(runDir, 'project')]);
   copyEnv(runDir);
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(runDir, 'project', 'rebuild-run.json'), 'utf8')).env, { SETTING: 'stand-in' });
   const room = prepareRoom({ runDir, target, inputs: ['features.md'] });
@@ -382,7 +382,7 @@ test('copyEnv copies stores without env, and a delivered rebuild-run.json keeps 
   fs.writeFileSync(path.join(runDir, 'run.json'), JSON.stringify({ start: 'y', stores }));
   // the committed file may name the stores with their env (a later round); the room's clone is committed state, and dropEnv strips the env from it
   const proj = repo({ 'rebuild-run.json': JSON.stringify({ start: 'x', dir: '.', stores }) });
-  fs.cpSync(proj, path.join(runDir, 'project'), { recursive: true });
+  execFileSync('git', ['clone', '-q', proj, path.join(runDir, 'project')]);
   fs.writeFileSync(path.join(runDir, 'project', 'rebuild-run.json'), JSON.stringify({ start: 'x', dir: '.' }));
   copyEnv(runDir);
   const delivered = JSON.parse(fs.readFileSync(path.join(runDir, 'project', 'rebuild-run.json'), 'utf8'));
@@ -518,7 +518,7 @@ test('given auth in run.json and a finished build -> copyEnv puts auth in rebuil
   const auth = { steps: [{ open: '/login' }, { type: { into: 'Password', text: 'stand-in-pw-1' } }] };
   fs.writeFileSync(path.join(runDir, 'run.json'), JSON.stringify({ start: 'y', auth }));
   const proj = repo({ 'rebuild-run.json': JSON.stringify({ start: 'x', dir: '.' }) });
-  fs.cpSync(proj, path.join(runDir, 'project'), { recursive: true });
+  execFileSync('git', ['clone', '-q', proj, path.join(runDir, 'project')]);
   copyEnv(runDir);
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(runDir, 'project', 'rebuild-run.json'), 'utf8')).auth, auth);
   const room = prepareRoom({ runDir, target, inputs: ['features.md'] });
