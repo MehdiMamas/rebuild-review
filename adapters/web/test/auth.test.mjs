@@ -276,6 +276,10 @@ test('given a screen that redirects to the sign-in page when shot while signed i
   const nc = json(path.join(c.golden, 'probes-not-checked.json')).filter((r) => r.route === '/flaky');
   assert.ok(nc.length && nc.every((r) => /session lost/.test(r.reason)), JSON.stringify(nc));
   assert.ok(json(path.join(c.golden, 'probes.json')).every((p) => p.screen !== 'flaky' && p.screen !== '/flaky'), 'a probe ran on the sign-in page');
+  const tm = json(path.join(c.golden, 'timings.json')).filter((t) => t.name.startsWith('flaky.') && !/(domContentLoaded|load)$/.test(t.name));
+  assert.deepEqual(tm, [], 'a measurement was filed under the lost screen');
+  assert.ok(json(path.join(c.golden, 'a11y-violations.json')).filter((a) => a.screen === 'flaky').every((a) => a.error && a.violations.length === 0));
+  assert.ok(!json(path.join(c.golden, 'manifest.json')).screens.some((x) => x.url === '/flaky'));
   assert.ok(!v.screensCapturedWithSession.includes('/flaky'), JSON.stringify(v.screensCapturedWithSession));
   assert.ok(json(path.join(c.golden, 'manifest.json')).notCaptured.some((n) => /^flaky .*session lost/.test(n)));
   assert.ok(files(c.golden).every((f) => !/\.(html|json|png)$/.test(f) || !fs.readFileSync(f).includes('Sign in</h1>') || f.includes('login')), 'a sign-in page was kept as a signed-in screen');

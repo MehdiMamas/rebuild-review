@@ -168,7 +168,7 @@ const open = async (s, { width = 1440, height = 900, colorScheme = 'light' } = {
   const faults = {};
   const { context, rec } = await makeContext(browser, origin, { viewport: { width, height }, colorScheme, faults, storageState, allowOrigins });
   const page = await context.newPage();
-  return { page, rec, faults, close: () => context.close(), go: () => page.goto(new URL(s.url, origin).toString(), { waitUntil: 'load' }) };
+  return { page, rec, faults, close: () => context.close(), go: async () => { await page.goto(new URL(s.url, origin).toString(), { waitUntil: 'load' }); if (landedOnSignIn(new URL(s.url, origin), page.url(), authInfo.signedIn)) { sessionLost.add(s.url); throw new Error(`redirected to ${new URL(page.url()).pathname} while signed in, session lost`); } } };
 };
 const notChecked = [];
 const probeSkipped = [];
@@ -181,12 +181,14 @@ stop();
 
 let appVersion = run.appVersion || null;
 if (!appVersion) try { appVersion = JSON.parse(fs.readFileSync(path.join(workDir, 'package.json'), 'utf8')).version || null; } catch {}
+// A screen whose session was lost at any shot keeps no folder: a half set of shots would mix real pages with nothing.
+for (const s of screens) if (sessionLost.has(s.url)) fs.rmSync(path.join(out, 'screens', s.id), { recursive: true, force: true });
 const behind = [...behindSignIn].sort(), refused = [...refusedSignedIn].sort();
 if (refused.length) notCaptured.push(`refused (401/403) while signed in, not captured: ${refused.join(', ')}`);
 if (behind.length) notCaptured.push(`behind a sign-in, not captured: ${behind.join(', ')}`);
 write(path.join(out, 'manifest.json'), R({
   platform: 'web', appVersion, address: run.address,
-  screens: screens.map(({ id, url, title }) => ({ id, url, title })),
+  screens: screens.filter((s) => !sessionLost.has(s.url)).map(({ id, url, title }) => ({ id, url, title })),
   states: stateIds,
   blockedRequests: [...blocked].sort(),
   notCaptured: [...notCaptured, ...notChecked.map((r) => scrub(`${r.probe} ${r.route}: ${r.reason}`))],

@@ -162,6 +162,14 @@ test('coverage lists the routes behind a sign-in, with the reason and the signed
   assert.ok(!plain.notReached.some((x) => /sign-in/.test(x)));
 });
 
+test('coverage prints behind-a-sign-in routes with their query text and lists sessionLost', () => {
+  const run = scoredRun();
+  fs.writeFileSync(path.join(run, 'golden', 'coverage.json'), JSON.stringify({ screensReached: ['/'], screensCut: [], buttonsSkipped: [], harEntriesSkipped: 0, auth: { given: true, signedIn: true }, behindSignIn: ['/items/1?tab=private'], sessionLost: ['/items/2?tab=a'], screensCapturedWithSession: ['/'] }));
+  const c = coverage(run);
+  assert.ok(c.notReached.includes('behind a sign-in, not reached: /items/1?tab=private'), c.notReached.join(' | '));
+  assert.ok(c.notReached.includes('session lost while signed in, not captured: /items/2?tab=a'), c.notReached.join(' | '));
+});
+
 test('weigh: one area is unchanged; several are weighted by counted lines; collate weighs the areas', () => {
   const part = (delta, overall, count) => ({ overall, values: { ux: { delta, measured: [], judged: { delta, count }, notMeasured: [] } } });
   const one = part(0.2, 20, 3);
