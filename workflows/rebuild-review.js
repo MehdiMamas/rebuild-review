@@ -405,10 +405,12 @@ const reportStep = (cmd, label) => agent(`Run exactly: ${cmd} . Return ok true w
 
 async function runReport() {
   // Agent spend is a note, not a result: a failure here must not fail the Report phase, but it is never silent (#171): cost.json gets a notCounted line, which the report shows.
+  // The attempt id is written to cost.json only by a successful run of this step, so a cost.json left by an earlier run never hides a failure.
+  const attempt = `a${Math.random().toString(36).slice(2, 10)}`
   const costCmd = `node ${q(`${pluginRoot}/scripts/agent-cost.mjs`)} ${q(runDir)}`
   let costOk = false
-  try { const c = await reportStep(costCmd, 'agent-cost'); costOk = !!(c && c.ok) } catch { /* noted below */ }
-  if (!costOk) { try { await reportStep(`${costCmd} --failed`, 'agent-cost-failed') } catch { /* nothing more can be done */ } }
+  try { const c = await reportStep(`${costCmd} --attempt ${attempt}`, 'agent-cost'); costOk = !!(c && c.ok) } catch { /* noted below */ }
+  if (!costOk) { try { await reportStep(`${costCmd} --failed --attempt ${attempt}`, 'agent-cost-failed') } catch { /* nothing more can be done */ } }
   const cv = await reportStep(`node ${q(`${pluginRoot}/scripts/areas.mjs`)} coverage ${q(runDir)}`, 'coverage')
   if (!cv || !cv.ok) throw new Error(`Report: coverage failed: ${(cv && cv.detail) || 'agent died'}`)
   const v = await reportStep(`${REPORT} verdict ${q(runDir)}`, 'verdict')

@@ -120,6 +120,7 @@ const mtimeOf = (f) => { try { return fs.statSync(f).mtimeMs; } catch { return 0
 // whose newest transcript is older than it, and inside a kept folder only the transcripts written since are searched for the run folder.
 export function collect(runDir, root, since = runStart(path.resolve(runDir))) {
   const out = [];
+  let timeSkipped = 0;
   const floor = since == null ? null : since - SLACK_MS;
   const re = runRe(path.resolve(runDir));
   for (const proj of subdirs(path.join(root, 'projects'))) for (const sess of subdirs(proj)) {
@@ -127,7 +128,7 @@ export function collect(runDir, root, since = runStart(path.resolve(runDir))) {
       let names; try { names = fs.readdirSync(wf).filter((f) => /^agent-.*\.jsonl$/.test(f)); } catch { continue; }
       const files = names.map((n) => path.join(wf, n));
       const recent = floor == null ? files : files.filter((f) => mtimeOf(f) >= floor);
-      if (!recent.length) continue;
+      if (!recent.length) { timeSkipped++; continue; }
       const mine = recent.some((f) => namesRun(f, re, path.resolve(runDir).length * 4 + 16));
       if (!mine) continue;
       for (const file of files) {
@@ -136,6 +137,8 @@ export function collect(runDir, root, since = runStart(path.resolve(runDir))) {
       }
     }
   }
+  // A restored or copied run folder can be newer than every transcript: if the time filter dropped folders and nothing matched, scan without it.
+  if (!out.length && timeSkipped && floor != null) return collect(runDir, root, null);
   return out;
 }
 
@@ -168,9 +171,12 @@ if (process.argv[1] && fs.realpathSync(process.argv[1]) === fs.realpathSync(file
   const fi = argv.indexOf('--failed'); // the workflow could not run the step: say so in cost.json instead of staying silent (#171)
   if (fi >= 0) {
     argv.splice(fi, 1);
-    if (!argv[0]) { console.error('usage: node scripts/agent-cost.mjs <runDir> --failed'); process.exit(2); }
+    const ai = argv.indexOf('--attempt'), attempt = ai >= 0 ? argv[ai + 1] : null;
+    if (ai >= 0) argv.splice(ai, 2);
+    if (!argv[0]) { console.error('usage: node scripts/agent-cost.mjs <runDir> --failed [--attempt id]'); process.exit(2); }
     let done = null; try { done = JSON.parse(fs.readFileSync(path.join(path.resolve(argv[0]), 'cost.json'), 'utf8')); } catch { /* not written */ }
-    if (done && Array.isArray(done.notCounted) && done.notCounted.includes(MAIN_SESSION_NOTE)) { console.log('agent cost was written; no note added'); process.exit(0); }
+    // Only the attempt id this run's own step passed can prove that step succeeded; a cost.json left by an earlier run never does.
+    if (attempt && done && done.agentCostAttempt === attempt) { console.log('agent cost was written; no note added'); process.exit(0); }
     addNotCounted(path.resolve(argv[0]), AGENT_COST_FAILED);
     console.log('noted: agent cost step failed');
     process.exit(0);
@@ -179,6 +185,9 @@ if (process.argv[1] && fs.realpathSync(process.argv[1]) === fs.realpathSync(file
   const root = ri >= 0 ? argv[ri + 1] : (process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'));
   if (ri >= 0) argv.splice(ri, 2);
   if (!argv[0]) { console.error('usage: node scripts/agent-cost.mjs <runDir> [--root dir]'); process.exit(2); }
+  const ti = argv.indexOf('--attempt'), attempt = ti >= 0 ? argv[ti + 1] : null;
+  if (ti >= 0) argv.splice(ti, 2);
   const c = recordAgentCost(path.resolve(argv[0]), root);
+  if (attempt) { c.agentCostAttempt = attempt; fs.writeFileSync(path.join(path.resolve(argv[0]), 'cost.json'), JSON.stringify(c, null, 2)); }
   console.log(`agent spend recorded; total $${c.totalUsd.toFixed(2)}`);
 }
