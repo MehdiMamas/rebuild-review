@@ -117,17 +117,24 @@ function record(kind, name) {
   if (process.env.RR_TMP_PARENT) { try { fs.appendFileSync(path.join(process.env.RR_TMP_PARENT, 'stores'), `${kind} ${name}\n`); } catch {} }
 }
 
-// Synchronous teardown, safe to call twice: relays, then containers (a missing one is fine), then the network.
+// Teardown, safe to call twice: relays, then containers (a missing one is fine), then the network. All of it is synchronous;
+// the returned promise settles when the killed relays have emitted exit, or after EXIT_WAIT_MS for one that never does.
+export const EXIT_WAIT_MS = 5000;
 function removeAll(s) {
-  const gone = [];
-  for (const r of s.relays) { if (r.child.exitCode === null && r.child.signalCode === null) { r.stopping = true; gone.push(new Promise((res) => r.child.once('exit', res))); try { r.child.kill('SIGKILL'); } catch {} } }
+  const exits = [];
+  for (const r of s.relays) {
+    if (r.child.exitCode === null && r.child.signalCode === null) {
+      r.stopping = true;
+      exits.push(new Promise((resolve) => { const t = setTimeout(resolve, EXIT_WAIT_MS); if (t.unref) t.unref(); r.child.once('exit', () => { clearTimeout(t); resolve(); }); }));
+      try { r.child.kill('SIGKILL'); } catch {}
+    }
+  }
   for (const c of s.cnames) rtRun(s.rt, ['rm', '-f', c], 20000);
   if (s.net) rtRun(s.rt, ['network', 'rm', s.net], 20000);
   s.relays = []; s.cnames = []; s.net = null; s.addrs = []; s.up = false;
-  return gone;
+  return Promise.all(exits);
 }
-// Waits until the killed relays have exited, so their ports are free when it returns.
-export async function stopStores(ctx) { if (ctx && ctx.stores) await Promise.all(removeAll(ctx.stores)); }
+export async function stopStores(ctx) { if (ctx && ctx.stores) await removeAll(ctx.stores); }
 export function cleanupSync(ctx) { if (ctx && ctx.stores) removeAll(ctx.stores); }
 
 // Removes what the lines of <tmpParent>/stores name (parity: a test killed hard left them).
@@ -217,7 +224,7 @@ export async function startStores(ctx) {
     }
     s.up = true;
   } catch (e) {
-    removeAll(s);
+    await removeAll(s);
     throw e;
   }
 }

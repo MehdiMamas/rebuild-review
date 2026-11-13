@@ -1,4 +1,4 @@
-// Twenty-eight checks for the backend adapter, run against the fixture service in ./fixture. node test/run.mjs
+// Twenty-nine checks for the backend adapter, run against the fixture service in ./fixture. node test/run.mjs
 // The known answers are in answers.json; only this file reads them. A planted problem the probes miss is printed as MISS and
 // is not hidden or tuned away. A check fails only when the thing it protects is broken (a leak, a hang, a missing file, a false alarm on a clean screen).
 import fs from 'node:fs';
@@ -818,6 +818,25 @@ const ctx = prepare(JSON.parse(fs.readFileSync(process.env.APP_RUN, 'utf8')), pr
     const netsRemoved = new Set(log.filter((a) => a[0] === 'network' && a[1] === 'rm').map((a) => a[a.length - 1]));
     const unmatched = ran.filter((x) => !removed.has(x)), unmatchedNets = nets.filter((x) => !netsRemoved.has(x));
     check(28, 'after the suite no store container or network is left, and every run in the fake runtime log has a matching rm', !unmatched.length && !unmatchedNets.length && left() === 0, [`${ran.length} runs, ${nets.length} networks created; unmatched: ${unmatched.length + unmatchedNets.length}; left in the fake: ${left()}`]);
+  }
+
+  // 29: stopStores waits for the relays' exit, but not forever
+  {
+    const { EventEmitter } = await import('node:events');
+    const fakeRelay = (exitAfter) => {
+      const child = new EventEmitter(); child.exitCode = null; child.signalCode = null;
+      child.kill = () => { if (exitAfter !== null) setTimeout(() => { child.exitCode = null; child.signalCode = 'SIGKILL'; child.emit('exit', null, 'SIGKILL'); }, exitAfter); };
+      return { child, name: 'fake', stopping: false };
+    };
+    const stopWith = async (exitAfter) => {
+      const ctx = { stores: { relays: [fakeRelay(exitAfter)], cnames: [], net: null, addrs: [], up: true, rt: 'none' } };
+      const t0 = Date.now(); await storesApi.stopStores(ctx); return { ms: Date.now() - t0, relays: ctx.stores.relays.length };
+    };
+    const delayed = await stopWith(700);
+    const never = await stopWith(null);
+    const waited = delayed.ms >= 650 && delayed.ms < storesApi.EXIT_WAIT_MS;
+    const capped = never.ms >= storesApi.EXIT_WAIT_MS - 100 && never.ms < storesApi.EXIT_WAIT_MS + 3000;
+    check(29, 'stopping the stores waits for a relay that exits late, and gives up after the timeout on one that never exits', waited && capped && delayed.relays === 0 && never.relays === 0, [`relay exiting after 700 ms: stop took ${delayed.ms} ms; relay that never exits: stop took ${never.ms} ms (limit ${storesApi.EXIT_WAIT_MS} ms)`]);
   }
 } finally {
   await api.stop({ proc: null, worker: null, root: null }).catch(() => {});
