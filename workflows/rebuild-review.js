@@ -56,7 +56,8 @@ async function longRun(name, command, label, phase, opts = {}) {
     }
     if (w.state !== 'running') return w
   }
-  return { state: 'timeout', tail: `still running after ${Math.round(maxWaits * WAIT_SECONDS / 3600 * 10) / 10} hours of waiting` }
+  if (opts.maxWaits) return { state: 'timeout', tail: `still running after ${Math.round(maxWaits * WAIT_SECONDS / 3600 * 10) / 10} hours of waiting` }
+  return { state: 'timeout', tail: 'still running after 8 hours of waiting' }
 }
 const exitedOk = (r) => r.state === 'exited' && r.code === 0
 const whyNot = (r) => r.state === 'exited' ? `exit code ${r.code}: ${r.tail}` : `${{ lost: 'the command was lost', 'start-failed': 'could not start', 'wait-failed': 'waiting failed', timeout: 'timed out' }[r.state] || r.state}: ${r.tail}`
