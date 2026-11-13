@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
-import { priceFor, costOfTranscript, collect, recordAgentCost, loadPrices } from './agent-cost.mjs';
+import { priceFor, costOfTranscript, collect, recordAgentCost, loadPrices, runStart, readMessages, claimIds } from './agent-cost.mjs';
 import { addCost } from './size.mjs';
 import { costPhase } from './room.mjs';
 import { render } from './report.mjs';
@@ -230,10 +230,8 @@ test('#171: a message id repeated across two transcripts is priced once; inside 
   ]);
   const c = recordAgentCost(run, root);
   assert.equal(c.phases.Capture.agentUsd, 14); // m1 once (2 + 10), m2 once (2)
-  const seen = new Set();
   const f = path.join(root, 'projects', 'p', 'sess', 'subagents', 'workflows', 'wf_1', 'agent-a.jsonl');
-  assert.equal(costOfTranscript(f, loadPrices(), seen).usd, 12);
-  assert.equal(costOfTranscript(f, loadPrices(), seen).usd, 0);
+  assert.equal(costOfTranscript(f, loadPrices()).usd, 12);
 });
 
 test('#171: --failed adds one notCounted sentence and keeps the spend; a later successful run replaces it', async () => {
@@ -248,4 +246,36 @@ test('#171: --failed adds one notCounted sentence and keeps the spend; a later s
   assert.equal(c.totalUsd, 2);
   const after = recordAgentCost(run, tmp());
   assert.ok(!after.notCounted.includes(AGENT_COST_FAILED));
+});
+
+test('#171: an id held in two transcripts is priced from the larger record, not the first file', () => {
+  const run = tmp();
+  const root = fixture(run, [
+    { name: 'a', phase: 'Capture', lines: [user(run), msg('m1', 'claude-sonnet-5-5', { input_tokens: 1000000, output_tokens: 0 })] }, // partial
+    { name: 'b', phase: 'Rebuild', lines: [user(run), msg('m1', 'claude-sonnet-5-5', sonnet(1))] }, // complete
+  ]);
+  const c = recordAgentCost(run, root);
+  assert.equal(c.phases.Rebuild.agentUsd, 12);
+  assert.equal(c.phases.Capture.agentUsd, 0);
+  assert.equal(c.totalUsd, 12);
+});
+
+test('#171: runStart is the earliest time in the run folder and ignores a later rewrite of run.json', () => {
+  const run = tmp();
+  fs.writeFileSync(path.join(run, 'run.json'), '{}');
+  fs.writeFileSync(path.join(run, 'size.json'), '{}');
+  const t0 = new Date('2026-01-01T00:00:00Z'), t1 = new Date('2026-01-02T00:00:00Z');
+  for (const f of [run, path.join(run, 'size.json')]) fs.utimesSync(f, t0, t0);
+  fs.utimesSync(path.join(run, 'run.json'), t1, t1);
+  const s = runStart(run);
+  assert.ok(s <= t0.getTime() && s > 0);
+  assert.equal(runStart(path.join(run, 'missing')), null);
+});
+
+test('#171: --failed adds no note when cost.json was written by a successful agent-cost run', () => {
+  const run = tmp();
+  recordAgentCost(run, tmp());
+  execFileSync(process.execPath, [fileURLToPath(new URL('./agent-cost.mjs', import.meta.url)), run, '--failed']);
+  const c = JSON.parse(fs.readFileSync(path.join(run, 'cost.json'), 'utf8'));
+  assert.ok(!c.notCounted.some((x) => /step failed/.test(x)));
 });

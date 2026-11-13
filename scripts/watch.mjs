@@ -286,7 +286,7 @@ function addEvent(e){
   var txt;
   if(e.kind==='phase')txt=e.phase+' '+e.state+(e.reason?': '+e.reason:'');
   else if(e.kind==='decision')txt=e.what+': '+e.choice+(e.reason?' ('+e.reason+')':'');
-  else if(e.kind==='cost')txt=(e.phase||'')+' cost '+usd(e.usd||0)+', total '+usd(e.totalUsd||0)+(e.maxUsd?' of '+usd(e.maxUsd):'');
+  else if(e.kind==='cost')txt=(e.phase||'')+' cost '+usd(Math.max(0,e.usd||0))+', total '+usd(e.totalUsd||0)+(e.maxUsd?' of '+usd(e.maxUsd):'');
   else if(e.kind==='made')txt='made '+e.what+(e.count!==undefined?' ('+e.count+')':'')+(e.path?': '+e.path:'');
   else txt=String(e.kind);
   li.appendChild(el('span',null,txt));
