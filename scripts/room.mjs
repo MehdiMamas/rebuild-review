@@ -28,13 +28,19 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const KEEP_BODY = /json|image|font/i;
 
 // ---- golden filter ----
+// JSON text for `value` laid out like `original`: the same indent (tab or n spaces, none for a one-line file) and trailing newline (#161).
+export function jsonLike(value, original) {
+  const m = /\n([ \t]+)\S/.exec(original); // the first indented line is one level deep
+  const indent = m ? (m[1][0] === '\t' ? '\t' : m[1].length) : undefined;
+  return JSON.stringify(value, null, indent) + (/\n$/.test(original) ? '\n' : '');
+}
 // authValues: the typed sign-in values of run.json auth. A second guard behind the capture: any text file in the copy that still holds one
 // of them as a whole value is masked (screenshots and other images cannot be).
 export function filterGolden(src, dest, authValues = []) {
   fs.cpSync(src, dest, { recursive: true, filter: (s) => path.basename(s) !== 'run.json' || path.dirname(s) !== src });
   const har = path.join(dest, 'network.har');
   if (fs.existsSync(har)) {
-    const j = JSON.parse(fs.readFileSync(har, 'utf8'));
+    const harText = fs.readFileSync(har, 'utf8'), j = JSON.parse(harText);
     const isMap = (u) => /\.map$/i.test(String(u || '').split(/[?#]/)[0]);
     j.log.entries = j.log.entries.filter((e) => !isMap(e.request && e.request.url));
     for (const e of j.log.entries) {
@@ -43,7 +49,7 @@ export function filterGolden(src, dest, authValues = []) {
       const own = !/^https?:/i.test(String((e.request && e.request.url) || ''));
       if (c && typeof c.text === 'string' && (own || !KEEP_BODY.test(c.mimeType || ''))) c.text = '';
     }
-    fs.writeFileSync(har, JSON.stringify(j));
+    fs.writeFileSync(har, jsonLike(j, harText));
   }
   const walk = (d) => {
     for (const f of fs.readdirSync(d, { withFileTypes: true })) {
@@ -71,7 +77,7 @@ export function filterGolden(src, dest, authValues = []) {
           let m;
           if (/\.(json|har)$/i.test(f.name)) {
             // Mask string values only: a typed 1234 or true must not turn a bare JSON token into ***.
-            try { const o = JSON.parse(t), r = redactSecrets(o, secrets); m = JSON.stringify(r) === JSON.stringify(o) ? t : JSON.stringify(r); } catch { m = redactSecrets(t, secrets); }
+            try { const o = JSON.parse(t), r = redactSecrets(o, secrets); m = JSON.stringify(r) === JSON.stringify(o) ? t : jsonLike(r, t); } catch { m = redactSecrets(t, secrets); }
           } else m = redactSecrets(t, secrets);
           if (m !== t) fs.writeFileSync(p, m);
         }
@@ -114,10 +120,12 @@ export function prepareRoom({ runDir, target, inputs }) {
   const room = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-room-'));
   const inp = path.join(room, 'input');
   fs.mkdirSync(inp);
+  const secrets = expandSecrets(authValuesOf(runDir));
   for (const f of inputs) {
     const s = path.join(runDir, f);
     if (!fs.existsSync(s)) continue;
     if (f === 'golden') filterGolden(s, path.join(inp, 'golden'), authValuesOf(runDir));
+    else if (/\.md$/.test(f) && secrets.length) fs.writeFileSync(path.join(inp, f), redactSecrets(fs.readFileSync(s, 'utf8'), secrets)); // a finder may have written a typed sign-in value into its notes (#161)
     else fs.copyFileSync(s, path.join(inp, f));
   }
   const forbidden = [...new Set([target, runDir, fs.realpathSync(target), fs.realpathSync(runDir)])];

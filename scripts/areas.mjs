@@ -152,7 +152,8 @@ export function coverage(runDir) {
     ...(cov.buttonsSkipped && cov.buttonsSkipped.length ? [`${cov.buttonsSkipped.length} buttons not pressed`] : []),
     ...((cov.refusedSignedIn || []).length ? [`refused (401/403) while signed in, not reached: ${cov.refusedSignedIn.join(', ')}`] : []),
     ...((cov.behindSignIn || []).length ? [`behind a sign-in, not reached: ${cov.behindSignIn.join(', ')}${!cov.auth || !cov.auth.given ? ' (no auth in run.json)' : !cov.auth.signedIn ? ` (sign-in failed: ${cov.auth.reason || 'no reason given'})` : ''}`] : []),
-    ...((cov.sessionLost || []).length ? [`session lost while signed in, not captured: ${cov.sessionLost.join(', ')}`] : []),
+    ...((cov.sessionLost || []).filter((u) => !(cov.sessionLostLate || []).includes(u)).length ? [`session lost while signed in, not captured: ${cov.sessionLost.filter((u) => !(cov.sessionLostLate || []).includes(u)).join(', ')}`] : []),
+    ...((cov.sessionLostLate || []).length ? [`session lost after the shots (shots kept, later probes and measures not checked): ${cov.sessionLostLate.join(', ')}`] : []),
     ...(cov.harEntriesSkipped ? [`${cov.harEntriesSkipped} network entries dropped`] : []),
   ];
   const out = {
