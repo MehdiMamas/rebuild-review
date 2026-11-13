@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { platformNote, BUDGET_USD, filterGolden, prepareRoom, scanTranscript, wallTried, cloneProject, copyEnv, dropEnv, denyList, writeSettings, fixStack, stackFixPrompt, replaceProject, main, childSpawn, wallEvent, checkChild, provewall } from './room.mjs';
+import { platformNote, BUDGET_USD, filterGolden, jsonLike, prepareRoom, scanTranscript, wallTried, cloneProject, copyEnv, dropEnv, denyList, writeSettings, fixStack, stackFixPrompt, replaceProject, main, childSpawn, wallEvent, checkChild, provewall } from './room.mjs';
 import { read as readEvents } from './events.mjs';
 import { cacheDirFor } from './sandbox-deps.mjs';
 
@@ -584,4 +584,59 @@ test('exitSoon ends a process whose open handle would keep it alive (#167)', () 
   const r = spawnSync(process.execPath, ['--input-type=module', '-e', code], { encoding: 'utf8', timeout: 15000 });
   assert.equal(r.status, 3);
   assert.ok(Date.now() - t0 < 10000);
+});
+
+// #161 point 4: masking keeps the layout of the file it rewrites.
+test('jsonLike: 2-space, 4-space and tab indent, a trailing newline and a one-line file keep their layout', () => {
+  const v = { a: { b: 1 }, c: ['x'] };
+  for (const [indent, nl] of [[2, '\n'], [4, ''], ['\t', '\n'], [undefined, '\n'], [undefined, '']]) {
+    const original = JSON.stringify({ a: { b: 0 }, c: ['y'] }, null, indent) + nl;
+    assert.equal(jsonLike(v, original), JSON.stringify(v, null, indent) + nl, JSON.stringify(indent) + JSON.stringify(nl));
+  }
+});
+
+test('given a golden JSON with a typed value in a 4-space file with a trailing newline -> the room copy is masked and keeps indent and newline; a file with no hit is byte-identical', () => {
+  const src = tmp(), dest = path.join(tmp(), 'g'), email = 'pat.lee@example.test';
+  makeGolden(src);
+  const hit = JSON.stringify({ note: `hi ${email}`, list: [1, 2] }, null, 4) + '\n', clean = JSON.stringify({ note: 'nothing', list: [1] }, null, 3);
+  fs.writeFileSync(path.join(src, 'hit.json'), hit);
+  fs.writeFileSync(path.join(src, 'clean.json'), clean);
+  filterGolden(src, dest, [email]);
+  assert.equal(fs.readFileSync(path.join(dest, 'hit.json'), 'utf8'), JSON.stringify({ note: 'hi ***', list: [1, 2] }, null, 4) + '\n');
+  assert.equal(fs.readFileSync(path.join(dest, 'clean.json'), 'utf8'), clean);
+});
+
+test('given a pretty-printed HAR -> filterGolden keeps its indent when it drops bodies', () => {
+  const src = tmp(), dest = path.join(tmp(), 'g');
+  makeGolden(src);
+  const f = path.join(src, 'network.har');
+  fs.writeFileSync(f, JSON.stringify(JSON.parse(fs.readFileSync(f, 'utf8')), null, 2) + '\n');
+  filterGolden(src, dest);
+  const t = fs.readFileSync(path.join(dest, 'network.har'), 'utf8');
+  assert.ok(t.startsWith('{\n  "log"') && t.endsWith('}\n'), t.slice(0, 40));
+});
+
+// #161 point 1 (builder leak): a finder may write the stand-in credentials into its notes.
+test('given a typed sign-in value in features.md, technology.md, foundations.md and stack.md -> the room copy holds *** and the originals are unchanged', () => {
+  const runDir = tmp(), target = tmp(), pw = 'correct-horse-9';
+  fs.mkdirSync(path.join(runDir, 'work'));
+  execFileSync('git', ['init', '-q'], { cwd: path.join(runDir, 'work') });
+  const names = ['features.md', 'technology.md', 'foundations.md', 'stack.md'];
+  for (const n of names) fs.writeFileSync(path.join(runDir, n), `- F-001 keep. Given the account with password ${pw}, when it signs in, then the dashboard shows.\n`);
+  fs.writeFileSync(path.join(runDir, 'run.json'), JSON.stringify({ auth: { steps: [{ type: { into: 'Password', text: pw } }] } }));
+  const room = prepareRoom({ runDir, target, inputs: names });
+  for (const n of names) {
+    const t = fs.readFileSync(path.join(room, 'input', n), 'utf8');
+    assert.ok(!t.includes(pw) && t.includes('password ***,'), n);
+    assert.ok(fs.readFileSync(path.join(runDir, n), 'utf8').includes(pw), n + ' original');
+  }
+});
+
+test('given no auth in run.json -> a markdown input is copied byte for byte', () => {
+  const runDir = tmp(), target = tmp();
+  fs.mkdirSync(path.join(runDir, 'work'));
+  execFileSync('git', ['init', '-q'], { cwd: path.join(runDir, 'work') });
+  fs.writeFileSync(path.join(runDir, 'features.md'), '- F-001 keep. Given a user, when x, then y.\n');
+  const room = prepareRoom({ runDir, target, inputs: ['features.md'] });
+  assert.equal(fs.readFileSync(path.join(room, 'input', 'features.md'), 'utf8'), fs.readFileSync(path.join(runDir, 'features.md'), 'utf8'));
 });

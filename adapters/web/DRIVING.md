@@ -15,5 +15,6 @@ Platform `web`. The app is a server on this machine; `run.json` has its `address
 
 ## Tests
 - A parity test reads the address from `process.env.APP_URL`.
+- When `run.json` has `auth` and the sign-in worked, `process.env.APP_STORAGE_STATE` holds the Playwright storage state as JSON (parse it and pass it as `storageState` to `browser.newContext`); it is unset when signed out. Never print it.
 - Import the driver by absolute path: `import { chromium } from '<plugin>/adapters/web/node_modules/playwright/index.mjs'`.
 - Each test launches its own browser and closes it at the end. The tests share one running server, so earlier tests leave data behind.

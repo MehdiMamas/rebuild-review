@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { validateAuth, authSecrets, redactSecrets, LOGIN_RE, landedOnSignIn } from '../auth.mjs';
+import { keepSession } from '../probes.mjs';
 import { endsSession, endsSessionPath } from '../context.mjs';
 import { coverage } from '../../../scripts/areas.mjs';
 import { filterGolden } from '../../../scripts/room.mjs';
@@ -301,4 +302,162 @@ test('given asked and landed URLs -> landedOnSignIn is true only when signed in 
   assert.equal(landedOnSignIn('http://x/dashboard', 'http://x/login', false), false);
   assert.equal(landedOnSignIn('http://x/login', 'http://x/login?next=1', true), false);
   assert.equal(landedOnSignIn('http://x/dashboard', 'http://x/dashboard/settings', true), false);
+  // #161: a page that asks for a sign-in-style path itself is part of signing in, even when it lands on another one.
+  assert.equal(landedOnSignIn('http://x/signin/callback', 'http://x/login', true), false);
+  assert.equal(landedOnSignIn('http://x/auth/sign_in?next=/a', 'http://x/log-in', true), false);
+});
+
+// ---- #161: late losses, callback paths, probes, parity and check ----
+
+test('given a page that asks for /signin/callback and ends on /login while signed in -> it is behind a sign-in but not a lost session', () => {
+  const c = cap('callback', { auth: { steps: signInSteps() }, env: { CALLBACK: '1' } });
+  assert.equal(c.r.status, 0, c.r.stderr);
+  const v = cov(c);
+  assert.ok(v.behindSignIn.includes('/signin/callback'), JSON.stringify(v.behindSignIn));
+  assert.ok(!v.sessionLost.includes('/signin/callback'), JSON.stringify(v.sessionLost));
+});
+
+test('given a screen whose shots succeed and whose probes are sent to sign-in -> its shots and manifest entry stay, it is in sessionLost and sessionLostLate, and notCaptured says so', () => {
+  const c = cap('late', { auth: { steps: signInSteps() }, env: { LATE: '1' } });
+  assert.equal(c.r.status, 0, c.r.stderr);
+  const v = cov(c), m = json(path.join(c.golden, 'manifest.json'));
+  assert.ok(v.sessionLost.includes('/late') && v.sessionLostLate.includes('/late'), JSON.stringify(v));
+  const kept = m.screens.find((x) => x.url === '/late');
+  assert.ok(kept, JSON.stringify(m.screens));
+  for (const f of ['1440-light.png', '1440-dark.png', '390-light.png', '390-dark.png', 'render.html']) assert.ok(fs.existsSync(path.join(c.golden, 'screens', kept.id, f)), f);
+  assert.ok(v.screensReached.includes('/late') && v.screensCapturedWithSession.includes('/late'));
+  assert.ok(m.notCaptured.some((n) => /^session lost after the shots, shots kept.*\/late/.test(n)), JSON.stringify(m.notCaptured));
+  assert.ok(json(path.join(c.golden, 'probes-not-checked.json')).some((r) => r.route === '/late' && /session lost/.test(r.reason)));
+  assert.ok(!(cov(cap('flaky')).sessionLostLate ?? []).includes('/flaky'), 'a screen lost at its first shot is not a late loss');
+});
+
+test('given a screen whose first shot works and a later one is sent to sign-in -> no folder is left, the screen is in sessionLost but not sessionLostLate, and notCaptured says the earlier shots were removed', () => {
+  const c = cap('mid', { auth: { steps: signInSteps() }, env: { MID: '1' } });
+  assert.equal(c.r.status, 0, c.r.stderr);
+  const v = cov(c), m = json(path.join(c.golden, 'manifest.json'));
+  assert.ok(v.sessionLost.includes('/mid') && !v.sessionLostLate.includes('/mid'), JSON.stringify(v));
+  assert.ok(!fs.existsSync(path.join(c.golden, 'screens', 'mid')), 'a half set of shots was left');
+  assert.ok(!m.screens.some((x) => x.url === '/mid') && !v.screensReached.includes('/mid'));
+  assert.ok(m.notCaptured.some((n) => /^mid 390-dark: .*session lost; the 1 earlier shot\(s\) of this screen are removed/.test(n)), JSON.stringify(m.notCaptured));
+});
+
+test('keepSession: a signed-in probe sent to a sign-in page throws and tells onSessionLost the screen; signed out or asked-for sign-in paths do nothing', () => {
+  const lost = [], c = { signedIn: true, onSessionLost: (u) => lost.push(u) }, page = (u) => ({ url: () => u });
+  assert.throws(() => keepSession(c, 'http://x/items/1?tab=a', page('http://x/login'), { url: '/items/1?tab=a' }), /session lost/);
+  assert.deepEqual(lost, ['/items/1?tab=a']);
+  keepSession({ ...c, signedIn: false }, 'http://x/items/1', page('http://x/login'), { url: '/items/1' });
+  keepSession(c, 'http://x/signin/callback', page('http://x/login'), { url: '/signin/callback' });
+  keepSession(c, 'http://x/items/1', page('http://x/items/1'), { url: '/items/1' });
+  assert.deepEqual(lost, ['/items/1?tab=a']);
+  assert.throws(() => keepSession({ signedIn: true }, 'http://x/a', page('http://x/login'), { url: '/a' }), /session lost/); // no callback: still throws
+});
+
+test('every caller of loadProbes, clickProbes and runProbes passes signedIn, and capture.mjs passes onSessionLost', () => {
+  const dir = path.join(here, '..');
+  const calls = [];
+  for (const f of fs.readdirSync(dir).filter((x) => x.endsWith('.mjs'))) {
+    const t = fs.readFileSync(path.join(dir, f), 'utf8');
+    if (f === 'probes.mjs') continue;
+    for (const m of t.matchAll(/\b(?:await\s+)?(loadProbes|clickProbes|runProbes)\(\{?([^;]*)/g)) calls.push({ f, fn: m[1], text: m[0] });
+  }
+  assert.ok(calls.some((c) => c.f === 'capture.mjs') && calls.some((c) => c.f === 'check.mjs'), JSON.stringify(calls.map((c) => c.f)));
+  for (const c of calls) {
+    if (/^(import|export)/.test(c.text)) continue;
+    assert.ok(/signedIn|\.\.\.common/.test(c.text), `${c.f} ${c.fn} does not pass signedIn`);
+  }
+  assert.ok(/signedIn: Boolean\(storageState\)/.test(fs.readFileSync(path.join(dir, 'check.mjs'), 'utf8')));
+  assert.ok(/onSessionLost:/.test(fs.readFileSync(path.join(dir, 'capture.mjs'), 'utf8')));
+});
+
+// Parity: node parity.mjs against site-auth.mjs. A test reaches the session only through APP_STORAGE_STATE.
+const parity = path.join(here, '..', 'parity.mjs');
+const cache2 = new Map();
+function par(name, { auth, tests, penv = {} }) {
+  if (cache2.has(name)) return cache2.get(name);
+  const runDir = path.join(tmp, name), port = nextPort++;
+  fs.mkdirSync(path.join(runDir, 'work'), { recursive: true });
+  fs.copyFileSync(path.join(here, 'site-auth.mjs'), path.join(runDir, 'work', 'site-auth.mjs'));
+  const run = { platform: 'web', start: 'node site-auth.mjs', address: `http://127.0.0.1:${port}` };
+  if (auth !== undefined) run.auth = auth;
+  fs.writeFileSync(path.join(runDir, 'run.json'), JSON.stringify(run));
+  const td = path.join(runDir, 'tests');
+  fs.mkdirSync(td);
+  for (const [n, body] of Object.entries(tests)) fs.writeFileSync(path.join(td, n), "import test from 'node:test';\nimport assert from 'node:assert/strict';\n" + body);
+  const out = path.join(runDir, 'parity', 'original.json');
+  const r = spawnSync('node', [parity, '--app', path.join(runDir, 'run.json'), '--tests', td, '--out', out], { encoding: 'utf8', env: { ...process.env, ...penv } });
+  const res = fs.existsSync(out) ? json(out) : [];
+  const authFile = path.join(runDir, 'parity', 'original.auth.json');
+  const o = { runDir, r, res, port, auth: fs.existsSync(authFile) ? json(authFile) : null, byName: (f) => res.find((x) => x.feature === f) };
+  cache2.set(name, o);
+  return o;
+}
+const ME = `const cookie = (st) => st.cookies.map((c) => c.name + '=' + c.value).join('; ');
+test('me', async () => {
+  const st = JSON.parse(process.env.APP_STORAGE_STATE);
+  const r = await fetch(process.env.APP_URL + '/api/me', { headers: { cookie: cookie(st) } });
+  assert.equal(r.status, 200, 'expected the signed-in /api/me to answer 200; saw ' + r.status);
+  assert.equal((await r.json()).email, '${EMAIL}');
+});`;
+const LEAK = `test('leaks', () => {
+  const st = JSON.parse(process.env.APP_STORAGE_STATE);
+  assert.fail('typed ${PASSWORD} cookie ' + st.cookies.map((c) => c.value).join(','));
+});`;
+const NOSTATE = `test('none', () => { assert.equal(process.env.APP_STORAGE_STATE, undefined, 'expected no APP_STORAGE_STATE; saw one'); });`;
+const treeFiles = (d) => fs.readdirSync(d, { recursive: true }).map((f) => path.join(d, f)).filter((f) => fs.statSync(f).isFile());
+
+test('given auth in run.json -> a parity test gets the session in APP_STORAGE_STATE and is signed in; a failing test that prints the password or the cookie value has both masked; no state file exists', () => {
+  const p = par('par-in', { auth: { steps: signInSteps() }, tests: { 'F-001.test.mjs': ME, 'F-002.test.mjs': LEAK } });
+  assert.equal(p.r.status, 0, p.r.stderr);
+  assert.equal(p.byName('F-001')?.passed, true, p.byName('F-001')?.detail);
+  const leak = p.byName('F-002');
+  assert.equal(leak.passed, false);
+  assert.ok(leak.detail.includes('typed *** cookie ***'), leak.detail);
+  assert.ok(!leak.detail.includes(PASSWORD));
+  assert.deepEqual(p.auth, { given: true, signedIn: true });
+  assert.ok(!p.r.stdout.includes(PASSWORD) && !p.r.stderr.includes(PASSWORD));
+  assert.ok(treeFiles(p.runDir).every((f) => /(\.mjs|\.json|\.log)$/.test(f) && !/storageState|"cookies"/.test(fs.readFileSync(f, 'utf8'))), 'a state file was written');
+});
+
+test('given no auth in run.json -> parity runs as before: no APP_STORAGE_STATE and no .auth.json', () => {
+  const p = par('par-none', { tests: { 'F-001.test.mjs': NOSTATE }, penv: { APP_STORAGE_STATE: '{"cookies":[]}' } });
+  assert.equal(p.r.status, 0, p.r.stderr);
+  assert.equal(p.byName('F-001')?.passed, true, p.byName('F-001')?.detail);
+  assert.equal(p.auth, null);
+});
+
+test('given a wrong password -> the tests run signed out, the reason holds no typed value, and a failed test starts with the sign-in reason', () => {
+  const p = par('par-wrong', { auth: { steps: signInSteps('wrong-password-1') }, tests: { 'F-001.test.mjs': ME, 'F-002.test.mjs': NOSTATE } });
+  assert.equal(p.r.status, 0, p.r.stderr);
+  assert.equal(p.auth.given, true);
+  assert.equal(p.auth.signedIn, false);
+  assert.ok(p.auth.reason && !p.auth.reason.includes('wrong-password-1'), p.auth.reason);
+  assert.equal(p.byName('F-002').passed, true);
+  const f = p.byName('F-001');
+  assert.equal(f.passed, false);
+  assert.ok(f.detail.startsWith("note: the run's sign-in failed ("), f.detail);
+  assert.ok(!f.detail.includes('wrong-password-1'));
+});
+
+test('given a session over the size limit -> the tests run signed out with a reason that names the size', () => {
+  const p = par('par-big', { auth: { steps: signInSteps() }, tests: { 'F-001.test.mjs': NOSTATE }, penv: { RR_MAX_STATE_BYTES: '50' } });
+  assert.equal(p.r.status, 0, p.r.stderr);
+  assert.equal(p.auth.signedIn, false);
+  assert.match(p.auth.reason, /too big/);
+  assert.equal(p.byName('F-001').passed, true, p.byName('F-001').detail);
+});
+
+test('given auth and a browser that cannot start -> the tests still run signed out with the reason, and the app is stopped', async () => {
+  const p = par('par-nobrowser', { auth: { steps: signInSteps() }, tests: { 'F-001.test.mjs': NOSTATE }, penv: { PLAYWRIGHT_BROWSERS_PATH: path.join(tmp, 'no-browsers-here') } });
+  assert.equal(p.r.status, 0, p.r.stderr);
+  assert.equal(p.auth.signedIn, false);
+  assert.ok(p.auth.reason, 'no reason');
+  assert.equal(p.byName('F-001').passed, true);
+  assert.equal(await fetch(`http://127.0.0.1:${p.port}/`).then(() => true, () => false), false, 'the app is still running');
+});
+
+test('given a bad auth block -> parity runs the tests signed out with the validation message', () => {
+  const p = par('par-bad', { auth: { steps: [] }, tests: { 'F-001.test.mjs': NOSTATE } });
+  assert.equal(p.r.status, 0, p.r.stderr);
+  assert.equal(p.auth.signedIn, false);
+  assert.match(p.auth.reason, /auth\.steps/);
 });

@@ -7,11 +7,12 @@ export { authSecrets, redactSecrets };
 // A path segment that is a sign-in page: /login, /log-in, /auth/sign_in. Not /catalog/index or /dialog-info.
 export const LOGIN_RE = /(^|\/)(log[-_]?in|sign[-_]?in)(\/|$)/i;
 // True when a page that was asked for `asked` (a URL) ended on `landed` (a URL), signed in, on a sign-in page it did not ask for:
-// the session was lost, or the route is protected. Inert when signed out.
+// the session was lost, or the route is protected. Inert when signed out. A page that itself asks for a sign-in-style path
+// (/signin/callback going on to /login) is part of signing in, not a loss.
 export function landedOnSignIn(asked, landed, signedIn) {
   if (!signedIn) return false;
   const a = new URL(asked), l = new URL(landed);
-  return l.pathname !== a.pathname && LOGIN_RE.test(l.pathname);
+  return l.pathname !== a.pathname && LOGIN_RE.test(l.pathname) && !LOGIN_RE.test(a.pathname);
 }
 const KINDS = ['open', 'click', 'type', 'press', 'wait'];
 const isStr = (v) => typeof v === 'string';

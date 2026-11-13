@@ -92,7 +92,8 @@ for (const route of routes) {
 }
 
 const rows = [];
-const common = { browser, origin, screens: reached, deadline, notChecked, idleMs: 3000, ...env };
+// A --storage-state file is a sign-in session: a route that sends it to a sign-in page is not probed (#161).
+const common = { browser, origin, screens: reached, deadline, notChecked, idleMs: 3000, signedIn: Boolean(storageState), ...env };
 rows.push(...await loadProbes({ ...common, ignoreBlocked: true }));
 // Clicks that look destructive or outward-facing are skipped and listed; on a non-local app no click runs.
 const RISKY = /\b(delete|remove|destroy|pay|buy|purchase|checkout|send|publish|sign[\s-]?out|log[\s-]?out|unsubscribe|deactivate|trash|discard|reset|archive|revoke|wipe|clear|drop)\b/i;
