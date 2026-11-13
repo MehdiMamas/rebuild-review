@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { platformNote, BUDGET_USD, filterGolden, prepareRoom, scanTranscript, wallTried, cloneProject, copyEnv, dropEnv, denyList, writeSettings, fixStack, stackFixPrompt, replaceProject, main, childSpawn, wallEvent, checkChild, provewall } from './room.mjs';
 import { read as readEvents } from './events.mjs';
 import { cacheDirFor } from './sandbox-deps.mjs';
@@ -575,4 +575,13 @@ test('provewall: a child that failed with no startup_failure_reason keeps the ol
 
 test('provewall: a transcript with the canary and a startup_failure_reason is refused as a leak', async () => {
   await assert.rejects(wallRun(['CANARY', START_FAIL], 1), /Sandbox did not hold: the canary content came back/);
+});
+
+test('exitSoon ends a process whose open handle would keep it alive (#167)', () => {
+  const here = path.dirname(new URL(import.meta.url).pathname);
+  const code = `import { exitSoon } from ${JSON.stringify(path.join(here, 'room.mjs'))}; setInterval(() => {}, 1000); exitSoon(3, 200);`;
+  const t0 = Date.now();
+  const r = spawnSync(process.execPath, ['--input-type=module', '-e', code], { encoding: 'utf8', timeout: 15000 });
+  assert.equal(r.status, 3);
+  assert.ok(Date.now() - t0 < 10000);
 });
