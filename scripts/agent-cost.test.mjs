@@ -210,3 +210,42 @@ test('an agent-only phase is deleted when its transcripts are gone on a rerun; o
   assert.deepEqual(c.phases.Capture, { usd: 0.5, runs: 1 });
   assert.ok(Math.abs(c.totalUsd - 0.5) < 1e-9);
 });
+
+test('#171: a workflow folder older than the run start is skipped; one written since is kept', () => {
+  const run = tmp();
+  const root = fixture(run, [{ name: 'a', phase: 'Capture', lines: [user(run), msg('m1', 'claude-sonnet-5-5', sonnet(0))] }]);
+  const dir = path.join(root, 'projects', 'p', 'sess', 'subagents', 'workflows', 'wf_1');
+  const old = new Date(Date.now() - 3600e3);
+  fs.utimesSync(path.join(dir, 'agent-a.jsonl'), old, old);
+  assert.equal(collect(run, root, Date.now()).length, 0);
+  assert.equal(collect(run, root, Date.now() - 2 * 3600e3).length, 1);
+  assert.equal(collect(run, root, null).length, 1);
+});
+
+test('#171: a message id repeated across two transcripts is priced once; inside a file the last record wins', () => {
+  const run = tmp();
+  const root = fixture(run, [
+    { name: 'a', phase: 'Capture', lines: [user(run), msg('m1', 'claude-sonnet-5-5', sonnet(0)), msg('m1', 'claude-sonnet-5-5', sonnet(1))] },
+    { name: 'b', phase: 'Capture', lines: [user(run), msg('m1', 'claude-sonnet-5-5', sonnet(1)), msg('m2', 'claude-sonnet-5-5', sonnet(0))] },
+  ]);
+  const c = recordAgentCost(run, root);
+  assert.equal(c.phases.Capture.agentUsd, 14); // m1 once (2 + 10), m2 once (2)
+  const seen = new Set();
+  const f = path.join(root, 'projects', 'p', 'sess', 'subagents', 'workflows', 'wf_1', 'agent-a.jsonl');
+  assert.equal(costOfTranscript(f, loadPrices(), seen).usd, 12);
+  assert.equal(costOfTranscript(f, loadPrices(), seen).usd, 0);
+});
+
+test('#171: --failed adds one notCounted sentence and keeps the spend; a later successful run replaces it', async () => {
+  const { AGENT_COST_FAILED } = await import('./agent-cost.mjs');
+  const run = tmp();
+  addCost(run, 'Stack', 2);
+  const script = fileURLToPath(new URL('./agent-cost.mjs', import.meta.url));
+  execFileSync(process.execPath, [script, run, '--failed']);
+  execFileSync(process.execPath, [script, run, '--failed']);
+  const c = JSON.parse(fs.readFileSync(path.join(run, 'cost.json'), 'utf8'));
+  assert.deepEqual(c.notCounted.filter((x) => x === AGENT_COST_FAILED).length, 1);
+  assert.equal(c.totalUsd, 2);
+  const after = recordAgentCost(run, tmp());
+  assert.ok(!after.notCounted.includes(AGENT_COST_FAILED));
+});

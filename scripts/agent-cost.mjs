@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { setAgentCost } from './size.mjs';
+import { setAgentCost, addNotCounted } from './size.mjs';
 
 export const loadPrices = () => JSON.parse(fs.readFileSync(new URL('../prices.json', import.meta.url), 'utf8'));
 
@@ -32,7 +32,8 @@ export function priceUsage(usage, row) {
 }
 
 // One transcript: { usd, messages, unpriced: { <model>: tokens } }. A message id seen on several lines counts once (last wins); bad lines are skipped.
-export function costOfTranscript(file, prices = loadPrices()) {
+// `seen` (a Set, optional) is shared by all transcripts of a run: an id already in it (a resumed or forked agent repeats its parent's messages) is not priced again (#171).
+export function costOfTranscript(file, prices = loadPrices(), seen = null) {
   let text = '';
   try { text = fs.readFileSync(file, 'utf8'); } catch { return { usd: 0, messages: 0, unpriced: {} }; }
   const byId = new Map();
@@ -46,7 +47,10 @@ export function costOfTranscript(file, prices = loadPrices()) {
   }
   let usd = 0;
   const unpriced = {};
-  for (const m of byId.values()) {
+  let messages = 0;
+  for (const [id, m] of byId) {
+    if (seen && !id.startsWith('anon-')) { if (seen.has(id)) continue; seen.add(id); }
+    messages++;
     const row = priceFor(m.model, prices);
     const u = m.usage;
     if (!row) {
@@ -56,7 +60,7 @@ export function costOfTranscript(file, prices = loadPrices()) {
     }
     usd += priceUsage(u, row);
   }
-  return { usd, messages: byId.size, unpriced };
+  return { usd, messages, unpriced };
 }
 
 const readJson = (f) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
@@ -82,15 +86,29 @@ function namesRun(file, re, keep = 512) {
 }
 const CHUNK_BYTES = 1 << 20;
 
-// Agents of every workflow folder that names the run folder: [{ file, phase }].
-export function collect(runDir, root) {
+// When the run started: the run folder's creation time (else run.json's mtime), or null when unknown. A transcript last written before it cannot belong to the run (#171).
+export function runStart(runDir) {
+  for (const f of [runDir, path.join(runDir, 'run.json')]) {
+    try { const st = fs.statSync(f); const t = st.birthtimeMs > 0 ? st.birthtimeMs : (f === runDir ? 0 : st.mtimeMs); if (t > 0) return t; } catch { /* next */ }
+  }
+  return null;
+}
+const SLACK_MS = 60000;
+const mtimeOf = (f) => { try { return fs.statSync(f).mtimeMs; } catch { return 0; } };
+
+// Agents of every workflow folder that names the run folder: [{ file, phase }]. `since` (ms, default the run start) skips a folder
+// whose newest transcript is older than it, and inside a kept folder only the transcripts written since are searched for the run folder.
+export function collect(runDir, root, since = runStart(path.resolve(runDir))) {
   const out = [];
+  const floor = since == null ? null : since - SLACK_MS;
   const re = runRe(path.resolve(runDir));
   for (const proj of subdirs(path.join(root, 'projects'))) for (const sess of subdirs(proj)) {
     for (const wf of subdirs(path.join(sess, 'subagents', 'workflows'))) {
       let names; try { names = fs.readdirSync(wf).filter((f) => /^agent-.*\.jsonl$/.test(f)); } catch { continue; }
       const files = names.map((n) => path.join(wf, n));
-      const mine = files.some((f) => namesRun(f, re, path.resolve(runDir).length * 4 + 16));
+      const recent = floor == null ? files : files.filter((f) => mtimeOf(f) >= floor);
+      if (!recent.length) continue;
+      const mine = recent.some((f) => namesRun(f, re, path.resolve(runDir).length * 4 + 16));
       if (!mine) continue;
       for (const file of files) {
         const meta = readJson(file.replace(/\.jsonl$/, '.meta.json')) || {};
@@ -101,11 +119,13 @@ export function collect(runDir, root) {
   return out;
 }
 
+export const AGENT_COST_FAILED = 'The agent cost step failed, so workflow agent spend is not counted.';
+
 export function recordAgentCost(runDir, root, prices = loadPrices()) {
   const agents = collect(runDir, root);
-  const byPhase = {}, unpriced = {};
-  for (const a of agents) {
-    const r = costOfTranscript(a.file, prices);
+  const byPhase = {}, unpriced = {}, seen = new Set();
+  for (const a of agents.sort((x, y) => (x.file < y.file ? -1 : 1))) {
+    const r = costOfTranscript(a.file, prices, seen);
     const e = byPhase[a.phase] || (byPhase[a.phase] = { usd: 0, runs: 0 });
     e.usd += r.usd; e.runs += 1;
     for (const [k, v] of Object.entries(r.unpriced)) unpriced[k] = (unpriced[k] || 0) + v;
@@ -120,7 +140,16 @@ export function recordAgentCost(runDir, root, prices = loadPrices()) {
 }
 
 if (process.argv[1] && fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url))) {
-  const argv = process.argv.slice(2), ri = argv.indexOf('--root');
+  const argv = process.argv.slice(2);
+  const fi = argv.indexOf('--failed'); // the workflow could not run the step: say so in cost.json instead of staying silent (#171)
+  if (fi >= 0) {
+    argv.splice(fi, 1);
+    if (!argv[0]) { console.error('usage: node scripts/agent-cost.mjs <runDir> --failed'); process.exit(2); }
+    addNotCounted(path.resolve(argv[0]), AGENT_COST_FAILED);
+    console.log('noted: agent cost step failed');
+    process.exit(0);
+  }
+  const ri = argv.indexOf('--root');
   const root = ri >= 0 ? argv[ri + 1] : (process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'));
   if (ri >= 0) argv.splice(ri, 2);
   if (!argv[0]) { console.error('usage: node scripts/agent-cost.mjs <runDir> [--root dir]'); process.exit(2); }

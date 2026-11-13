@@ -119,8 +119,21 @@ export function addCost(runDir, phase, usd) {
   return c;
 }
 
+// One plain sentence added to cost.json notCounted (once), without touching spend (#171).
+export function addNotCounted(runDir, line) {
+  const f = path.join(runDir, 'cost.json');
+  let c = { phases: {}, totalUsd: 0 };
+  try { c = JSON.parse(fs.readFileSync(f, 'utf8')); } catch { /* none yet */ }
+  const nc = Array.isArray(c.notCounted) ? c.notCounted : [];
+  if (!nc.includes(line)) nc.push(line);
+  c.notCounted = nc;
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(f, JSON.stringify(c, null, 2));
+  return c;
+}
+
 // Agent spend per phase from the workflow transcripts (#142). Replaces the earlier agent value, so a rerun does not count twice.
-// usd stays room spend + agent spend. notCounted is a list of plain sentences.
+// usd stays room spend + agent spend. The event usd is the change of agent spend, never below 0 (a lower total on a rerun shows as 0, not "-$x"). notCounted is a list of plain sentences.
 export function setAgentCost(runDir, byPhase, notCounted = []) {
   const f = path.join(runDir, 'cost.json');
   let c = { phases: {}, totalUsd: 0 };
@@ -146,7 +159,7 @@ export function setAgentCost(runDir, byPhase, notCounted = []) {
   fs.writeFileSync(f, next);
   let maxUsd = null;
   try { maxUsd = JSON.parse(fs.readFileSync(path.join(runDir, 'size.json'), 'utf8')).maxUsd ?? null; } catch { /* no size.json */ }
-  tryEmit(runDir, { kind: 'cost', phase: 'Agents', usd: r9(sumAgent(c.phases) - before), totalUsd: c.totalUsd, maxUsd });
+  tryEmit(runDir, { kind: 'cost', phase: 'Agents', usd: Math.max(0, r9(sumAgent(c.phases) - before)), totalUsd: c.totalUsd, maxUsd });
   return c;
 }
 
