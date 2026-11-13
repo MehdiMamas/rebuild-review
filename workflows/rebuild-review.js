@@ -28,17 +28,22 @@ const LONG_RUN = `${pluginRoot}/scripts/long-run.mjs`
 const LONG_DIR = `${runDir}/long`
 const WAIT_SECONDS = 540
 const MAX_WAITS = 54 // 54 waits of 540 s are 8 hours
+const ROOM_MAX_WAITS = 40 // room.mjs steps: 40 waits are 6 hours
+const RESULT_GRACE = 60 // seconds a command may stay alive after it wrote its result file
 const STARTED = { type: 'object', required: ['ok'], properties: { ok: { type: 'boolean' }, detail: { type: 'string' } } }
 const WAITED = { type: 'object', required: ['state'], properties: { state: { type: 'string', enum: ['running', 'exited', 'lost'] }, code: { type: 'number' }, tail: { type: 'string' } } }
 // States: exited, lost (the supervisor died without an exit file), start-failed (the start agent failed or died; tail has the reason),
 // wait-failed (the wait agents died or answered nothing 3 times in a row), timeout (all MAX_WAITS waits ended with the command still running).
-async function longRun(name, command, label, phase) {
+async function longRun(name, command, label, phase, opts = {}) {
   const started = await agent(`Run exactly this one command with the Bash tool (it returns at once):\nnode ${q(LONG_RUN)} start ${q(LONG_DIR)} ${q(name)} -- ${command}\nReturn ok true if it exited 0, otherwise ok false with its error output as detail. Change nothing else.`, { ...CHEAP, label: `${label}-start`, phase, schema: STARTED })
   if (!started || !started.ok) return { state: 'start-failed', tail: (started && started.detail) || 'start agent died' }
+  // A result file the command wrote counts as its answer: after a short grace the supervisor ends a command that stays alive (#167).
+  const resultArgs = opts.result ? ` --result-in ${q(opts.result[0])} --result-prefix ${q(opts.result[1])} --grace ${RESULT_GRACE}` : ''
+  const maxWaits = opts.maxWaits || MAX_WAITS
   let dead = 0
   let noCode = 0
-  for (let n = 1; n <= MAX_WAITS; n++) {
-    const w = await agent(`Run exactly this one command with the Bash tool in the foreground (never in the background), with the Bash timeout set to 600000:\nnode ${q(LONG_RUN)} wait ${q(LONG_DIR)} ${q(name)} --seconds ${WAIT_SECONDS}\nIt prints one JSON line. Return its fields state, code and tail, copied exactly. code is a number and 0 is a number: always include it, 0 included; leave it out only when the line prints null. Change nothing else.`, { ...CHEAP, label: `${label}-wait-${n}`, phase, schema: WAITED })
+  for (let n = 1; n <= maxWaits; n++) {
+    const w = await agent(`Run exactly this one command with the Bash tool in the foreground (never in the background), with the Bash timeout set to 600000:\nnode ${q(LONG_RUN)} wait ${q(LONG_DIR)} ${q(name)} --seconds ${WAIT_SECONDS}${resultArgs}\nIt prints one JSON line. Return its fields state, code and tail, copied exactly. code is a number and 0 is a number: always include it, 0 included; leave it out only when the line prints null. Change nothing else.`, { ...CHEAP, label: `${label}-wait-${n}`, phase, schema: WAITED })
     if (!w || !w.state) {
       if (++dead >= 3) return { state: 'wait-failed', tail: 'the wait agent died or answered nothing 3 times in a row' }
       continue
@@ -51,7 +56,7 @@ async function longRun(name, command, label, phase) {
     }
     if (w.state !== 'running') return w
   }
-  return { state: 'timeout', tail: 'still running after 8 hours of waiting' }
+  return { state: 'timeout', tail: `still running after ${Math.round(maxWaits * WAIT_SECONDS / 3600 * 10) / 10} hours of waiting` }
 }
 const exitedOk = (r) => r.state === 'exited' && r.code === 0
 const whyNot = (r) => r.state === 'exited' ? `exit code ${r.code}: ${r.tail}` : `${{ lost: 'the command was lost', 'start-failed': 'could not start', 'wait-failed': 'waiting failed', timeout: 'timed out' }[r.state] || r.state}: ${r.tail}`
@@ -305,7 +310,7 @@ A feature marked "keep" gets a test asserting the behaviour. A feature marked "d
         if (d.action === 'stop') await agent(`Write ${q(PAR + '/loop-stop.txt')} containing: ${d.reason}. Touch nothing else.`, { ...CHEAP, label: 'parity-loop-stop', phase: 'Parity' })
         break
       }
-      const bl = await longRun(`parity-build-${round}`, `node ${q(pluginRoot + '/scripts/room.mjs')} build --target ${q(target)} --run-dir ${q(runDir)} --failures ${q(PAR + '/failures.md')}`, `parity-build-${round}`, 'Parity')
+      const bl = await longRun(`parity-build-${round}`, `node ${q(pluginRoot + '/scripts/room.mjs')} build --target ${q(target)} --run-dir ${q(runDir)} --failures ${q(PAR + '/failures.md')}`, `parity-build-${round}`, 'Parity', { result: [`${runDir}/rebuild`, 'build-'], maxWaits: ROOM_MAX_WAITS })
       const b = await roomResult(bl, `parity-build-${round}`, 'Parity')
       if (!b || !b.ok) {
         await agent(`Write ${q(PAR + '/loop-stop.txt')} containing: ${(b && b.reason) || 'build agent died'}. Touch nothing else.`, { ...CHEAP, label: 'parity-loop-stop', phase: 'Parity' })
@@ -461,7 +466,7 @@ for (const phase of PHASES) {
   if (phase === 'Stack' || phase === 'Rebuild') {
     const mode = phase === 'Stack' ? 'stack' : 'build'
     // The room script does the work in a clean room (scripts/room.mjs); the agent only runs it and reports.
-    const rl = await longRun(`room-${mode}`, `node ${q(pluginRoot + '/scripts/room.mjs')} ${mode} --target ${q(target)} --run-dir ${q(runDir)}`, phase, phase)
+    const rl = await longRun(`room-${mode}`, `node ${q(pluginRoot + '/scripts/room.mjs')} ${mode} --target ${q(target)} --run-dir ${q(runDir)}`, phase, phase, { result: [`${runDir}/rebuild`, `${mode}-`], maxWaits: ROOM_MAX_WAITS })
     const r = await roomResult(rl, phase, phase)
     if (!r || !r.ok) { const reason = (r && r.reason) || 'room agent died'; await stoppedReport(phase, reason); return { ran, stopped: phase, reason } }
     if (phase === 'Rebuild') {

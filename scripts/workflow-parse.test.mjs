@@ -59,3 +59,10 @@ test('the web adapter gives run.env to the install and build commands (#155)', (
   assert.match(src, /execSync\(run\.install, \{[^}]*env: \{ \.\.\.process\.env, \.\.\.run\.env \}/)
   assert.match(src, /execSync\(run\.build, \{[^}]*env: \{ \.\.\.process\.env, \.\.\.run\.env \}/)
 })
+
+test('both room.mjs steps pass a result file and a wait cap to longRun (#167)', () => {
+  const lines = readFileSync(file, 'utf8').split('\n').filter((l) => /room\.mjs/.test(l) && /longRun\(/.test(l))
+  assert.equal(lines.length, 2)
+  for (const l of lines) assert.ok(/result: \[/.test(l) && /maxWaits: ROOM_MAX_WAITS/.test(l), l.slice(0, 120))
+  assert.ok(/ROOM_MAX_WAITS = 40/.test(readFileSync(file, 'utf8')))
+})

@@ -538,12 +538,19 @@ export async function main(argv) {
     fs.rmSync(path.join(runDir, '.canary'), { force: true });
   }
   fs.writeFileSync(resultPath, JSON.stringify(result, null, 2));
-  addCost(runDir, mode === 'stack' ? 'Stack' : 'Rebuild', result.costUsd);
+  const code = result.ok ? 0 : 1;
+  exitSoon(code, 20000);
+  try { addCost(runDir, mode === 'stack' ? 'Stack' : 'Rebuild', result.costUsd); } catch (e) { console.error('cost not recorded: ' + (e.message || e)); }
   console.log('RESULT ' + resultPath);
   console.log(JSON.stringify({ ok: result.ok, reason: result.reason }));
-  return result.ok ? 0 : 1;
+  return code;
+}
+
+// The result is written: leave even if some handle keeps the event loop open (#167). The timer is unref'd, so it never delays a normal exit.
+export function exitSoon(code, ms) {
+  setTimeout(() => process.exit(code), ms).unref();
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  main(process.argv.slice(2)).then((c) => process.exit(c));
+  main(process.argv.slice(2)).then((c) => process.exit(c), (e) => { console.error(String((e && e.stack) || e)); process.exit(1); });
 }
