@@ -6,7 +6,7 @@ import path from 'node:path';
 import { chromium } from 'playwright';
 import { launchChromium } from './browser.mjs';
 import { makeContext, envOrigins, runStep, sleep, scrub, endsSession, endsSessionPath } from './context.mjs';
-import { validateAuth, authSecrets, redactSecrets, signIn, LOGIN_RE } from './auth.mjs';
+import { validateAuth, authSecrets, redactSecrets, signIn, LOGIN_RE, landedOnSignIn } from './auth.mjs';
 import { startApp } from './app.mjs';
 import { runProbes } from './probes.mjs';
 import { measureScreens } from './metrics.mjs';
@@ -34,7 +34,7 @@ const MAX_SCREENS = Number(arg('max-screens')) || 30;
 const MAX_BUTTONS = Number(arg('max-buttons')) || 10;
 const MAX_PER_ROUTE = Number(arg('max-per-route')) || 2;
 const MAX_HAR_BYTES = Number(arg('max-har-bytes')) || 50 * 1024 * 1024;
-const notCaptured = [], skippedButtons = [], signOutSkipped = [], behindSignIn = new Set(), refusedSignedIn = new Set();
+const notCaptured = [], skippedButtons = [], signOutSkipped = [], behindSignIn = new Set(), refusedSignedIn = new Set(), sessionLost = new Set();
 let cutScreens = [], sameRouteSkipped = [];
 const slug = (u) => { const p = new URL(u).pathname.replace(/^\/|\/$/g, '').replace(/[^\w-]+/g, '-'); return p || 'root'; };
 const write = (f, data) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, typeof data === 'string' ? data : JSON.stringify(data, null, 2)); };
@@ -82,8 +82,8 @@ const queue = [start], seen = new Map();
     try { status = (await page.goto(url))?.status() ?? 0; await settle(page); } catch (e) { notCaptured.push(`${url}: ${scrub(e.message).split('\n')[0]}`); seen.set(key, null); continue; }
     // Sent to a sign-in page (by the server or by the page's own script), or refused: the route is behind a sign-in, not a screen.
     const here = new URL(page.url()), asked = new URL(url);
-    if (here.pathname !== asked.pathname && LOGIN_RE.test(here.pathname)) { behindSignIn.add(asked.pathname); seen.set(key, null); const to = (here.pathname + here.search); if (!seen.has(to)) queue.push(here.toString().replace(/#.*/, '')); continue; }
-    if (status === 401 || status === 403) { (authInfo.signedIn ? refusedSignedIn : behindSignIn).add(asked.pathname); seen.set(key, null); continue; }
+    if (here.pathname !== asked.pathname && LOGIN_RE.test(here.pathname)) { if (authInfo.signedIn) { sessionLost.add(key); notCaptured.push(`session lost: ${key} redirected to ${here.pathname} while signed in`); } behindSignIn.add(key); seen.set(key, null); const to = (here.pathname + here.search); if (!seen.has(to)) queue.push(here.toString().replace(/#.*/, '')); continue; }
+    if (status === 401 || status === 403) { (authInfo.signedIn ? refusedSignedIn : behindSignIn).add(key); seen.set(key, null); continue; }
     seen.set(key, { id: slug(url), url: key, title: await page.title() });
     const hrefs = await page.$$eval('a[href]', (as) => as.map((a) => a.href));
     const found = new Set();
@@ -125,6 +125,7 @@ for (const s of screens) {
     try {
       await page.goto(new URL(s.url, origin).toString());
       await settle(page);
+      if (landedOnSignIn(new URL(s.url, origin), page.url(), authInfo.signedIn)) { sessionLost.add(s.url); throw new Error(`redirected to ${new URL(page.url()).pathname} while signed in, session lost`); }
       await shot(page, dir, `${size.w}-${theme}`);
       if (size.w === 1440 && theme === 'light') {
         write(path.join(dir, 'render.html'), R(await page.content()));
@@ -171,7 +172,7 @@ const open = async (s, { width = 1440, height = 900, colorScheme = 'light' } = {
 };
 const notChecked = [];
 const probeSkipped = [];
-const probes = await runProbes({ notChecked, browser, origin, screens, timings, storageState, allowOrigins, labelFilter: (l) => !endsSession(l, authInfo.signedIn), skipped: probeSkipped });
+const probes = await runProbes({ notChecked, browser, origin, screens, timings, storageState, signedIn: authInfo.signedIn, allowOrigins, labelFilter: (l) => !endsSession(l, authInfo.signedIn), skipped: probeSkipped });
 for (const x of probeSkipped) if (!signOutSkipped.some((y) => y.screen === x.route && y.label === x.label)) { signOutSkipped.push({ screen: x.route, label: x.label }); notCaptured.push(`${x.route}: button "${x.label}" not pressed by a probe (it would end the session or remove the account)`); }
 const a11y = await measureScreens({ notChecked, open, screens, timings, probes, widths });
 if (buildMs !== null) timings.push({ name: 'build-ms', value: buildMs, unit: 'ms' });
@@ -202,8 +203,9 @@ write(path.join(out, 'coverage.json'), R({
   harEntriesSkipped: har.length - harKept.length,
   auth: authInfo,
   // Every screen captured with the session in use, public ones included; it does not say the screen needs a sign-in.
-  screensCapturedWithSession: authInfo.signedIn ? screens.map((s) => s.url) : [],
+  screensCapturedWithSession: authInfo.signedIn ? screens.map((s) => s.url).filter((u) => !sessionLost.has(u)) : [],
   behindSignIn: behind,
+  sessionLost: [...sessionLost].sort(),
   refusedSignedIn: refused,
   signOutSkipped,
 }));
