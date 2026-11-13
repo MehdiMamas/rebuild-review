@@ -62,17 +62,25 @@ export function costOfTranscript(file, prices = loadPrices()) {
 const readJson = (f) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
 const subdirs = (d) => { try { return fs.readdirSync(d, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => path.join(d, e.name)); } catch { return []; }; };
 
-// The run folder as a whole path: /x/run1 does not match /x/run10 or /y/x/run1. Only the head of a transcript is read, where the prompt is.
+// The run folder as a whole path: /x/run1 does not match /x/run10 or /y/x/run1. The whole transcript is scanned in 1 MB chunks, stopping at the first hit.
 export const runRe = (dir) => new RegExp('(?<![\\w.~-])' + dir.replace(/[.*+?^${}()|[\]\\\/]/g, '\\$&') + '(?![\\w-])(?!\\.\\w)');
-function namesRun(file, re) {
+function namesRun(file, re, keep = 512) {
   let fd;
   try {
     fd = fs.openSync(file, 'r');
-    const buf = Buffer.alloc(HEAD_BYTES);
-    return re.test(buf.toString('utf8', 0, fs.readSync(fd, buf, 0, HEAD_BYTES, 0)));
+    const buf = Buffer.alloc(CHUNK_BYTES);
+    let tail = Buffer.alloc(0), pos = 0;
+    for (;;) {
+      const n = fs.readSync(fd, buf, 0, CHUNK_BYTES, pos);
+      if (n <= 0) return false;
+      pos += n;
+      const win = Buffer.concat([tail, buf.subarray(0, n)]);
+      if (re.test(win.toString('utf8'))) return true;
+      tail = win.subarray(Math.max(0, win.length - keep)); // overlap, so a mention across two chunks is found
+    }
   } catch { return false; } finally { if (fd !== undefined) try { fs.closeSync(fd); } catch { /* closed */ } }
 }
-const HEAD_BYTES = 65536;
+const CHUNK_BYTES = 1 << 20;
 
 // Agents of every workflow folder that names the run folder: [{ file, phase }].
 export function collect(runDir, root) {
@@ -82,7 +90,7 @@ export function collect(runDir, root) {
     for (const wf of subdirs(path.join(sess, 'subagents', 'workflows'))) {
       let names; try { names = fs.readdirSync(wf).filter((f) => /^agent-.*\.jsonl$/.test(f)); } catch { continue; }
       const files = names.map((n) => path.join(wf, n));
-      const mine = files.some((f) => namesRun(f, re));
+      const mine = files.some((f) => namesRun(f, re, path.resolve(runDir).length * 4 + 16));
       if (!mine) continue;
       for (const file of files) {
         const meta = readJson(file.replace(/\.jsonl$/, '.meta.json')) || {};

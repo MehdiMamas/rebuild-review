@@ -184,3 +184,29 @@ test('the CLI runs through a symlinked scripts path', () => {
   const out = execFileSync(process.execPath, [link, run, '--root', root], { encoding: 'utf8' });
   assert.match(out, /total \$2\.00/);
 });
+
+test('a run folder named only after the first 64 KB and across a chunk edge is still found', () => {
+  const run = tmp();
+  const filler = user('x'.repeat(1 << 20)); // pushes the mention past the first chunk
+  const root = fixture(run, [{ name: 'a', phase: 'Capture', lines: [filler, user(`later: ${run}/golden`), msg('m1', 'claude-sonnet-5-5', sonnet(0))] }]);
+  assert.equal(collect(run, root).length, 1);
+  // a mention that straddles the chunk boundary exactly
+  const root2 = tmp();
+  const dir = path.join(root2, 'projects', 'p', 's', 'subagents', 'workflows', 'wf_1');
+  fs.mkdirSync(dir, { recursive: true });
+  const mention = `${run}/x`;
+  fs.writeFileSync(path.join(dir, 'agent-a.jsonl'), 'a'.repeat((1 << 20) - 5) + ' ' + mention + '\n');
+  assert.equal(collect(run, root2).length, 1);
+});
+
+test('an agent-only phase is deleted when its transcripts are gone on a rerun; one with room spend stays without agent fields', () => {
+  const run = tmp();
+  const root = fixture(run, [{ name: 'a', phase: 'Score', lines: [user(run), msg('m1', 'claude-sonnet-5-5', sonnet(0))] }, { name: 'b', phase: 'Capture', lines: [user(run), msg('m2', 'claude-sonnet-5-5', sonnet(0))] }]);
+  addCost(run, 'Capture', 0.5);
+  let c = recordAgentCost(run, root);
+  assert.ok(c.phases.Score && c.phases.Capture.agentUsd > 0);
+  c = recordAgentCost(run, tmp()); // transcripts gone
+  assert.equal(c.phases.Score, undefined);
+  assert.deepEqual(c.phases.Capture, { usd: 0.5, runs: 1 });
+  assert.ok(Math.abs(c.totalUsd - 0.5) < 1e-9);
+});
