@@ -124,7 +124,7 @@ test('section order, gate beside scores, first action', () => {
   assert.ok(html.indexOf('F-002') < html.indexOf('F-001'), 'failures first');
   assert.match(html, /Other browsers: not checked/);
   assert.match(html, /heap-mb was not measured/);
-  assert.match(html, /other agents are not counted/);
+  assert.match(html, /No cost was recorded/);
 });
 
 test('screenshot pairs: largest difference first, embed cap', () => {

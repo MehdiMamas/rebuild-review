@@ -540,11 +540,14 @@ export async function main(argv) {
   fs.writeFileSync(resultPath, JSON.stringify(result, null, 2));
   const code = result.ok ? 0 : 1;
   exitSoon(code, 20000);
-  try { addCost(runDir, mode === 'stack' ? 'Stack' : 'Rebuild', result.costUsd); } catch (e) { console.error('cost not recorded: ' + (e.message || e)); }
+  try { addCost(runDir, costPhase(mode, failures), result.costUsd); } catch (e) { console.error('cost not recorded: ' + (e.message || e)); }
   console.log('RESULT ' + resultPath);
   console.log(JSON.stringify({ ok: result.ok, reason: result.reason }));
   return code;
 }
+
+// The cost.json phase of a child: a build with --failures is a parity-loop round (#142).
+export const costPhase = (mode, failures) => (mode === 'stack' ? 'Stack' : failures ? 'Parity' : 'Rebuild');
 
 // The result is written: leave even if some handle keeps the event loop open (#167). The timer is unref'd, so it never delays a normal exit.
 export function exitSoon(code, ms) {

@@ -301,11 +301,15 @@ export function render(runDir, { embedCap = EMBED_CAP, thresholds, stopped } = {
   sec('unchecked', 'What this run could not check', `<ul>${items.map((i) => `<li>${esc(i)}</li>`).join('')}</ul>`);
 
   // 7 Cost
-  const rdir = path.join(runDir, 'rebuild');
-  const results = fs.existsSync(rdir) ? fs.readdirSync(rdir).filter((f) => f.endsWith('.result.json')).sort() : [];
-  const cost = results.reduce((s, f) => s + ((tryJson(path.join(rdir, f)) || {}).costUsd || 0), 0);
+  const costJson = tryJson(path.join(runDir, 'cost.json'));
   const rounds = tryJson(path.join(runDir, 'parity', 'rounds.json'));
-  sec('cost', 'Cost', `<p>${results.length ? `$${cost.toFixed(2)} across ${results.length} builder run(s)` : 'No builder cost was recorded'}${Array.isArray(rounds) ? `; ${rounds.length} round(s) in rounds.json` : ''}. Rebuild children only; other agents are not counted.</p>`);
+  let costHtml;
+  if (costJson && costJson.phases && Object.keys(costJson.phases).length) {
+    const rows = Object.entries(costJson.phases).map(([p, e]) => `<tr><td>${esc(p)}</td><td>$${(e.usd || 0).toFixed(2)}</td><td>${e.runs || 0}</td><td>${e.agentUsd !== undefined ? `$${e.agentUsd.toFixed(2)} (${e.agentRuns || 0} agent(s))` : ''}</td></tr>`).join('');
+    const nc = Array.isArray(costJson.notCounted) && costJson.notCounted.length ? costJson.notCounted : ['Rebuild children and workflow agents are counted only as far as cost.json records them.'];
+    costHtml = `<table><tr><th>Phase</th><th>Total</th><th>Builder runs</th><th>of which agents</th></tr>${rows}</table><p>Total $${(costJson.totalUsd || 0).toFixed(2)}${Array.isArray(rounds) ? `; ${rounds.length} round(s) in rounds.json` : ''}.</p><p>Not counted:</p><ul>${nc.map((i) => `<li>${esc(i)}</li>`).join('')}</ul>`;
+  } else costHtml = '<p>No cost was recorded.</p>';
+  sec('cost', 'Cost', costHtml);
 
   // 8 Where the project is
   sec('project', 'Where the project is', !fs.existsSync(path.join(runDir, 'project')) ? '<p class="mut">No project was built in this run.</p>' : `<p><a href="../project/">project/</a> <code>${esc(path.join(runDir, 'project'))}</code></p><p>To use it, copy it over your project by hand. This tool never changes your project, and files an issue only if you ask.</p>`);
