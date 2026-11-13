@@ -593,7 +593,7 @@ const ctx = prepare(JSON.parse(fs.readFileSync(process.env.APP_RUN, 'utf8')), pr
 
   // 15, 16, 17, 30, 31: containers that do not come up
   for (const [n, name, vars, storeExtra, want] of [
-    [15, 'a container that never becomes ready stops the start, removes everything, and the error names the store and its last log lines', { RR_FAKE_NEVER_READY: '1', RR_STORE_READY_MS: '2500' }, {}, [/store "kv" did not become ready within 3 s/, /still initialising database/]],
+    [15, 'a container that never becomes ready stops the start, removes everything, and the error names the store and its last log lines', { RR_FAKE_NEVER_READY: '1', RR_STORE_READY_MS: '2500' }, {}, [/store "kv" did not become ready within 3 s \(its address 127\.0\.0\.2:\d+ may not be reachable/, /still initialising database/]],
     [16, 'a ready command that hangs ends at the ready limit and everything is removed', { RR_STORE_READY_MS: '2500' }, { ready: ['hang'] }, [/store "kv" did not become ready/]],
     [17, 'a container that exits at once after run: the error names the store and its last log lines', { RR_FAKE_EXIT_AT_ONCE: '1' }, {}, [/store "kv" exited before it was ready/, /data directory is not writable/]],
     [30, 'a container whose inspect gives no address stops the start with an error naming the store, and everything is removed', { RR_FAKE_NO_ADDRESS: '1' }, {}, [/store "kv": no address for its container \(it probably exited at once\)/]],
@@ -699,11 +699,11 @@ const ctx = prepare(JSON.parse(fs.readFileSync(process.env.APP_RUN, 'utf8')), pr
     const val = (a, f) => a[a.indexOf(f) + 1];
     const has = (a, x) => a.includes(x);
     const labelsOk = runs.every((a) => ['rr-backend=1', `rr-owner=${process.pid}`, `rr-host=${os.hostname()}`].every((l) => a.some((x, i) => a[i - 1] === '--label' && x === l)));
-    const argsOk = runs.length === 2 && runs.every((a) => val(a, '--network') === netName && has(a, '--pull=never') && !has(a, '-p') && !has(a, '--publish') && !has(a, '-P') && val(a, '--pids-limit') === '512') && val(runs[0], '--memory') === '1g' && val(runs[1], '--memory') === '2g' && has(runs[0], 'SECRET=stand-in');
+    const argsOk = runs.length === 2 && runs.every((a) => val(a, '--network') === netName && has(a, '--pull=never') && !has(a, '-p') && !has(a, '--publish') && !has(a, '-P') && val(a, '--pids-limit') === '512' && val(a, '--security-opt') === 'no-new-privileges') && val(runs[0], '--memory') === '1g' && val(runs[1], '--memory') === '2g' && has(runs[0], 'SECRET=stand-in');
     const netOk = nc && has(nc, '--internal') && /^rr-\d+-[0-9a-f]{6}$/.test(netName);
     const order = calls.findIndex((a) => a[0] === 'network' && a[1] === 'rm') > calls.map((a) => a[0]).lastIndexOf('rm');
     {
-      check(21, 'the run of a store container holds an internal network, --pull=never, no -p, the labels and the memory and pids caps', !!(labelsOk && argsOk && netOk && order && left() === 0), [`network ${netName}: internal ${!!(nc && has(nc, '--internal'))}`, `${runs.length} runs: labels ${labelsOk}, arguments ${argsOk}`, `containers removed before the network: ${order}`]);
+      check(21, 'the run of a store container holds an internal network, --pull=never, no -p, the labels and the memory and pids caps and no-new-privileges', !!(labelsOk && argsOk && netOk && order && left() === 0), [`network ${netName}: internal ${!!(nc && has(nc, '--internal'))}`, `${runs.length} runs: labels ${labelsOk}, arguments ${argsOk}`, `containers removed before the network: ${order}`]);
     }
   }
 

@@ -165,7 +165,7 @@ async function waitStoreReady(s, store, cname, addr) {
     const left = limit - (Date.now() - t0);
     if (store.ready) { if (rtRun(s.rt, ['exec', cname, ...store.ready], Math.max(500, Math.min(10000, left))).status === 0) return; }
     else if (await tcpOpen(addr, store.port, 1000)) return;
-    if (Date.now() - t0 >= limit) throw new Error(`store "${store.name}" did not become ready within ${Math.round(limit / 1000)} s: ${logTail(s, cname)}`);
+    if (Date.now() - t0 >= limit) throw new Error(`store "${store.name}" did not become ready within ${Math.round(limit / 1000)} s (its address ${addr}:${store.port} may not be reachable from this machine, as with a VM-based runtime on macOS): ${logTail(s, cname)}`);
     await sleep(200);
   }
 }
@@ -208,7 +208,7 @@ export async function startStores(ctx) {
     for (let i = 0; i < s.list.length; i++) {
       const st = s.list[i], cname = s.cnames[i];
       const envArgs = Object.entries(st.env || {}).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
-      const rr = rtRun(s.rt, ['run', '-d', '--name', cname, '--network', s.net, '--pull=never', '--memory', st.memory || DEFAULT_MEMORY, '--pids-limit', PIDS_LIMIT, ...labels, '--label', `rr-port=${st.port}`, ...envArgs, st.image]);
+      const rr = rtRun(s.rt, ['run', '-d', '--name', cname, '--network', s.net, '--pull=never', '--memory', st.memory || DEFAULT_MEMORY, '--pids-limit', PIDS_LIMIT, '--security-opt', 'no-new-privileges', ...labels, '--label', `rr-port=${st.port}`, ...envArgs, st.image]);
       if (rr.status !== 0) throw new Error(`store "${st.name}": could not start its container: ${lastLine(rr)}`);
       const ins = rtRun(s.rt, ['inspect', '--format', '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}', cname]);
       const addr = ins.status === 0 ? ins.stdout.trim() : '';
