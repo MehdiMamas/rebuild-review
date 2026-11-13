@@ -349,7 +349,10 @@ test('prepareRoom gives the committed project only: no ignored files, no uncommi
   fs.mkdirSync(path.join(proj, 'node_modules')); fs.writeFileSync(path.join(proj, 'node_modules', 'x.js'), 'x');
   fs.writeFileSync(path.join(proj, 'dirty.js'), 'd');
   execFileSync('git', ['-C', proj, 'remote', 'add', 'origin', runDir]);
-  fs.cpSync(proj, path.join(runDir, 'project'), { recursive: true });
+  execFileSync('git', ['clone', '-q', proj, path.join(runDir, 'project')]);
+  // the project folder holds an ignored folder and an uncommitted file, as a finished build can
+  fs.mkdirSync(path.join(runDir, 'project', 'node_modules')); fs.writeFileSync(path.join(runDir, 'project', 'node_modules', 'x.js'), 'x');
+  fs.writeFileSync(path.join(runDir, 'project', 'dirty.js'), 'd');
   const room = prepareRoom({ runDir, target, inputs: ['features.md'] });
   const p = path.join(room, 'project');
   assert.equal(fs.existsSync(path.join(p, 'a.js')), true);
@@ -363,7 +366,7 @@ test('env written by copyEnv stays out of the room, a dirty rebuild-run.json doe
   const { target, runDir } = makeRun('F-001 A user sees a list.\n');
   fs.writeFileSync(path.join(runDir, 'run.json'), JSON.stringify({ start: 'y', env: { SETTING: 'stand-in' } }));
   const proj = repo({ 'rebuild-run.json': JSON.stringify({ start: 'x', dir: '.' }) });
-  fs.cpSync(proj, path.join(runDir, 'project'), { recursive: true });
+  execFileSync('git', ['clone', '-q', proj, path.join(runDir, 'project')]);
   copyEnv(runDir);
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(runDir, 'project', 'rebuild-run.json'), 'utf8')).env, { SETTING: 'stand-in' });
   const room = prepareRoom({ runDir, target, inputs: ['features.md'] });
@@ -374,6 +377,35 @@ test('env written by copyEnv stays out of the room, a dirty rebuild-run.json doe
   assert.equal('env' in JSON.parse(fs.readFileSync(path.join(runDir, 'project', 'rebuild-run.json'), 'utf8')), false);
   copyEnv(runDir);
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(runDir, 'project', 'rebuild-run.json'), 'utf8')).env, { SETTING: 'stand-in' });
+});
+
+test('copyEnv copies stores without env, and a delivered rebuild-run.json keeps them; the builder copy keeps name, image and port and has no store env', () => {
+  const stores = [{ name: 'kv', image: 'x@sha256:' + 'a'.repeat(64), port: 6400, env: { PASS: 'stand-in' } }];
+  const { target, runDir } = makeRun('F-001 A user sees a list.\n');
+  fs.writeFileSync(path.join(runDir, 'run.json'), JSON.stringify({ start: 'y', stores }));
+  // the committed file may name the stores with their env (a later round); the room's clone is committed state, and dropEnv strips the env from it
+  const proj = repo({ 'rebuild-run.json': JSON.stringify({ start: 'x', dir: '.', stores }) });
+  execFileSync('git', ['clone', '-q', proj, path.join(runDir, 'project')]);
+  fs.writeFileSync(path.join(runDir, 'project', 'rebuild-run.json'), JSON.stringify({ start: 'x', dir: '.' }));
+  copyEnv(runDir);
+  const delivered = JSON.parse(fs.readFileSync(path.join(runDir, 'project', 'rebuild-run.json'), 'utf8'));
+  assert.deepEqual(delivered.stores, stores);
+  assert.equal('env' in delivered, false);
+  const room = prepareRoom({ runDir, target, inputs: ['features.md'] });
+  const copy = JSON.parse(fs.readFileSync(path.join(room, 'project', 'rebuild-run.json'), 'utf8'));
+  assert.deepEqual(copy.stores, [{ name: 'kv', image: stores[0].image, port: 6400 }]);
+});
+
+test('copyEnv leaves stores unset when run.json has none, and copies env alone', () => {
+  const runDir = tmp();
+  fs.mkdirSync(path.join(runDir, 'project'));
+  const rb = path.join(runDir, 'project', 'rebuild-run.json');
+  fs.writeFileSync(rb, JSON.stringify({ start: 'x' }));
+  fs.writeFileSync(path.join(runDir, 'run.json'), JSON.stringify({ start: 'y', env: { A: 'b' } }));
+  copyEnv(runDir);
+  const out = JSON.parse(fs.readFileSync(rb, 'utf8'));
+  assert.deepEqual(out, { start: 'x', env: { A: 'b' } });
+  assert.equal('stores' in out, false);
 });
 
 test('every BUDGET_USD key room.mjs uses exists, so no child gets --max-budget-usd undefined', () => {
@@ -489,7 +521,7 @@ test('given auth in run.json and a finished build -> copyEnv puts auth in rebuil
   const auth = { steps: [{ open: '/login' }, { type: { into: 'Password', text: 'stand-in-pw-1' } }] };
   fs.writeFileSync(path.join(runDir, 'run.json'), JSON.stringify({ start: 'y', auth }));
   const proj = repo({ 'rebuild-run.json': JSON.stringify({ start: 'x', dir: '.' }) });
-  fs.cpSync(proj, path.join(runDir, 'project'), { recursive: true });
+  execFileSync('git', ['clone', '-q', proj, path.join(runDir, 'project')]);
   copyEnv(runDir);
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(runDir, 'project', 'rebuild-run.json'), 'utf8')).auth, auth);
   const room = prepareRoom({ runDir, target, inputs: ['features.md'] });

@@ -196,6 +196,7 @@ write(path.join(out, 'manifest.json'), JSON.stringify(scrubDeep({
   screens: captured.map((c) => ({ id: c.id, method: c.req.method || 'GET', path: c.op ? c.op.path : c.req.path, ...(c.steps ? { steps: c.steps } : {}), ...(c.state ? { state: true } : {}) })),
   states: captured.filter((c) => c.state).map((c) => c.id),
   volatile, networkMode: networkMode(), discovery: found.source,
+  ...(Array.isArray(run.stores) && run.stores.length ? { stores: run.stores.map((x) => ({ name: x.name, image: x.image })) } : {}),
   blockedRequests: [],
   notCaptured: [...notCaptured, ...notChecked.map((r) => scrub(`${r.probe} ${r.route}: ${r.reason}`))],
 }), null, 2));

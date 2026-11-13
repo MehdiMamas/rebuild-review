@@ -385,26 +385,29 @@ export function checkChild(r, transcript, runDir, target, where = '') {
 }
 
 // ---- CLI ----
-// run.json's optional "env" (stand-in settings) and "auth" (sign-in steps) are copied into the delivered rebuild-run.json so the rebuild starts and is captured like the original. Each key is handled on its own. Values are never printed.
+// run.json's optional "env" (stand-in settings), "auth" (sign-in steps) and "stores" (throwaway containers) are copied into the delivered rebuild-run.json so the rebuild starts and is captured like the original. Each key is handled on its own; a key run.json lacks is left unset. Values are never printed.
 export function copyEnv(runDir) {
   const from = path.join(runDir, 'run.json'), to = path.join(runDir, 'project', 'rebuild-run.json');
   if (!fs.existsSync(from) || !fs.existsSync(to)) return;
   const src = JSON.parse(fs.readFileSync(from, 'utf8'));
-  const keys = ['env', 'auth'].filter((k) => src[k] !== undefined);
+  const keys = ['env', 'auth', 'stores'].filter((k) => src[k] !== undefined);
   if (!keys.length) return;
   const rb = JSON.parse(fs.readFileSync(to, 'utf8'));
   for (const k of keys) rb[k] = src[k];
   fs.writeFileSync(to, JSON.stringify(rb, null, 2) + '\n');
 }
 
-// The builder never sees the settings or the sign-in steps: remove them from the copy it gets.
+// The builder never sees the settings or the sign-in steps: remove them from the copy it gets. A store keeps its name, image and port (so the author knows which store to use); only its env goes.
 export function dropEnv(file) {
   if (!fs.existsSync(file)) return;
   const rb = JSON.parse(fs.readFileSync(file, 'utf8'));
-  if (!('env' in rb) && !('auth' in rb)) return;
-  delete rb.env;
-  delete rb.auth;
-  fs.writeFileSync(file, JSON.stringify(rb, null, 2) + '\n');
+  let changed = false;
+  for (const k of ['env', 'auth']) if (k in rb) { delete rb[k]; changed = true; }
+  if (Array.isArray(rb.stores) && rb.stores.some((s) => s && typeof s === 'object' && 'env' in s)) {
+    rb.stores = rb.stores.map((s) => { if (!s || typeof s !== 'object') return s; const { env, ...rest } = s; return rest; });
+    changed = true;
+  }
+  if (changed) fs.writeFileSync(file, JSON.stringify(rb, null, 2) + '\n');
 }
 
 export function cloneProject(from, to) {
