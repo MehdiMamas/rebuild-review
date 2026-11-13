@@ -408,46 +408,6 @@ export function dropEnv(file) {
     changed = true;
   }
   if (changed) fs.writeFileSync(file, JSON.stringify(rb, null, 2) + '\n');
-export function copyEnv(runDir) {
-  const from = path.join(runDir, 'run.json'), to = path.join(runDir, 'project', 'rebuild-run.json');
-  if (!fs.existsSync(from) || !fs.existsSync(to)) return;
-  const src = JSON.parse(fs.readFileSync(from, 'utf8'));
-<<<<<<< HEAD
-  const keys = ['env', 'auth'].filter((k) => src[k] !== undefined);
-  if (!keys.length) return;
-  const rb = JSON.parse(fs.readFileSync(to, 'utf8'));
-  for (const k of keys) rb[k] = src[k];
-  fs.writeFileSync(to, JSON.stringify(rb, null, 2) + '\n');
-}
-
-// The builder never sees the settings or the sign-in steps: remove them from the copy it gets.
-export function dropEnv(file) {
-  if (!fs.existsSync(file)) return;
-  const rb = JSON.parse(fs.readFileSync(file, 'utf8'));
-  if (!('env' in rb) && !('auth' in rb)) return;
-  delete rb.env;
-  delete rb.auth;
-  fs.writeFileSync(file, JSON.stringify(rb, null, 2) + '\n');
-=======
-  if (src.env === undefined && src.stores === undefined) return;
-  const rb = JSON.parse(fs.readFileSync(to, 'utf8'));
-  if (src.env !== undefined) rb.env = src.env;
-  if (src.stores !== undefined) rb.stores = src.stores;
-  fs.writeFileSync(to, JSON.stringify(rb, null, 2) + '\n');
-}
-
-// The builder never sees the settings: remove them from the copy it gets. A store keeps its name, image and port (so the author knows which store to use); only its env goes.
-function dropEnv(file) {
-  if (!fs.existsSync(file)) return;
-  const rb = JSON.parse(fs.readFileSync(file, 'utf8'));
-  let changed = false;
-  if ('env' in rb) { delete rb.env; changed = true; }
-  if (Array.isArray(rb.stores) && rb.stores.some((s) => s && typeof s === 'object' && 'env' in s)) {
-    rb.stores = rb.stores.map((s) => { if (!s || typeof s !== 'object') return s; const { env, ...rest } = s; return rest; });
-    changed = true;
-  }
-  if (changed) fs.writeFileSync(file, JSON.stringify(rb, null, 2) + '\n');
->>>>>>> 1b1dbcc (Builder copy: handle env and stores apart, keep each store's name, image and port)
 }
 
 export function cloneProject(from, to) {
