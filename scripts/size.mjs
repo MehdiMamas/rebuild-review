@@ -119,6 +119,35 @@ export function addCost(runDir, phase, usd) {
   return c;
 }
 
+// Agent spend per phase from the workflow transcripts (#142). Replaces the earlier agent value, so a rerun does not count twice.
+// usd stays room spend + agent spend. notCounted is a list of plain sentences.
+export function setAgentCost(runDir, byPhase, notCounted = []) {
+  const f = path.join(runDir, 'cost.json');
+  let c = { phases: {}, totalUsd: 0 };
+  try { c = JSON.parse(fs.readFileSync(f, 'utf8')); } catch { /* none yet */ }
+  const r9 = (x) => Math.round(x * 1e9) / 1e9;
+  for (const [p, e] of Object.entries(c.phases)) {
+    if (e.agentUsd === undefined && e.agentRuns === undefined) continue;
+    const room = r9(e.usd - (e.agentUsd || 0));
+    if (room === 0 && !e.runs) { delete c.phases[p]; continue; }
+    c.phases[p] = { usd: room, runs: e.runs };
+  }
+  for (const [p, a] of Object.entries(byPhase || {})) {
+    const e = c.phases[p] || { usd: 0, runs: 0 };
+    c.phases[p] = { usd: r9(e.usd + a.usd), runs: e.runs, agentUsd: r9(a.usd), agentRuns: a.runs };
+  }
+  c.totalUsd = r9(Object.values(c.phases).reduce((a, x) => a + x.usd, 0));
+  c.notCounted = notCounted;
+  const next = JSON.stringify(c, null, 2);
+  let prev = null; try { prev = fs.readFileSync(f, 'utf8'); } catch { /* none */ }
+  if (prev === next) return c;
+  fs.writeFileSync(f, next);
+  let maxUsd = null;
+  try { maxUsd = JSON.parse(fs.readFileSync(path.join(runDir, 'size.json'), 'utf8')).maxUsd ?? null; } catch { /* no size.json */ }
+  tryEmit(runDir, { kind: 'cost', phase: 'Agents', usd: Object.values(byPhase || {}).reduce((a, x) => a + x.usd, 0), totalUsd: c.totalUsd, maxUsd });
+  return c;
+}
+
 if (process.argv[1] && path.resolve(process.argv[1]) === new URL(import.meta.url).pathname) {
   const argv = process.argv.slice(2), mi = argv.indexOf('--max-usd');
   const maxUsd = mi >= 0 ? argv[mi + 1] : undefined;

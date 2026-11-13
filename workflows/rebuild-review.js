@@ -404,6 +404,7 @@ const REPORT = `node ${q(`${pluginRoot}/scripts/report.mjs`)}`
 const reportStep = (cmd, label) => agent(`Run exactly: ${cmd} . Return ok true with its output as detail if it exited 0, otherwise ok false with the error. Change nothing else.`, { ...CHEAP, label, phase: 'Report', schema: RUN_RESULT })
 
 async function runReport() {
+  await agent(`Run exactly: node ${q(`${pluginRoot}/scripts/agent-cost.mjs`)} ${q(runDir)} . Ignore a non-zero exit. Change nothing else.`, { ...CHEAP, label: 'agent-cost', phase: 'Report' })
   const cv = await reportStep(`node ${q(`${pluginRoot}/scripts/areas.mjs`)} coverage ${q(runDir)}`, 'coverage')
   if (!cv || !cv.ok) throw new Error(`Report: coverage failed: ${(cv && cv.detail) || 'agent died'}`)
   const v = await reportStep(`${REPORT} verdict ${q(runDir)}`, 'verdict')
