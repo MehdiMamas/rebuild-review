@@ -120,6 +120,7 @@ for (const s of screens) { let id = s.id, n = 2; while (ids.has(id)) id = `${s.i
 for (const s of screens) {
   const dir = path.join(out, 'screens', s.id);
   for (const size of SIZES) for (const theme of THEMES) {
+    if (sessionLost.has(s.url)) break; // landed on sign-in: the other sizes and themes would only fail the same way
     const { context, rec } = await makeContext(browser, origin, { viewport: { width: size.w, height: size.h }, colorScheme: theme, storageState, allowOrigins });
     const page = await context.newPage();
     try {
@@ -182,7 +183,8 @@ stop();
 let appVersion = run.appVersion || null;
 if (!appVersion) try { appVersion = JSON.parse(fs.readFileSync(path.join(workDir, 'package.json'), 'utf8')).version || null; } catch {}
 // A screen whose session was lost at any shot keeps no folder: a half set of shots would mix real pages with nothing.
-for (const s of screens) if (sessionLost.has(s.url)) fs.rmSync(path.join(out, 'screens', s.id), { recursive: true, force: true });
+// Ids are shared only by a screen and a state, so the folder goes only when no kept screen or state uses the id.
+for (const s of screens) if (sessionLost.has(s.url) && !screens.some((o) => o !== s && !sessionLost.has(o.url) && o.id === s.id) && !stateIds.includes(s.id)) fs.rmSync(path.join(out, 'screens', s.id), { recursive: true, force: true });
 const behind = [...behindSignIn].sort(), refused = [...refusedSignedIn].sort();
 if (refused.length) notCaptured.push(`refused (401/403) while signed in, not captured: ${refused.join(', ')}`);
 if (behind.length) notCaptured.push(`behind a sign-in, not captured: ${behind.join(', ')}`);
@@ -198,7 +200,7 @@ const harKept = har.filter((e) => (harBytes += JSON.stringify(e).length) <= MAX_
 write(path.join(out, 'network.har'), R({ log: { version: '1.2', creator: { name: 'rebuild-review web adapter', version: '1' }, entries: harKept } }));
 write(path.join(out, 'coverage.json'), R({
   caps: { maxScreens: MAX_SCREENS, maxButtons: MAX_BUTTONS, maxPerRoute: MAX_PER_ROUTE, maxHarBytes: MAX_HAR_BYTES },
-  screensReached: screens.map((s) => s.url),
+  screensReached: screens.map((s) => s.url).filter((u) => !sessionLost.has(u)), // lost screens are listed in sessionLost instead
   screensCut: cutScreens,
   sameRouteSkipped,
   buttonsSkipped: skippedButtons,

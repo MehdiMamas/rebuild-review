@@ -260,6 +260,17 @@ test('given the same path with two query strings, one behind a sign-in -> only t
   assert.deepEqual(v.sessionLost, []);
 });
 
+test('given /x?tab=a kept and /x?tab=b lost -> the kept screen keeps its shots, the lost one is in sessionLost and not in screensReached', () => {
+  const c = cap('share', { auth: { steps: signInSteps() }, env: { SHARE: '1' } });
+  assert.equal(c.r.status, 0, c.r.stderr);
+  const v = cov(c), m = json(path.join(c.golden, 'manifest.json'));
+  assert.ok(v.sessionLost.includes('/x?tab=b') && !v.sessionLost.includes('/x?tab=a'), JSON.stringify(v.sessionLost));
+  assert.ok(v.screensReached.includes('/x?tab=a') && !v.screensReached.includes('/x?tab=b'), JSON.stringify(v.screensReached));
+  const kept = m.screens.find((x) => x.url === '/x?tab=a');
+  assert.ok(kept && !m.screens.some((x) => x.url === '/x?tab=b'), JSON.stringify(m.screens));
+  assert.ok(fs.existsSync(path.join(c.golden, 'screens', kept.id, '1440-light.png')) && fs.existsSync(path.join(c.golden, 'screens', kept.id, 'render.html')), 'the kept screen lost its files');
+});
+
 test('given a signed-in session dropped mid-crawl -> the route is in sessionLost and notCaptured says the session was lost; signed out, sessionLost is empty', () => {
   const v = cov(cap('drop', { auth: { steps: signInSteps() }, env: { DROP: '1' }, args: ['--max-screens', '3'] }));
   assert.ok(v.sessionLost.includes('/dashboard/settings'), JSON.stringify(v.sessionLost));
