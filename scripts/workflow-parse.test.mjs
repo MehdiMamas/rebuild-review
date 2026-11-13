@@ -17,6 +17,12 @@ test('no prompt asks an agent to run a command in the background', () => {
   assert.equal(readFileSync(file, 'utf8').split('run_in_background').length - 1, 0)
 })
 
+test('the script uses no random source or clock', () => {
+  // The Workflow tool refuses both at run time (they break resume), and only when the line is reached: #175 failed every run at Report.
+  const src = readFileSync(file, 'utf8')
+  for (const banned of ['Math.random(', 'Date.now(', 'new Date(']) assert.equal(src.split(banned).length - 1, 0, `${banned} is not allowed in the workflow script`)
+})
+
 test('long commands go through longRun', () => {
   const src = readFileSync(file, 'utf8')
   assert.ok(src.includes('async function longRun('))
