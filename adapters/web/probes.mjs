@@ -1,6 +1,10 @@
 // Interaction probes. Each is a general check for one kind of failure; none knows the app.
 // Result rows: { probe, screen, passed, evidence }. passed=false means the probe flagged a problem.
 import { makeContext, sleep, isDataRequest } from './context.mjs';
+import { landedOnSignIn } from './auth.mjs';
+
+// Signed in (o.signedIn) and sent to a sign-in page that was not asked for: the probe would test the sign-in page, so it stops and is listed in notChecked.
+const keepSession = (c, asked, page) => { if (landedOnSignIn(asked, page.url(), c.signedIn)) throw new Error(`redirected to ${new URL(page.url()).pathname} while signed in, session lost`); };
 
 const TYPE_TEXT = 'xyz';
 const FEEDBACK = `(() => {
@@ -75,7 +79,7 @@ async function open(c, s, opts = {}) {
     opts.track?.add(context);
     page = await context.newPage();
     await page.addInitScript(WATCH);
-    go = () => page.goto(url, { waitUntil: 'load' });
+    go = async () => { await page.goto(url, { waitUntil: 'load' }); keepSession(c, url, page); };
     ctxEvents = page;
   }
   const api = { pending: 0, seen: [] };
@@ -90,6 +94,7 @@ async function open(c, s, opts = {}) {
 
 // Options shared by loadProbes, clickProbes and runProbes (all optional; the defaults are what capture uses):
 //   storageState, allowOrigins, onBlocked   passed to makeContext
+//   signedIn        true when storageState holds a sign-in session: a screen that ends on a sign-in page is not probed (notChecked)
 //   ignoreBlocked   console errors caused by a blocked cross-origin request are not flagged
 //   deadline        ms timestamp; what has not started by then goes to notChecked ({probe, route, reason})
 //   maxClickables (10), labelFilter(label) => false skips a click (listed in skipped: [{route, label}]),
@@ -433,6 +438,7 @@ async function safeAreaScreen(c, s, add) {
           await cdp.send('Emulation.setSafeAreaInsetsOverride', { insets: { top: SAFE_AREA.top, bottom: SAFE_AREA.bottom, left: 0, right: 0 } }).catch(() => {}); // unsupported: the env() check below falls back
         }
         await page.goto(url, { waitUntil: 'load' });
+        keepSession(c, url, page);
         await idle(c, page);
         const seen = await page.evaluate(ENV_READ);
         let rewrite = null;

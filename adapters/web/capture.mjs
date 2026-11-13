@@ -6,7 +6,7 @@ import path from 'node:path';
 import { chromium } from 'playwright';
 import { launchChromium } from './browser.mjs';
 import { makeContext, envOrigins, runStep, sleep, scrub, endsSession, endsSessionPath } from './context.mjs';
-import { validateAuth, authSecrets, redactSecrets, signIn, LOGIN_RE } from './auth.mjs';
+import { validateAuth, authSecrets, redactSecrets, signIn, LOGIN_RE, landedOnSignIn } from './auth.mjs';
 import { startApp } from './app.mjs';
 import { runProbes } from './probes.mjs';
 import { measureScreens } from './metrics.mjs';
@@ -34,7 +34,7 @@ const MAX_SCREENS = Number(arg('max-screens')) || 30;
 const MAX_BUTTONS = Number(arg('max-buttons')) || 10;
 const MAX_PER_ROUTE = Number(arg('max-per-route')) || 2;
 const MAX_HAR_BYTES = Number(arg('max-har-bytes')) || 50 * 1024 * 1024;
-const notCaptured = [], skippedButtons = [], signOutSkipped = [], behindSignIn = new Set(), refusedSignedIn = new Set();
+const notCaptured = [], skippedButtons = [], signOutSkipped = [], behindSignIn = new Set(), refusedSignedIn = new Set(), sessionLost = new Set();
 let cutScreens = [], sameRouteSkipped = [];
 const slug = (u) => { const p = new URL(u).pathname.replace(/^\/|\/$/g, '').replace(/[^\w-]+/g, '-'); return p || 'root'; };
 const write = (f, data) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, typeof data === 'string' ? data : JSON.stringify(data, null, 2)); };
@@ -82,8 +82,8 @@ const queue = [start], seen = new Map();
     try { status = (await page.goto(url))?.status() ?? 0; await settle(page); } catch (e) { notCaptured.push(`${url}: ${scrub(e.message).split('\n')[0]}`); seen.set(key, null); continue; }
     // Sent to a sign-in page (by the server or by the page's own script), or refused: the route is behind a sign-in, not a screen.
     const here = new URL(page.url()), asked = new URL(url);
-    if (here.pathname !== asked.pathname && LOGIN_RE.test(here.pathname)) { behindSignIn.add(asked.pathname); seen.set(key, null); const to = (here.pathname + here.search); if (!seen.has(to)) queue.push(here.toString().replace(/#.*/, '')); continue; }
-    if (status === 401 || status === 403) { (authInfo.signedIn ? refusedSignedIn : behindSignIn).add(asked.pathname); seen.set(key, null); continue; }
+    if (here.pathname !== asked.pathname && LOGIN_RE.test(here.pathname)) { if (authInfo.signedIn) { sessionLost.add(key); notCaptured.push(`session lost: ${key} redirected to ${here.pathname} while signed in`); } behindSignIn.add(key); seen.set(key, null); const to = (here.pathname + here.search); if (!seen.has(to)) queue.push(here.toString().replace(/#.*/, '')); continue; }
+    if (status === 401 || status === 403) { (authInfo.signedIn ? refusedSignedIn : behindSignIn).add(key); seen.set(key, null); continue; }
     seen.set(key, { id: slug(url), url: key, title: await page.title() });
     const hrefs = await page.$$eval('a[href]', (as) => as.map((a) => a.href));
     const found = new Set();
@@ -120,11 +120,13 @@ for (const s of screens) { let id = s.id, n = 2; while (ids.has(id)) id = `${s.i
 for (const s of screens) {
   const dir = path.join(out, 'screens', s.id);
   for (const size of SIZES) for (const theme of THEMES) {
+    if (sessionLost.has(s.url)) break; // landed on sign-in: the other sizes and themes would only fail the same way
     const { context, rec } = await makeContext(browser, origin, { viewport: { width: size.w, height: size.h }, colorScheme: theme, storageState, allowOrigins });
     const page = await context.newPage();
     try {
       await page.goto(new URL(s.url, origin).toString());
       await settle(page);
+      if (landedOnSignIn(new URL(s.url, origin), page.url(), authInfo.signedIn)) { sessionLost.add(s.url); throw new Error(`redirected to ${new URL(page.url()).pathname} while signed in, session lost`); }
       await shot(page, dir, `${size.w}-${theme}`);
       if (size.w === 1440 && theme === 'light') {
         write(path.join(dir, 'render.html'), R(await page.content()));
@@ -167,11 +169,11 @@ const open = async (s, { width = 1440, height = 900, colorScheme = 'light' } = {
   const faults = {};
   const { context, rec } = await makeContext(browser, origin, { viewport: { width, height }, colorScheme, faults, storageState, allowOrigins });
   const page = await context.newPage();
-  return { page, rec, faults, close: () => context.close(), go: () => page.goto(new URL(s.url, origin).toString(), { waitUntil: 'load' }) };
+  return { page, rec, faults, close: () => context.close(), go: async () => { await page.goto(new URL(s.url, origin).toString(), { waitUntil: 'load' }); if (landedOnSignIn(new URL(s.url, origin), page.url(), authInfo.signedIn)) { sessionLost.add(s.url); throw new Error(`redirected to ${new URL(page.url()).pathname} while signed in, session lost`); } } };
 };
 const notChecked = [];
 const probeSkipped = [];
-const probes = await runProbes({ notChecked, browser, origin, screens, timings, storageState, allowOrigins, labelFilter: (l) => !endsSession(l, authInfo.signedIn), skipped: probeSkipped });
+const probes = await runProbes({ notChecked, browser, origin, screens, timings, storageState, signedIn: authInfo.signedIn, allowOrigins, labelFilter: (l) => !endsSession(l, authInfo.signedIn), skipped: probeSkipped });
 for (const x of probeSkipped) if (!signOutSkipped.some((y) => y.screen === x.route && y.label === x.label)) { signOutSkipped.push({ screen: x.route, label: x.label }); notCaptured.push(`${x.route}: button "${x.label}" not pressed by a probe (it would end the session or remove the account)`); }
 const a11y = await measureScreens({ notChecked, open, screens, timings, probes, widths });
 if (buildMs !== null) timings.push({ name: 'build-ms', value: buildMs, unit: 'ms' });
@@ -180,12 +182,15 @@ stop();
 
 let appVersion = run.appVersion || null;
 if (!appVersion) try { appVersion = JSON.parse(fs.readFileSync(path.join(workDir, 'package.json'), 'utf8')).version || null; } catch {}
+// A screen whose session was lost at any shot keeps no folder: a half set of shots would mix real pages with nothing.
+// Ids are shared only by a screen and a state, so the folder goes only when no kept screen or state uses the id.
+for (const s of screens) if (sessionLost.has(s.url) && !screens.some((o) => o !== s && !sessionLost.has(o.url) && o.id === s.id) && !stateIds.includes(s.id)) fs.rmSync(path.join(out, 'screens', s.id), { recursive: true, force: true });
 const behind = [...behindSignIn].sort(), refused = [...refusedSignedIn].sort();
 if (refused.length) notCaptured.push(`refused (401/403) while signed in, not captured: ${refused.join(', ')}`);
 if (behind.length) notCaptured.push(`behind a sign-in, not captured: ${behind.join(', ')}`);
 write(path.join(out, 'manifest.json'), R({
   platform: 'web', appVersion, address: run.address,
-  screens: screens.map(({ id, url, title }) => ({ id, url, title })),
+  screens: screens.filter((s) => !sessionLost.has(s.url)).map(({ id, url, title }) => ({ id, url, title })),
   states: stateIds,
   blockedRequests: [...blocked].sort(),
   notCaptured: [...notCaptured, ...notChecked.map((r) => scrub(`${r.probe} ${r.route}: ${r.reason}`))],
@@ -195,15 +200,16 @@ const harKept = har.filter((e) => (harBytes += JSON.stringify(e).length) <= MAX_
 write(path.join(out, 'network.har'), R({ log: { version: '1.2', creator: { name: 'rebuild-review web adapter', version: '1' }, entries: harKept } }));
 write(path.join(out, 'coverage.json'), R({
   caps: { maxScreens: MAX_SCREENS, maxButtons: MAX_BUTTONS, maxPerRoute: MAX_PER_ROUTE, maxHarBytes: MAX_HAR_BYTES },
-  screensReached: screens.map((s) => s.url),
+  screensReached: screens.map((s) => s.url).filter((u) => !sessionLost.has(u)), // lost screens are listed in sessionLost instead
   screensCut: cutScreens,
   sameRouteSkipped,
   buttonsSkipped: skippedButtons,
   harEntriesSkipped: har.length - harKept.length,
   auth: authInfo,
   // Every screen captured with the session in use, public ones included; it does not say the screen needs a sign-in.
-  screensCapturedWithSession: authInfo.signedIn ? screens.map((s) => s.url) : [],
+  screensCapturedWithSession: authInfo.signedIn ? screens.map((s) => s.url).filter((u) => !sessionLost.has(u)) : [],
   behindSignIn: behind,
+  sessionLost: [...sessionLost].sort(),
   refusedSignedIn: refused,
   signOutSkipped,
 }));

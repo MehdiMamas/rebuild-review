@@ -1,9 +1,12 @@
 // Tiny site for the sign-in tests. Public: /, /login. Behind the cookie: /dashboard, /dashboard/settings.
 // The sign-in is bob / correct-horse-9 (stand-ins). Sign out is a button (POST /signout) and a link (GET /logout);
 // both end the session on the server, not only in the cookie. Environment: PORT, HITLOG (file: one line per request),
+// QUERY=1 (home links /items/1?tab=open, public, and /items/1?tab=private, sign-in only), FLAKY=1 (home links /flaky: the first answer is the page, every later one redirects to /login),
+// SHARE=1 (home links /x?tab=a, always fine, and /x?tab=b, fine once then a redirect to /login; both slug to x),
 // ANON=1 (a wrong password still gets a cookie; /start is a second sign-in form on a route with no sign-in word in its path), DROP=1 (the first /dashboard answer also ends every session).
 import http from 'node:http';
 import fs from 'node:fs';
+let flaky = 0, flakyB = 0;
 const sessions = new Map(); // session id -> the email typed at sign-in, echoed on the dashboard and by /api/me
 const page = (title, body) => `<!doctype html><title>${title}</title><body>${body}</body>`;
 const form = (msg = '', action = '/login') => page('Sign in', `<h1>Sign in</h1>${msg}<form method="post" action="${action}">
@@ -40,7 +43,11 @@ http.createServer((req, res) => {
   if (path === '/catalog/outlet') return html(200, page('Outlet', '<h1>Outlet</h1><p>Latest test items</p>'));
   if (path === '/api/me') return signedIn ? (res.writeHead(200, { 'content-type': 'application/json' }), res.end(JSON.stringify({ email: sessions.get(sid) }))) : html(401, 'no');
   if (path === '/admin') return signedIn ? html(403, page('Not allowed', '<h1>Not allowed</h1><p>Your account cannot open this page</p>')) : go('/login');
-  if (path === '/') return html(200, page('Home', `<h1>Home</h1>${signedIn ? '<p>Welcome back</p>' : ''}<a href="/login">Sign in</a> <a href="/dashboard">Dashboard</a> <a href="/dashboard/settings">Settings</a>`));
+  const q = new URL(req.url, 'http://x').searchParams.get('tab');
+  if (path === '/items/1') return q === 'private' && !signedIn ? go('/login') : html(200, page('Item ' + q, '<h1>Item 1</h1><p>Tab ' + q + '</p>'));
+  if (path === '/x') { if (q === 'b') { flakyB++; if (flakyB > 1) return go('/login'); } return html(200, page('X ' + q, '<h1>X</h1><p>Tab ' + q + '</p>')); }
+  if (path === '/flaky') { flaky++; return flaky > 1 ? go('/login') : html(200, page('Flaky', '<h1>Flaky</h1><p>Shown once</p>')); }
+  if (path === '/') return html(200, page('Home', `<h1>Home</h1>${signedIn ? '<p>Welcome back</p>' : ''}${process.env.QUERY ? '<a href="/items/1?tab=open">Open</a> <a href="/items/1?tab=private">Private</a>' : ''}${process.env.SHARE ? '<a href="/x?tab=a">A</a> <a href="/x?tab=b">B</a>' : ''}${process.env.FLAKY ? '<a href="/flaky">Flaky</a>' : ''}<a href="/login">Sign in</a> <a href="/dashboard">Dashboard</a> <a href="/dashboard/settings">Settings</a>`));
   if (path === '/dashboard' || path === '/dashboard/settings') {
     if (!signedIn) return go('/login');
     if (path === '/dashboard') {

@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { validateAuth, authSecrets, redactSecrets, LOGIN_RE } from '../auth.mjs';
+import { validateAuth, authSecrets, redactSecrets, LOGIN_RE, landedOnSignIn } from '../auth.mjs';
 import { endsSession, endsSessionPath } from '../context.mjs';
 import { coverage } from '../../../scripts/areas.mjs';
 import { filterGolden } from '../../../scripts/room.mjs';
@@ -249,4 +249,56 @@ test('given a typed value that appears URL-encoded -> it is masked in that form 
   const { expandSecrets, redactSecrets } = await import('../redact.mjs');
   const s = expandSecrets(['pat@example.test', 'a b']);
   assert.equal(redactSecrets('/x?email=pat%40example.test&q=a+b&r=a%20b', s), '/x?email=***&q=***&r=***');
+});
+
+test('given the same path with two query strings, one behind a sign-in -> only the private one is in behindSignIn, with its query', () => {
+  const c = cap('query', { env: { QUERY: '1' } });
+  assert.equal(c.r.status, 0, c.r.stderr);
+  const v = cov(c);
+  assert.ok(v.behindSignIn.includes('/items/1?tab=private'), JSON.stringify(v.behindSignIn));
+  assert.ok(!v.behindSignIn.includes('/items/1?tab=open') && v.screensReached.includes('/items/1?tab=open'), JSON.stringify(v));
+  assert.deepEqual(v.sessionLost, []);
+});
+
+test('given /x?tab=a kept and /x?tab=b lost -> the kept screen keeps its shots, the lost one is in sessionLost and not in screensReached', () => {
+  const c = cap('share', { auth: { steps: signInSteps() }, env: { SHARE: '1' } });
+  assert.equal(c.r.status, 0, c.r.stderr);
+  const v = cov(c), m = json(path.join(c.golden, 'manifest.json'));
+  assert.ok(v.sessionLost.includes('/x?tab=b') && !v.sessionLost.includes('/x?tab=a'), JSON.stringify(v.sessionLost));
+  assert.ok(v.screensReached.includes('/x?tab=a') && !v.screensReached.includes('/x?tab=b'), JSON.stringify(v.screensReached));
+  const kept = m.screens.find((x) => x.url === '/x?tab=a');
+  assert.ok(kept && !m.screens.some((x) => x.url === '/x?tab=b'), JSON.stringify(m.screens));
+  assert.ok(fs.existsSync(path.join(c.golden, 'screens', kept.id, '1440-light.png')) && fs.existsSync(path.join(c.golden, 'screens', kept.id, 'render.html')), 'the kept screen lost its files');
+});
+
+test('given a signed-in session dropped mid-crawl -> the route is in sessionLost and notCaptured says the session was lost; signed out, sessionLost is empty', () => {
+  const v = cov(cap('drop', { auth: { steps: signInSteps() }, env: { DROP: '1' }, args: ['--max-screens', '3'] }));
+  assert.ok(v.sessionLost.includes('/dashboard/settings'), JSON.stringify(v.sessionLost));
+  assert.ok(json(path.join(cap('drop').golden, 'manifest.json')).notCaptured.some((n) => /^session lost: \/dashboard\/settings/.test(n)));
+  assert.deepEqual(cov(cap('none')).sessionLost ?? [], []);
+});
+
+test('given a screen that redirects to the sign-in page when shot while signed in -> no screenshot or render of the sign-in page, the screen is in sessionLost', () => {
+  const c = cap('flaky', { auth: { steps: signInSteps() }, env: { FLAKY: '1' } });
+  assert.equal(c.r.status, 0, c.r.stderr);
+  const v = cov(c);
+  assert.ok(v.sessionLost.includes('/flaky'), JSON.stringify(v));
+  assert.ok(!fs.existsSync(path.join(c.golden, 'screens', 'flaky')), 'a flaky screen folder was written');
+  const nc = json(path.join(c.golden, 'probes-not-checked.json')).filter((r) => r.route === '/flaky');
+  assert.ok(nc.length && nc.every((r) => /session lost/.test(r.reason)), JSON.stringify(nc));
+  assert.ok(json(path.join(c.golden, 'probes.json')).every((p) => p.screen !== 'flaky' && p.screen !== '/flaky'), 'a probe ran on the sign-in page');
+  const tm = json(path.join(c.golden, 'timings.json')).filter((t) => t.name.startsWith('flaky.') && !/(domContentLoaded|load)$/.test(t.name));
+  assert.deepEqual(tm, [], 'a measurement was filed under the lost screen');
+  assert.ok(json(path.join(c.golden, 'a11y-violations.json')).filter((a) => a.screen === 'flaky').every((a) => a.error && a.violations.length === 0));
+  assert.ok(!json(path.join(c.golden, 'manifest.json')).screens.some((x) => x.url === '/flaky'));
+  assert.ok(!v.screensCapturedWithSession.includes('/flaky'), JSON.stringify(v.screensCapturedWithSession));
+  assert.ok(json(path.join(c.golden, 'manifest.json')).notCaptured.some((n) => /^flaky .*session lost/.test(n)));
+  assert.ok(files(c.golden).every((f) => !/\.(html|json|png)$/.test(f) || !fs.readFileSync(f).includes('Sign in</h1>') || f.includes('login')), 'a sign-in page was kept as a signed-in screen');
+});
+
+test('given asked and landed URLs -> landedOnSignIn is true only when signed in and sent to a sign-in path that was not asked for', () => {
+  assert.equal(landedOnSignIn('http://x/dashboard', 'http://x/login', true), true);
+  assert.equal(landedOnSignIn('http://x/dashboard', 'http://x/login', false), false);
+  assert.equal(landedOnSignIn('http://x/login', 'http://x/login?next=1', true), false);
+  assert.equal(landedOnSignIn('http://x/dashboard', 'http://x/dashboard/settings', true), false);
 });
