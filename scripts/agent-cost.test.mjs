@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
 import { priceFor, costOfTranscript, collect, recordAgentCost, loadPrices } from './agent-cost.mjs';
 import { addCost } from './size.mjs';
 import { costPhase } from './room.mjs';
@@ -131,4 +133,54 @@ test('report Cost section lists the phases and the not-counted items', () => {
   for (const p of ['Stack', 'Rebuild', 'Parity', 'Capture']) assert.match(cost, new RegExp(`<td>${p}</td>`));
   assert.match(cost, /Total \$8\.00/);
   assert.match(cost, /main session/);
+});
+
+test('agent-cost, then a room entry, then agent-cost again: no double count', () => {
+  const run = tmp();
+  const root = fixture(run, [{ name: 'a', phase: 'Rebuild', lines: [user(run), msg('m1', 'claude-sonnet-5-5', sonnet(0))] }]);
+  addCost(run, 'Rebuild', 3);
+  recordAgentCost(run, root);
+  const mid = addCost(run, 'Rebuild', 1);
+  assert.equal(mid.phases.Rebuild.agentUsd, 2);
+  assert.equal(mid.phases.Rebuild.agentRuns, 1);
+  const c = recordAgentCost(run, root);
+  assert.equal(c.phases.Rebuild.usd, 6);
+  assert.equal(c.phases.Rebuild.runs, 2);
+  assert.equal(c.totalUsd, 6);
+});
+
+test('the run folder matches on a path boundary only', () => {
+  const base = tmp();
+  const run1 = path.join(base, 'run1'), run10 = path.join(base, 'run10');
+  const root = fixture(run10, [{ name: 'a', phase: 'Capture', lines: [user(`work in ${run10}/golden`), msg('m1', 'claude-sonnet-5-5', sonnet(0))] }]);
+  assert.deepEqual(collect(run1, root), []);
+  assert.equal(collect(run10, root).length, 1);
+  const root2 = fixture(run1, [{ name: 'a', phase: 'Capture', lines: [user(`"${run1}" and ${run1}.`), msg('m1', 'claude-sonnet-5-5', sonnet(0))] }]);
+  assert.equal(collect(run1, root2).length, 1);
+  assert.deepEqual(collect(path.join(base, 'x', 'run1'), fixture(run1, [{ name: 'a', lines: [user(run1)] }])), []);
+});
+
+test('the cost event carries the change, and none is written for an unchanged rerun', async () => {
+  const { read } = await import('./events.mjs');
+  const run = tmp();
+  const root = fixture(run, [{ name: 'a', phase: 'Capture', lines: [user(run), msg('m1', 'claude-sonnet-5-5', sonnet(0))] }]);
+  const n = () => read(run).events.filter((e) => e.kind === 'cost' && e.phase === 'Agents');
+  recordAgentCost(run, root);
+  recordAgentCost(run, root);
+  assert.equal(n().length, 1);
+  assert.equal(n()[0].usd, 2);
+  fs.appendFileSync(path.join(root, 'projects/p/sess/subagents/workflows/wf_1/agent-a.jsonl'), msg('m2', 'claude-sonnet-5-5', sonnet(0)) + '\n');
+  recordAgentCost(run, root);
+  assert.equal(n().length, 2);
+  assert.equal(n()[1].usd, 2);
+  assert.equal(n()[1].totalUsd, 4);
+});
+
+test('the CLI runs through a symlinked scripts path', () => {
+  const run = tmp();
+  const root = fixture(run, [{ name: 'a', phase: 'Capture', lines: [user(run), msg('m1', 'claude-sonnet-5-5', sonnet(0))] }]);
+  const link = path.join(tmp(), 'agent-cost.mjs');
+  fs.symlinkSync(fileURLToPath(new URL('./agent-cost.mjs', import.meta.url)), link);
+  const out = execFileSync(process.execPath, [link, run, '--root', root], { encoding: 'utf8' });
+  assert.match(out, /total \$2\.00/);
 });

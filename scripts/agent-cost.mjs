@@ -62,15 +62,27 @@ export function costOfTranscript(file, prices = loadPrices()) {
 const readJson = (f) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
 const subdirs = (d) => { try { return fs.readdirSync(d, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => path.join(d, e.name)); } catch { return []; }; };
 
+// The run folder as a whole path: /x/run1 does not match /x/run10 or /y/x/run1. Only the head of a transcript is read, where the prompt is.
+export const runRe = (dir) => new RegExp('(?<![\\w.~-])' + dir.replace(/[.*+?^${}()|[\]\\\/]/g, '\\$&') + '(?![\\w-])(?!\\.\\w)');
+function namesRun(file, re) {
+  let fd;
+  try {
+    fd = fs.openSync(file, 'r');
+    const buf = Buffer.alloc(HEAD_BYTES);
+    return re.test(buf.toString('utf8', 0, fs.readSync(fd, buf, 0, HEAD_BYTES, 0)));
+  } catch { return false; } finally { if (fd !== undefined) try { fs.closeSync(fd); } catch { /* closed */ } }
+}
+const HEAD_BYTES = 65536;
+
 // Agents of every workflow folder that names the run folder: [{ file, phase }].
 export function collect(runDir, root) {
   const out = [];
-  const needle = path.resolve(runDir);
+  const re = runRe(path.resolve(runDir));
   for (const proj of subdirs(path.join(root, 'projects'))) for (const sess of subdirs(proj)) {
     for (const wf of subdirs(path.join(sess, 'subagents', 'workflows'))) {
       let names; try { names = fs.readdirSync(wf).filter((f) => /^agent-.*\.jsonl$/.test(f)); } catch { continue; }
       const files = names.map((n) => path.join(wf, n));
-      const mine = files.some((f) => { try { return fs.readFileSync(f, 'utf8').includes(needle); } catch { return false; } });
+      const mine = files.some((f) => namesRun(f, re));
       if (!mine) continue;
       for (const file of files) {
         const meta = readJson(file.replace(/\.jsonl$/, '.meta.json')) || {};
@@ -99,7 +111,7 @@ export function recordAgentCost(runDir, root, prices = loadPrices()) {
   return setAgentCost(runDir, byPhase, notCounted);
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (process.argv[1] && fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url))) {
   const argv = process.argv.slice(2), ri = argv.indexOf('--root');
   const root = ri >= 0 ? argv[ri + 1] : (process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'));
   if (ri >= 0) argv.splice(ri, 2);

@@ -110,7 +110,7 @@ export function addCost(runDir, phase, usd) {
   let c = { phases: {}, totalUsd: 0 };
   try { c = JSON.parse(fs.readFileSync(f, 'utf8')); } catch { /* first entry */ }
   const e = c.phases[phase] || { usd: 0, runs: 0 };
-  c.phases[phase] = { usd: e.usd + usd, runs: e.runs + 1 };
+  c.phases[phase] = { ...e, usd: e.usd + usd, runs: e.runs + 1 }; // keeps agentUsd/agentRuns (#142)
   c.totalUsd = Object.values(c.phases).reduce((a, x) => a + x.usd, 0);
   fs.writeFileSync(f, JSON.stringify(c, null, 2));
   let maxUsd = null;
@@ -126,6 +126,8 @@ export function setAgentCost(runDir, byPhase, notCounted = []) {
   let c = { phases: {}, totalUsd: 0 };
   try { c = JSON.parse(fs.readFileSync(f, 'utf8')); } catch { /* none yet */ }
   const r9 = (x) => Math.round(x * 1e9) / 1e9;
+  const sumAgent = (ph) => Object.values(ph).reduce((a, x) => a + (x.agentUsd || 0), 0);
+  const before = sumAgent(c.phases);
   for (const [p, e] of Object.entries(c.phases)) {
     if (e.agentUsd === undefined && e.agentRuns === undefined) continue;
     const room = r9(e.usd - (e.agentUsd || 0));
@@ -144,7 +146,7 @@ export function setAgentCost(runDir, byPhase, notCounted = []) {
   fs.writeFileSync(f, next);
   let maxUsd = null;
   try { maxUsd = JSON.parse(fs.readFileSync(path.join(runDir, 'size.json'), 'utf8')).maxUsd ?? null; } catch { /* no size.json */ }
-  tryEmit(runDir, { kind: 'cost', phase: 'Agents', usd: Object.values(byPhase || {}).reduce((a, x) => a + x.usd, 0), totalUsd: c.totalUsd, maxUsd });
+  tryEmit(runDir, { kind: 'cost', phase: 'Agents', usd: r9(sumAgent(c.phases) - before), totalUsd: c.totalUsd, maxUsd });
   return c;
 }
 
