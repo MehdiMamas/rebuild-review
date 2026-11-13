@@ -455,6 +455,10 @@ const ctx = prepare(JSON.parse(fs.readFileSync(process.env.APP_RUN, 'utf8')), pr
       ['a bad name', [{ ...good, name: 'Bad_Name' }], /name must match/],
       ['a port out of range', [{ ...good, port: 70000 }], /port must be/],
       ['an unknown key', [{ ...good, volume: '/x' }], /unknown key "volume"/],
+      ['an image that starts with a dash', [{ ...good, image: `--volume=/etc:/x:ro,z@sha256:${'a'.repeat(64)}` }], /digest/],
+      ['an image with text after the digest', [{ ...good, image: `${IMG} --privileged` }], /digest/],
+      ['an env name with =', [{ ...good, env: { 'A=B': 'x' } }], /env name "A=B" must match/],
+      ['an empty env name', [{ ...good, env: { '': 'x' } }], /env name "" must match/],
       ['a non-string env value', [{ ...good, env: { A: 1 } }], /env A must be a string/],
       ['a ready that is not a list', [{ ...good, ready: 'pg_isready' }], /ready must be a command/],
       ['a store port equal to the service port', [{ ...good, port: 3000 }], /port of the service itself/],
@@ -474,6 +478,11 @@ const ctx = prepare(JSON.parse(fs.readFileSync(process.env.APP_RUN, 'utf8')), pr
     const tagMsg = await refusal(() => prepare(tag.run, tag.file));
     const tagOk = /store "kv"/.test(tagMsg) && !fakeLog().slice(mark).some((a) => ['pull', 'run'].includes(a[0]));
     lines.push(`tag image through prepare: refused naming the store, no pull: ${tagOk}`);
+    const https = await kvRun('run-https443', { address: 'https://127.0.0.1' }, { port: 443 });
+    mark = fakeLog().length;
+    const httpsMsg = await refusal(() => prepare(https.run, https.file));
+    const httpsOk = /port of the service itself/.test(httpsMsg) && !fakeLog().slice(mark).some((a) => ['pull', 'run'].includes(a[0]));
+    lines.push(`https address without a port, store on 443: refused: ${httpsOk}`);
     const noRt = await kvRun('run-nort');
     mark = fakeLog().length;
     const emptyBin = path.join(base, 'empty-bin'); fs.mkdirSync(emptyBin, { recursive: true });
@@ -506,7 +515,7 @@ const ctx = prepare(JSON.parse(fs.readFileSync(process.env.APP_RUN, 'utf8')), pr
     const offMsg = await refusal(() => prepare(off.run, off.file));
     const offOk = /outside this machine/.test(offMsg);
     lines.push(`run.env at a store off this machine while stores is set: refused: ${offOk}`);
-    check(10, 'stores: bad lists, a missing or rootless runtime, a failed pull and an off-machine env are refused before anything starts; no stores means no runtime lookup; RR_PREPARED=1 skips pull and sweep', allRefused && accepted && tagOk && rtOk && rlOk && pfOk && plainOk && preOk && offOk, lines);
+    check(10, 'stores: bad lists, a missing or rootless runtime, a failed pull and an off-machine env are refused before anything starts; no stores means no runtime lookup; RR_PREPARED=1 skips pull and sweep', allRefused && accepted && tagOk && httpsOk && rtOk && rlOk && pfOk && plainOk && preOk && offOk, lines);
   }
 
   // 11 / 12

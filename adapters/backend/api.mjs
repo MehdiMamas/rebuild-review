@@ -80,7 +80,7 @@ process.on('exit', () => { for (const c of prepared.values()) { try { cleanupSyn
 export function prepare(run, runFile) {
   assertPosix();
   const hasStores = Array.isArray(run.stores) ? run.stores.length > 0 : run.stores !== undefined;
-  if (run.stores !== undefined) { let sp = ''; try { sp = new URL(run.address).port; } catch {} validateStores(run.stores, Number(sp || 80)); }
+  if (run.stores !== undefined) { let sp = ''; try { const u = new URL(run.address); sp = u.port || (u.protocol === 'https:' ? '443' : '80'); } catch {} validateStores(run.stores, Number(sp || 80)); }
   const key = path.resolve(runFile);
   if (prepared.has(key)) return prepared.get(key);
   if (run.dir && path.isAbsolute(run.dir)) throw new Error(`run.json "dir" must be relative, got ${run.dir}`);

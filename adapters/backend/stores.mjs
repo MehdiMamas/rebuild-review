@@ -14,7 +14,8 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const MAX_STORES = 5;
 export const SOCKET_PATH_MAX = 100;
 const NAME_RE = /^[a-z][a-z0-9-]{0,30}$/;
-const DIGEST_RE = /@sha256:[0-9a-f]{64}$/;
+const DIGEST_RE = /^[a-z0-9][a-z0-9._\/:-]*@sha256:[0-9a-f]{64}$/;
+const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const MEMORY_RE = /^[1-9]\d*[bkmg]?$/i;
 const KEYS = new Set(['name', 'image', 'port', 'env', 'ready', 'memory']);
 const DEFAULT_MEMORY = '1g';
@@ -42,7 +43,7 @@ export function validateStores(stores, servicePort) {
     if (Number(servicePort) === s.port) throw new Error(`${who}: port ${s.port} is the port of the service itself`);
     if (s.env !== undefined) {
       if (!s.env || typeof s.env !== 'object' || Array.isArray(s.env)) throw new Error(`${who}: env must be an object of strings`);
-      for (const [k, v] of Object.entries(s.env)) if (typeof v !== 'string') throw new Error(`${who}: env ${k} must be a string`);
+      for (const [k, v] of Object.entries(s.env)) if (!ENV_KEY_RE.test(k)) throw new Error(`${who}: env name "${k}" must match ${ENV_KEY_RE}`); else if (typeof v !== 'string') throw new Error(`${who}: env ${k} must be a string`);
     }
     if (s.ready !== undefined && (!Array.isArray(s.ready) || !s.ready.length || s.ready.some((x) => typeof x !== 'string'))) throw new Error(`${who}: ready must be a command as a list of strings`);
     if (s.memory !== undefined && (typeof s.memory !== 'string' || !MEMORY_RE.test(s.memory))) throw new Error(`${who}: memory must look like 512m or 2g`);
@@ -118,12 +119,15 @@ function record(kind, name) {
 
 // Synchronous teardown, safe to call twice: relays, then containers (a missing one is fine), then the network.
 function removeAll(s) {
-  for (const r of s.relays) { if (r.child.exitCode === null && r.child.signalCode === null) { r.stopping = true; try { r.child.kill('SIGKILL'); } catch {} } }
+  const gone = [];
+  for (const r of s.relays) { if (r.child.exitCode === null && r.child.signalCode === null) { r.stopping = true; gone.push(new Promise((res) => r.child.once('exit', res))); try { r.child.kill('SIGKILL'); } catch {} } }
   for (const c of s.cnames) rtRun(s.rt, ['rm', '-f', c], 20000);
   if (s.net) rtRun(s.rt, ['network', 'rm', s.net], 20000);
   s.relays = []; s.cnames = []; s.net = null; s.addrs = []; s.up = false;
+  return gone;
 }
-export async function stopStores(ctx) { if (ctx && ctx.stores) removeAll(ctx.stores); }
+// Waits until the killed relays have exited, so their ports are free when it returns.
+export async function stopStores(ctx) { if (ctx && ctx.stores) await Promise.all(removeAll(ctx.stores)); }
 export function cleanupSync(ctx) { if (ctx && ctx.stores) removeAll(ctx.stores); }
 
 // Removes what the lines of <tmpParent>/stores name (parity: a test killed hard left them).
