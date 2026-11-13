@@ -1,4 +1,4 @@
-// Twenty-nine checks for the backend adapter, run against the fixture service in ./fixture. node test/run.mjs
+// Thirty-one checks for the backend adapter, run against the fixture service in ./fixture. node test/run.mjs
 // The known answers are in answers.json; only this file reads them. A planted problem the probes miss is printed as MISS and
 // is not hidden or tuned away. A check fails only when the thing it protects is broken (a leak, a hang, a missing file, a false alarm on a clean screen).
 import fs from 'node:fs';
