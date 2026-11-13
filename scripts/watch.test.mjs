@@ -368,3 +368,9 @@ test('given gate none and no overall, the gate line still says no tests ran', ()
   assert.deepEqual(verdictLines({ ...base, gate: false, overall: 2 }), [['mut', 'Overall 2; gate failed']]);
   assert.deepEqual(verdictLines({ verdict: null, overall: null, gate: null }), []);
 });
+
+test('the page prints an Agents cost line without a minus sign (#171)', () => withServer(async ({ port, k, run }) => {
+  ev(run, { kind: 'cost', phase: 'Agents', usd: 0, totalUsd: 3 });
+  const html = (await get(port, `/?k=${k}`)).body.toString();
+  assert.match(html, /cost '\+usd\(Math\.max\(0,e\.usd\|\|0\)\)/);
+}));

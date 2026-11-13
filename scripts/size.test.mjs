@@ -113,3 +113,13 @@ test('with changed lines the size counts them in place of whole files', () => {
   assert.equal(size.lines, 16);
   assert.equal(size.counted, 2);
 });
+
+import { setAgentCost } from './size.mjs';
+test('#171: the Agents cost event is never negative when the agent total drops on a rerun', () => {
+  const run = fs.mkdtempSync(path.join(os.tmpdir(), 'rr-size-'));
+  setAgentCost(run, { Capture: { usd: 5, runs: 2 } });
+  setAgentCost(run, { Capture: { usd: 3, runs: 1 } });
+  const ev = fs.readFileSync(path.join(run, 'events.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((e) => e.kind === 'cost');
+  assert.deepEqual(ev.map((e) => e.usd), [5, 0]);
+  assert.equal(ev[1].totalUsd, 3);
+});
