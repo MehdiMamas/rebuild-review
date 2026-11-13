@@ -350,6 +350,9 @@ test('prepareRoom gives the committed project only: no ignored files, no uncommi
   fs.writeFileSync(path.join(proj, 'dirty.js'), 'd');
   execFileSync('git', ['-C', proj, 'remote', 'add', 'origin', runDir]);
   execFileSync('git', ['clone', '-q', proj, path.join(runDir, 'project')]);
+  // the project folder holds an ignored folder and an uncommitted file, as a finished build can
+  fs.mkdirSync(path.join(runDir, 'project', 'node_modules')); fs.writeFileSync(path.join(runDir, 'project', 'node_modules', 'x.js'), 'x');
+  fs.writeFileSync(path.join(runDir, 'project', 'dirty.js'), 'd');
   const room = prepareRoom({ runDir, target, inputs: ['features.md'] });
   const p = path.join(room, 'project');
   assert.equal(fs.existsSync(path.join(p, 'a.js')), true);
