@@ -125,7 +125,7 @@ function removeAll(s) {
   for (const r of s.relays) {
     if (r.child.exitCode === null && r.child.signalCode === null) {
       r.stopping = true;
-      exits.push(new Promise((resolve) => { const t = setTimeout(resolve, EXIT_WAIT_MS); if (t.unref) t.unref(); r.child.once('exit', () => { clearTimeout(t); resolve(); }); }));
+      exits.push(new Promise((resolve) => { const t = setTimeout(resolve, EXIT_WAIT_MS); r.child.once('exit', () => { clearTimeout(t); resolve(); }); }));
       try { r.child.kill('SIGKILL'); } catch {}
     }
   }
