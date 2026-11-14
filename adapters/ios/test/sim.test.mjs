@@ -60,3 +60,13 @@ test('a launch setting that names another server is found; this machine is not',
   assert.deepEqual(nonLocalAddresses({ launch: { env: { A: 'http://127.0.0.1:8080/x', B: 'http://localhost/y' } } }), []);
   assert.deepEqual(nonLocalAddresses({ launch: { env: { A: 'https://api.example.com/v1' } } }), ['api.example.com']);
 });
+
+test('hosts are read as URLs: bare hosts and other servers are found, loopback and deep links are not', () => {
+  const f = (env) => nonLocalAddresses({ launch: { env } });
+  assert.deepEqual(f({ API_HOST: 'api.example.com' }), ['api.example.com']);
+  assert.deepEqual(f({ API_HOST: 'user@db.example.com:5432' }), ['db.example.com']);
+  assert.deepEqual(f({ A: 'http://[::1]:8080/x' }), []);
+  assert.deepEqual(f({ A: '127.0.0.1:8080', B: 'http://127.0.0.5/x' }), []);
+  assert.deepEqual(f({ A: 'https://api.example.com' }), ['api.example.com']);
+  assert.deepEqual(f({ A: 'myapp://settings', B: 'myapp://example.com/x' }), []);
+});

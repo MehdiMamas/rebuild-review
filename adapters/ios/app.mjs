@@ -70,10 +70,18 @@ export function nonLocalAddresses(run) {
   for (const list of Object.values(os.networkInterfaces())) for (const i of list || []) own.add(i.address);
   const values = [...(run.launch?.args || []), ...Object.values(run.launch?.env || {}), ...Object.values(run.env || {})].map(String);
   const found = [];
+  const isLocal = (h) => own.has(h) || /^127(\.\d{1,3}){3}$/.test(h);
+  const add = (h) => { h = h.replace(/^\[|\]$/g, '').toLowerCase(); if (h && !isLocal(h) && !found.includes(h)) found.push(h); };
+  const servers = new Set(['http:', 'https:', 'ws:', 'wss:', 'ftp:']);
   for (const v of values) {
-    for (const m of v.matchAll(/\b[a-z][a-z0-9+.-]*:\/\/([^\/\s:?#]+|\[[^\]]+\])/gi)) {
-      const host = m[1].replace(/^\[|\]$/g, '').toLowerCase();
-      if (!own.has(host) && !found.includes(host)) found.push(host);
+    for (const tok of v.split(/[\s,;"'<>()]+/).filter(Boolean)) {
+      if (/^[a-z][a-z0-9+.-]*:\/\//i.test(tok)) {
+        try { const u = new URL(tok); if (servers.has(u.protocol)) add(u.hostname); } catch {}
+        continue;
+      }
+      // A bare host: name.tld or an IPv4 address, optionally user@ in front and :port after.
+      const m = tok.match(/^(?:[^@\/\s]+@)?((?:[a-z0-9-]+\.)+(?:[a-z][a-z0-9-]*|\d{1,3}))(?::\d+)?(?:[\/?#].*)?$/i);
+      if (m && (/[a-z]/i.test(m[1].split('.').pop()) || /^(\d{1,3}\.){3}\d{1,3}$/.test(m[1]))) add(m[1]);
     }
   }
   return found;
