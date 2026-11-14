@@ -79,9 +79,11 @@ export function nonLocalAddresses(run) {
         try { const u = new URL(tok); if (servers.has(u.protocol)) add(u.hostname); } catch {}
         continue;
       }
-      // A bare host: name.tld or an IPv4 address, optionally user@ in front and :port after.
-      const m = tok.match(/^(?:[^@\/\s]+@)?((?:[a-z0-9-]+\.)+(?:[a-z][a-z0-9-]*|\d{1,3}))(?::\d+)?(?:[\/?#].*)?$/i);
-      if (m && (/[a-z]/i.test(m[1].split('.').pop()) || /^(\d{1,3}\.){3}\d{1,3}$/.test(m[1]))) add(m[1]);
+      // A bare host: name.tld or an IPv4 address, optionally user@ in front and :port after. A value with a path separator
+      // or a common file extension (config.json, Info.plist) is a file name, not a host.
+      const m = tok.match(/^(?:[^@\/\s]+@)?((?:[a-z0-9-]+\.)+(?:[a-z][a-z0-9-]*|\d{1,3}))(?::\d+)?$/i);
+      const fileExt = ['json', 'js', 'mjs', 'ts', 'png', 'jpg', 'svg', 'txt', 'md', 'plist', 'yml', 'yaml', 'html', 'css', 'log', 'db', 'sqlite', 'xml'];
+      if (m && !fileExt.includes(m[1].split('.').pop().toLowerCase()) && (/[a-z]/i.test(m[1].split('.').pop()) || /^(\d{1,3}\.){3}\d{1,3}$/.test(m[1]))) add(m[1]);
     }
   }
   return found;
