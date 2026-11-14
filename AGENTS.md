@@ -85,6 +85,7 @@ what it renders, then scores the rebuild against the original. See README.md.
 - Maestro starts the XCUITest driver, which listens on one fixed port (22087, `--driver-host-port`), so one device is driven at a time; a flow that waits for a label that never appears keeps the driver alive while the adapter reads the hierarchy and taps over HTTP. The driver stops when that Maestro process ends.
 - The network is not blocked (the simulator shares the host's). A launch setting naming a server that is not this machine is refused unless `--allow-network`.
 - Never run it on a desktop Mac the user is using; run where the machine is free.
+- CI: job `ios-adapter` (hosted macOS) runs only `node --test adapters/ios/test/sim.test.mjs`, no simulator. The hosted runner cannot start Maestro's driver on a simulator ("Maestro could not start its driver", 0 screens captured, then the time limit), so the numbered simulator checks are the job `ios-simulator`, run by hand from the Actions tab (workflow_dispatch) and never on a pull request.
 
 ## Inventory phase
 

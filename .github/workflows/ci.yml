@@ -1,5 +1,6 @@
 name: ci
 on:
+  workflow_dispatch:
   pull_request:
   push:
     branches: [main]
@@ -144,8 +145,21 @@ jobs:
         working-directory: adapters/electron
         run: xvfb-run -a pnpm test
 
-  # The simulator cannot run in CI the way it runs on a Mac with a free desktop: this job runs the numbered checks on a hosted macOS runner.
+  # The hosted macOS runner cannot start Maestro's driver on a simulator (run 43535632516: "Maestro could not start its driver", 0 screens, then the 45 minute limit). This job runs the checks that need no simulator; the simulator run is the manual job below.
   ios-adapter:
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Adapter unit tests (no simulator)
+        run: node --test adapters/ios/test/sim.test.mjs
+
+  # Manual only (Actions, Run workflow): the numbered simulator checks on a hosted macOS runner.
+  ios-simulator:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: macos-latest
     timeout-minutes: 45
     steps:
