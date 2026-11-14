@@ -66,6 +66,16 @@ what it renders, then scores the rebuild against the original. See README.md.
 - Calls run in a child (`harness.mjs`) with the CLI adapter's isolation (`networkMode`, caps imported from `adapters/cli/run.mjs`); steps and results are JSON with tagged values. Surface comes from the package's `.d.ts` (TypeScript compiler API, the one runtime dependency), JS-only packages from a real import. `surfaceMissing` compares two surfaces by assignability; it is not wired into `score.mjs` yet.
 - Setup and test: `cd adapters/library && pnpm install && pnpm test` (fifteen checks, light, no display; misses printed as MISS, `test/answers.json` read only by `test/run.mjs`). CI job `library-adapter` (Node 24).
 
+## Capture (Android and Flutter adapter)
+
+- `adapters/android/` serves `platform` android and flutter (see the Android section of `adapters/CONTRACT.md`). Plain adb and uiautomator from Node, no dependencies, no `npm install`.
+- Needs: Android SDK in `ANDROID_HOME` or `~/Library/Android/sdk` with `platform-tools`, `emulator`, `cmdline-tools` and the image `system-images;android-35;google_apis;arm64-v8a`; JDK 21 or 17 for Gradle (the driver finds it); Flutter on PATH for the Flutter fixture. Installs are user scope, never sudo.
+- It creates and uses the AVD `rebuild-review` on fixed port 5584, headless, `-wipe-data -no-snapshot-save`, and refuses to run if `emulator-5584` already exists. It never touches other AVDs. Delete it after use: `avdmanager delete avd -n rebuild-review` (the test does).
+- Run: `node adapters/android/capture.mjs --app <runDir>/run.json --out <runDir>/golden [--states states.json]`; `RR_DEBUG=1` prints the crawl.
+- Fixtures: `benchmark-android/` (Kotlin, plain Views) and `benchmark-flutter/`, each with a mock API, `answers.json` and `init.mjs`.
+- Test: `node adapters/android/test/run.mjs [android] [flutter]` (about 15 minutes for both). Six checks per fixture on an init copy, a found/missed table, and the shared layout check `adapters/contract-check.mjs` (also run by the web test).
+- Gotchas: the app's debug or release build needs the INTERNET permission and cleartext HTTP (`benchmark-flutter/prepare-android.mjs` adds both after `flutter create`); HTTPS apps are not captured; Google background traffic shows up in `blockedRequests` and varies between runs.
+
 ## Inventory phase
 
 - Needs `<runDir>/work/` (clone of the target) and `<runDir>/run.json` (platform, install, build, start, address); `golden/` is used when present. The skill passes `pluginRoot` (`${CLAUDE_PLUGIN_ROOT}`) so the workflow can run `scripts/check-features.mjs`.

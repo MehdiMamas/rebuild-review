@@ -1,0 +1,11 @@
+name: rr_tasks
+description: Small task-list app used to prove the Android capture adapter on Flutter.
+publish_to: none
+version: 1.0.0+1
+environment:
+  sdk: ^3.0.0
+dependencies:
+  flutter:
+    sdk: flutter
+flutter:
+  uses-material-design: true
