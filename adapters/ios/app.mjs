@@ -74,7 +74,7 @@ export function nonLocalAddresses(run) {
   const add = (h) => { h = h.replace(/^\[|\]$/g, '').toLowerCase(); if (h && !isLocal(h) && !found.includes(h)) found.push(h); };
   const servers = new Set(['http:', 'https:', 'ws:', 'wss:', 'ftp:']);
   for (const v of values) {
-    for (const tok of v.split(/[\s,;"'<>()]+/).filter(Boolean)) {
+    for (const tok of v.split(/[\s,;="'<>()]+/).filter(Boolean)) {
       if (/^[a-z][a-z0-9+.-]*:\/\//i.test(tok)) {
         try { const u = new URL(tok); if (servers.has(u.protocol)) add(u.hostname); } catch {}
         continue;

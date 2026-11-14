@@ -69,5 +69,6 @@ test('hosts are read as URLs: bare hosts and other servers are found, loopback a
   assert.deepEqual(f({ A: '127.0.0.1:8080', B: 'http://127.0.0.5/x' }), []);
   assert.deepEqual(f({ A: 'https://api.example.com' }), ['api.example.com']);
   assert.deepEqual(f({ A: 'config.json', B: 'Info.plist', C: 'a.example.com/path' }), []);
+  assert.deepEqual(nonLocalAddresses({ launch: { args: ['API_HOST=api.example.com'] } }), ['api.example.com']);
   assert.deepEqual(f({ A: 'myapp://settings',B: 'myapp://example.com/x' }), []);
 });
