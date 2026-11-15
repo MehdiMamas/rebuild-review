@@ -7,6 +7,7 @@ on:
 
 jobs:
   validate:
+    if: github.event_name != 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:
@@ -53,6 +54,7 @@ jobs:
           node --test adapters/ios/test/sim.test.mjs
 
   web-adapter:
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -83,6 +85,7 @@ jobs:
           node benchmark/score-rebuild.mjs "$T/run" --control
 
   cli-adapter:
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -97,6 +100,7 @@ jobs:
         run: pnpm test
 
   backend-adapter:
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -111,6 +115,7 @@ jobs:
         run: pnpm test
 
   library-adapter:
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -125,6 +130,7 @@ jobs:
         run: pnpm test
 
   electron-adapter:
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -144,18 +150,6 @@ jobs:
       - name: Adapter tests (fourteen checks, under a virtual display)
         working-directory: adapters/electron
         run: xvfb-run -a pnpm test
-
-  # The hosted macOS runner cannot start Maestro's driver on a simulator (run 43535632516: "Maestro could not start its driver", 0 screens, then the 45 minute limit). This job runs the checks that need no simulator; the simulator run is the manual job below.
-  ios-adapter:
-    runs-on: macos-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-      - name: Adapter unit tests (no simulator)
-        run: node --test adapters/ios/test/sim.test.mjs
 
   # Manual only (Actions, Run workflow): the numbered simulator checks on a hosted macOS runner.
   ios-simulator:
