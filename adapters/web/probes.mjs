@@ -112,9 +112,9 @@ function setup(o) {
 // networkidle wait; idleMs (check only) caps it, since a polling app never goes idle.
 const idle = (c, page) => page.waitForLoadState('networkidle', c.idleMs ? { timeout: c.idleMs } : undefined).catch(() => {});
 
-// A page or window that closed under a probe (a click that closes the window or reloads the app into a new one) is not a failure of the app.
 // The click left the page for another origin: the destination's own alerts must not be counted against the source page.
 export const leftOrigin = (before, after) => { try { return new URL(before).origin !== new URL(after).origin && new URL(after).origin !== 'null'; } catch { return false; } };
+// A page or window that closed under a probe (a click that closes the window or reloads the app into a new one) is not a failure of the app.
 export const closedReason = (e) => (/Target page, context or browser has been closed|Target closed/.test(String(e && e.message)) ? 'the window closed or reloaded after the click' : null);
 
 // Runs one probe group. A throw closes the group's contexts; with c.notChecked it becomes notChecked rows, else it is rethrown.
@@ -288,14 +288,23 @@ async function clickScreen(c, s, add) {
           const errBefore = await t.page.evaluate(ERRORISH);
           const urlBefore = t.page.url();
           t.api.seen.length = 0;
+          const opened = [];
+          const onPage = (p) => { opened.push(p); };
+          t.page.context().on('page', onPage);
           try { await target.click({ timeout: 2000 }); } catch (e) {
             c.notChecked?.push({ probe: MODE_PROBE[mode], route: s.url || s.id, reason: closedReason(e) ? `click "${names[i]}": ${closedReason(e)}` : `could not click "${names[i]}"` });
+            t.page.context().off('page', onPage);
             await t.context.close();
             return;
           }
           await sleep(mode === 'slow' ? 500 : 1500);
+          await Promise.all(opened.map((p) => p.waitForLoadState('domcontentloaded', { timeout: 1000 }).catch(() => {})));
+          t.page.context().off('page', onPage);
+          const away = leftOrigin(urlBefore, t.page.url()) || opened.some((p) => leftOrigin(urlBefore, p.url()));
           const reqs = t.api.seen.length;
-          if (mode === 'repeat') {
+          if (away && mode !== 'repeat') {
+            c.notChecked?.push({ probe: MODE_PROBE[mode], route: s.url || s.id, reason: `click "${names[i]}": the click went to another origin${opened.length && !leftOrigin(urlBefore, t.page.url()) ? ' (new window)' : ''}` });
+          } else if (mode === 'repeat') {
             const counts = {};
             for (const k of t.api.seen) counts[k] = (counts[k] || 0) + 1;
             const [k, n] = Object.entries(counts).sort((a, b) => b[1] - a[1])[0] || ['', 0];
@@ -304,8 +313,6 @@ async function clickScreen(c, s, add) {
             const changed = (await t.page.evaluate(() => document.body.innerHTML)) !== before;
             const fb = await t.page.evaluate(FEEDBACK);
             rows[slot] = ['no-feedback-slow', where, t.api.pending === 0 || changed || fb, t.api.pending === 0 ? 'no request in flight' : changed || fb ? 'page changed while the request was in flight' : 'request in flight at 500 ms and nothing on the page changed'];
-          } else if (leftOrigin(urlBefore, t.page.url())) {
-            c.notChecked?.push({ probe: MODE_PROBE[mode], route: s.url || s.id, reason: `click "${names[i]}": the click went to another origin` });
           } else {
             const errAfter = await t.page.evaluate(ERRORISH);
             rows[slot] = ['failed-request-no-error', where, reqs === 0 || errAfter > errBefore, reqs === 0 ? 'no request sent' : errAfter > errBefore ? 'error text or alert appeared' : `${reqs} request(s) answered 500 and no new error text or alert appeared`];
