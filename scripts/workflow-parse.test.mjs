@@ -40,7 +40,7 @@ test('every stop of a run writes a report page', () => {
 test('agents that start the app are told to stop it, and only the stop rule names pkill or killall', () => {
   const lines = readFileSync(file, 'utf8').split('\n')
   assert.equal(lines.filter((l) => /pkill|killall/.test(l) && !l.startsWith('const STOP_APP')).length, 0)
-  assert.equal(lines.filter((l) => l.includes('${STOP_APP}')).length, 4)
+  assert.equal(lines.filter((l) => l.includes('${STOP_APP}')).length, 5)
 })
 
 test('the per-area inventory step marks areas and lists the finished ones through areas.mjs', () => {
@@ -71,4 +71,12 @@ test('both room.mjs steps pass a result file and a wait cap to longRun (#167)', 
   assert.equal(lines.length, 2)
   for (const l of lines) assert.ok(/result: \[/.test(l) && /maxWaits: ROOM_MAX_WAITS/.test(l), l.slice(0, 120))
   assert.ok(/ROOM_MAX_WAITS = 40/.test(readFileSync(file, 'utf8')))
+})
+
+test('the referee runs in round 1 before the loop agent, and the writer and fixer get the lookup rules (#200 #201 #202)', () => {
+  const src = readFileSync(file, 'utf8')
+  const ref = src.indexOf('if (round === 1 && ran.ok) await referee()'), loop = src.indexOf('label: `parity-loop-${round}`')
+  assert.ok(ref > 0 && ref < loop, 'referee before the loop agent')
+  assert.ok(src.indexOf("'parity-rebuild-run-1-referee'") > 0 && src.includes("referee.done"), 'rerun and marker')
+  assert.equal((src.match(/\$\{LOOKUP_RULES\}/g) || []).length, 3, 'writer, fixer, referee')
 })
