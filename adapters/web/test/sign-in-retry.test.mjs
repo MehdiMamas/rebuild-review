@@ -77,3 +77,53 @@ test('a wrong password fails every try, says how many, and never shows the typed
   assert.match(r.reason, /\(tried 2 times\)$/);
   assert.ok(!r.reason.includes('wrong-pass-123') && !r.reason.includes('bob'));
 });
+
+// auth.create: sign-in fails until the sign-up form has been submitted once.
+const made = new Set();
+const page2 = (title, action, button) => `<!doctype html><title>${title}</title><h1>${title}</h1><form method="post" action="${action}">
+<label for="e">Email</label><input id="e" name="e"><label for="p">Password</label><input id="p" name="p" type="password"><button type="submit">${button}</button></form>`;
+const server2 = http.createServer((req, res) => {
+  const u = new URL(req.url, 'http://x');
+  if (req.method === 'POST') {
+    let body = '';
+    req.on('data', (d) => { body += d; });
+    req.on('end', () => {
+      const f = new URLSearchParams(body);
+      if (u.pathname === '/signup') { made.add(f.get('e') + '|' + f.get('p')); res.writeHead(200, { 'content-type': 'text/html' }); return res.end('<h1>Welcome</h1>'); }
+      if (made.has(f.get('e') + '|' + f.get('p'))) { res.writeHead(303, { location: '/home', 'set-cookie': 'sid=1; Path=/' }); return res.end(); }
+      res.writeHead(200, { 'content-type': 'text/html' }); res.end(page2('Sign in', '/login', 'Sign in'));
+    });
+    return;
+  }
+  if (u.pathname === '/home') { res.writeHead(200, { 'content-type': 'text/html' }); return res.end('<!doctype html><title>Home</title><h1>Home</h1>'); }
+  const signup = u.pathname === '/signup';
+  res.writeHead(200, { 'content-type': 'text/html' }); res.end(signup ? page2('Sign up', '/signup', 'Create account') : page2('Sign in', '/login', 'Sign in'));
+});
+const SECRET = 'create-pass-77';
+const auth2 = (create) => ({
+  steps: [{ open: '/login' }, { type: { into: 'Email', text: 'a@example.test' } }, { type: { into: 'Password', text: SECRET } }, { click: 'Sign in' }],
+  expect: { path: '/home' },
+  ...(create ? { create } : {}),
+});
+const createSteps = (button = 'Create account') => [{ open: '/signup' }, { type: { into: 'Email', text: 'a@example.test' } }, { type: { into: 'Password', text: SECRET } }, { click: button }];
+const quick = { attempts: 1, clickMs: 1500, landMs: 500 };
+
+test('auth.create makes the account when sign-in fails, then signs in', async () => {
+  made.clear();
+  await new Promise((r) => server2.listen(0, '127.0.0.1', r));
+  const o2 = `http://127.0.0.1:${server2.address().port}`;
+  try {
+    const r = await signIn(browser, o2, auth2(createSteps()), [], quick);
+    assert.equal(r.ok, true, r.reason);
+    assert.equal(r.created, true);
+    made.clear();
+    const no = await signIn(browser, o2, auth2(), [], { ...quick, attempts: 2 });
+    assert.equal(no.ok, false);
+    assert.match(no.reason, /\(tried 2 times\)$/);
+    assert.equal(no.created, undefined);
+    const bad = await signIn(browser, o2, auth2(createSteps('No such button')), [], quick);
+    assert.equal(bad.ok, false);
+    assert.match(bad.reason, /after creating the account: .*; the create steps failed at step 4 \(click\)/);
+    assert.ok(!bad.reason.includes(SECRET) && !bad.reason.includes('a@example.test'));
+  } finally { server2.close(); }
+});

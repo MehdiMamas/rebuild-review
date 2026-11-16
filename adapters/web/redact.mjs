@@ -45,6 +45,6 @@ export function redactSecrets(value, secrets, substring = false) {
 
 // The typed values of an auth block: every type.text of any length.
 export function authSecrets(auth) {
-  const steps = auth && Array.isArray(auth.steps) ? auth.steps : [];
+  const steps = auth ? [...(Array.isArray(auth.steps) ? auth.steps : []), ...(Array.isArray(auth.create) ? auth.create : [])] : [];
   return expandSecrets(steps.map((s) => s && s.type && s.type.text));
 }

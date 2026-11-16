@@ -36,6 +36,7 @@ try {
       const browser = await launchChromium(chromium);
       let r;
       try { r = await signIn(browser, origin, run.auth, envOrigins(run.env, origin)); } finally { await browser.close().catch(() => {}); }
+      if (r.created) authInfo.created = true;
       if (!r.ok) authInfo.reason = r.reason;
       else {
         const j = JSON.stringify(r.storageState);

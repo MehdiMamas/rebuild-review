@@ -55,6 +55,7 @@ const allowOrigins = envOrigins(run.env, origin);
 const authInfo = { given: run.auth !== undefined, signedIn: false };
 if (authInfo.given) {
   const r = await signIn(browser, origin, run.auth, allowOrigins);
+  if (r.created) authInfo.created = true;
   if (r.ok) { storageState = r.storageState; authInfo.signedIn = true; }
   else { authInfo.reason = r.reason; notCaptured.push(`sign-in failed, captured signed out: ${r.reason}`); }
 }

@@ -461,3 +461,12 @@ test('given a bad auth block -> parity runs the tests signed out with the valida
   assert.equal(p.auth.signedIn, false);
   assert.match(p.auth.reason, /auth\.steps/);
 });
+
+test('validateAuth: auth.create uses the step rules and names its own steps', () => {
+  const steps = [{ open: '/' }];
+  validateAuth({ steps, create: [{ open: '/signup' }, { type: { into: 'Email', text: 'x' } }] });
+  assert.throws(() => validateAuth({ steps, create: [] }), /auth\.create .*non-empty/);
+  assert.throws(() => validateAuth({ steps, create: [{ open: '/a' }, { click: 5 }] }), /auth create step 2 \(click\): needs a string/);
+  assert.throws(() => validateAuth({ steps, create: [{ type: { into: 'a', text: 'secret-val' } , click: 'x' }] }), (e) => /auth create step 1/.test(e.message) && !e.message.includes('secret-val'));
+  assert.deepEqual(authSecrets({ steps, create: [{ type: { into: 'Email', text: 'zed99' } }] }), ['zed99']);
+});
