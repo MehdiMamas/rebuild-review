@@ -385,7 +385,14 @@ export function checkChild(r, transcript, runDir, target, where = '') {
 }
 
 // ---- CLI ----
-// run.json's optional "env" (stand-in settings), "auth" (sign-in steps) and "stores" (throwaway containers) are copied into the delivered rebuild-run.json so the rebuild starts and is captured like the original. Each key is handled on its own; a key run.json lacks is left unset. Values are never printed.
+// run.json's optional "env" (stand-in settings), "auth" (sign-in steps) and "stores" (throwaway containers) are copied into the delivered rebuild-run.json so the rebuild starts and is captured like the original. "auth" and "stores" are copied as they are. "env" is merged: a URL on this machine (loopback) names a service from the original's own setup that the builder never saw (its schema and data), so the rebuild keeps its own store and the key is not copied (its name goes to envNotCopied, never its value); stand-in keys are copied unless the rebuild already has that key. Values are never printed.
+export function isLoopbackUrl(v) {
+  if (typeof v !== 'string') return false;
+  let h;
+  try { h = new URL(v).hostname.toLowerCase(); } catch { return false; }
+  return h === 'localhost' || h === '[::1]' || h === '::1' || h === '0.0.0.0' || /^127(\.\d{1,3}){3}$/.test(h);
+}
+
 export function copyEnv(runDir) {
   const from = path.join(runDir, 'run.json'), to = path.join(runDir, 'project', 'rebuild-run.json');
   if (!fs.existsSync(from) || !fs.existsSync(to)) return;
@@ -393,7 +400,20 @@ export function copyEnv(runDir) {
   const keys = ['env', 'auth', 'stores'].filter((k) => src[k] !== undefined);
   if (!keys.length) return;
   const rb = JSON.parse(fs.readFileSync(to, 'utf8'));
-  for (const k of keys) rb[k] = src[k];
+  for (const k of keys) if (k !== 'env') rb[k] = src[k];
+  if (src.env !== undefined) {
+    const own = rb.env && typeof rb.env === 'object' && !Array.isArray(rb.env) ? rb.env : {};
+    const skipped = [];
+    const srcEnv = src.env && typeof src.env === 'object' && !Array.isArray(src.env) ? src.env : {};
+    for (const [k, v] of Object.entries(srcEnv)) {
+      if (isLoopbackUrl(v)) {
+        skipped.push(k);
+        if (own[k] === v) delete own[k];
+      } else if (!(k in own)) own[k] = v;
+    }
+    if (Object.keys(own).length) rb.env = own; else delete rb.env;
+    if (skipped.length) rb.envNotCopied = skipped.sort(); else delete rb.envNotCopied;
+  }
   fs.writeFileSync(to, JSON.stringify(rb, null, 2) + '\n');
 }
 
@@ -402,7 +422,7 @@ export function dropEnv(file) {
   if (!fs.existsSync(file)) return;
   const rb = JSON.parse(fs.readFileSync(file, 'utf8'));
   let changed = false;
-  for (const k of ['env', 'auth']) if (k in rb) { delete rb[k]; changed = true; }
+  for (const k of ['env', 'auth', 'envNotCopied']) if (k in rb) { delete rb[k]; changed = true; }
   if (Array.isArray(rb.stores) && rb.stores.some((s) => s && typeof s === 'object' && 'env' in s)) {
     rb.stores = rb.stores.map((s) => { if (!s || typeof s !== 'object') return s; const { env, ...rest } = s; return rest; });
     changed = true;

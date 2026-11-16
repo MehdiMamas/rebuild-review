@@ -17,19 +17,27 @@ export function landedOnSignIn(asked, landed, signedIn) {
 const KINDS = ['open', 'click', 'type', 'press', 'wait'];
 const isStr = (v) => typeof v === 'string';
 
+function checkSteps(steps, label) {
+  steps.forEach((step, i) => {
+    const n = i + 1;
+    if (!step || typeof step !== 'object' || Array.isArray(step)) throw new Error(`${label} ${n}: must be an object`);
+    const kinds = Object.keys(step).filter((k) => KINDS.includes(k));
+    if (kinds.length !== 1 || Object.keys(step).length !== 1) throw new Error(`${label} ${n}: must have exactly one of ${KINDS.join(', ')} and nothing else`);
+    const kind = kinds[0], v = step[kind];
+    const bad = kind === 'type' ? !(v && typeof v === 'object' && isStr(v.into) && isStr(v.text)) : kind === 'wait' ? !(typeof v === 'number' && v >= 0) : !isStr(v);
+    if (bad) throw new Error(`${label} ${n} (${kind}): ${kind === 'type' ? 'needs string fields into and text' : kind === 'wait' ? 'needs a number of milliseconds' : 'needs a string'}`);
+  });
+}
+
 // Throws a message naming the step number and kind; never a value.
 export function validateAuth(auth) {
   if (!auth || typeof auth !== 'object' || Array.isArray(auth)) throw new Error('auth in run.json must be an object with a steps array');
   if (!Array.isArray(auth.steps) || !auth.steps.length) throw new Error('auth.steps in run.json must be a non-empty array');
-  auth.steps.forEach((step, i) => {
-    const n = i + 1;
-    if (!step || typeof step !== 'object' || Array.isArray(step)) throw new Error(`auth step ${n}: must be an object`);
-    const kinds = Object.keys(step).filter((k) => KINDS.includes(k));
-    if (kinds.length !== 1 || Object.keys(step).length !== 1) throw new Error(`auth step ${n}: must have exactly one of ${KINDS.join(', ')} and nothing else`);
-    const kind = kinds[0], v = step[kind];
-    const bad = kind === 'type' ? !(v && typeof v === 'object' && isStr(v.into) && isStr(v.text)) : kind === 'wait' ? !(typeof v === 'number' && v >= 0) : !isStr(v);
-    if (bad) throw new Error(`auth step ${n} (${kind}): ${kind === 'type' ? 'needs string fields into and text' : kind === 'wait' ? 'needs a number of milliseconds' : 'needs a string'}`);
-  });
+  checkSteps(auth.steps, 'auth step');
+  if (auth.create !== undefined) {
+    if (!Array.isArray(auth.create) || !auth.create.length) throw new Error('auth.create in run.json must be a non-empty array');
+    checkSteps(auth.create, 'auth create step');
+  }
   const e = auth.expect;
   if (e !== undefined) {
     if (!e || typeof e !== 'object' || Array.isArray(e)) throw new Error('auth.expect must be an object with path and/or text');
@@ -39,14 +47,50 @@ export function validateAuth(auth) {
 
 // Signs in, trying up to `attempts` times in fresh contexts: on a loaded machine a click can land before the page is
 // ready, or the redirect can come late, and one miss would leave a whole parity run signed out. A failure that repeats
-// is reported with the count. { ok: true, storageState } or { ok: false, reason }.
+// is reported with the count. When every try fails and run.json has auth.create, those steps make the account once
+// (in an unrecorded context) and sign-in is tried again. { ok: true, storageState[, created] } or { ok: false, reason }.
 export async function signIn(browser, origin, auth, allowOrigins = [], { attempts = 3, clickMs = 10000, landMs = 15000 } = {}) {
-  let r;
-  for (let i = 1; i <= attempts; i++) {
-    r = await signInOnce(browser, origin, auth, allowOrigins, { clickMs, landMs });
-    if (r.ok) return r;
+  const tries = async () => {
+    let r;
+    for (let i = 1; i <= attempts; i++) {
+      r = await signInOnce(browser, origin, auth, allowOrigins, { clickMs, landMs });
+      if (r.ok) return r;
+    }
+    return attempts > 1 ? { ok: false, reason: `${r.reason} (tried ${attempts} times)` } : r;
+  };
+  const first = await tries();
+  if (first.ok || !Array.isArray(auth.create)) return first;
+  const made = await createAccount(browser, origin, auth, allowOrigins, { clickMs });
+  const second = await tries();
+  if (second.ok) return { ...second, created: true };
+  return { ok: false, reason: `${first.reason}; after creating the account: ${second.reason}${made.failed ? `; the create steps failed at step ${made.failed}` : ''}` };
+}
+
+// Runs auth.create once in a fresh unrecorded context. Whether it worked is not judged here (the account may already
+// exist): only a thrown step is reported, as `<n> (<kind>): <message>`.
+async function createAccount(browser, origin, auth, allowOrigins, { clickMs }) {
+  const secrets = authSecrets(auth);
+  const clean = (m) => redactSecrets(scrub(String(m).split('\n')[0]), secrets);
+  let context, n = 0, kind = '';
+  try {
+    ({ context } = await makeContext(browser, origin, { viewport: { width: 1440, height: 900 }, allowOrigins }));
+    const page = await context.newPage();
+    for (const step of auth.create) {
+      n++; kind = KINDS.find((k) => k in step);
+      if (kind === 'click') await clickStep(page, step.click, clickMs);
+      else await runStep(page, origin, step);
+      if (kind === 'open') {
+        await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
+        await page.evaluate(() => new Promise((r) => { requestAnimationFrame(() => r()); setTimeout(r, 30000); })).catch(() => {});
+      }
+    }
+    await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
+    return {};
+  } catch (err) {
+    return { failed: `${n} (${kind}): ${clean(err.message)}` };
+  } finally {
+    if (context) await context.close().catch(() => {});
   }
-  return attempts > 1 ? { ok: false, reason: `${r.reason} (tried ${attempts} times)` } : r;
 }
 
 // A click on a control that never holds still (an endless animation) times out on Playwright's stability check; it is

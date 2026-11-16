@@ -270,17 +270,59 @@ test('denyList covers sibling runs, the plugin root and a worktree target\'s git
   assert.ok(rules.includes(`Edit(/${wt})`) && rules.includes(`Edit(/${runDir}/**)`));
 });
 
-test('copyEnv copies run.json env into rebuild-run.json, and leaves it alone when run.json has none', () => {
+function envCase(runEnv, rbInit = {}, extra = {}) {
   const runDir = tmp();
   fs.mkdirSync(path.join(runDir, 'project'));
   const rb = path.join(runDir, 'project', 'rebuild-run.json');
-  fs.writeFileSync(rb, JSON.stringify({ start: 'x', dir: '.' }));
-  fs.writeFileSync(path.join(runDir, 'run.json'), JSON.stringify({ start: 'y' }));
+  fs.writeFileSync(rb, JSON.stringify({ start: 'x', dir: '.', ...rbInit }));
+  fs.writeFileSync(path.join(runDir, 'run.json'), JSON.stringify({ start: 'y', ...(runEnv === undefined ? {} : { env: runEnv }), ...extra }));
   copyEnv(runDir);
-  assert.equal('env' in JSON.parse(fs.readFileSync(rb, 'utf8')), false);
-  fs.writeFileSync(path.join(runDir, 'run.json'), JSON.stringify({ start: 'y', env: { SETTING: 'stand-in' } }));
-  copyEnv(runDir);
-  assert.deepEqual(JSON.parse(fs.readFileSync(rb, 'utf8')), { start: 'x', dir: '.', env: { SETTING: 'stand-in' } });
+  return { runDir, rb, read: () => JSON.parse(fs.readFileSync(rb, 'utf8')) };
+}
+
+test('copyEnv copies a stand-in env key, and leaves rebuild-run.json alone when run.json has none', () => {
+  assert.equal('env' in envCase(undefined).read(), false);
+  assert.deepEqual(envCase({ SETTING: 'stand-in' }).read(), { start: 'x', dir: '.', env: { SETTING: 'stand-in' } });
+});
+
+test('copyEnv skips loopback URLs and lists their names only', () => {
+  const r = envCase({ DB_A: 'http://127.0.0.1:5432', DB_B: 'http://localhost:9000/x', DB_C: 'http://[::1]:1/', DB_D: 'http://0.0.0.0:8', KEY: 'k' }, {}, { auth: { steps: [] }, stores: [{ name: 's' }] }).read();
+  assert.deepEqual(r.env, { KEY: 'k' });
+  assert.deepEqual(r.envNotCopied, ['DB_A', 'DB_B', 'DB_C', 'DB_D']);
+  assert.deepEqual(r.stores, [{ name: 's' }]);
+  assert.ok(r.auth);
+  assert.equal(JSON.stringify(r).includes('5432'), false);
+});
+
+test('copyEnv leaves no env key when everything was skipped', () => {
+  const r = envCase({ DB: 'http://127.0.0.1:5432' }).read();
+  assert.equal('env' in r, false);
+  assert.deepEqual(r.envNotCopied, ['DB']);
+});
+
+test('copyEnv copies a non-loopback URL', () => {
+  assert.deepEqual(envCase({ API: 'https://api.example.test' }).read().env, { API: 'https://api.example.test' });
+});
+
+test('copyEnv keeps the rebuild\'s own value for the same key', () => {
+  const r = envCase({ SETTING: 'theirs', OTHER: 'o' }, { env: { SETTING: 'mine' } }).read();
+  assert.deepEqual(r.env, { SETTING: 'mine', OTHER: 'o' });
+});
+
+test('copyEnv removes a loopback value an older copy left, and clears envNotCopied when nothing is skipped', () => {
+  const c = envCase({ DB: 'http://127.0.0.1:5432' }, { env: { DB: 'http://127.0.0.1:5432', MINE: 'm' } });
+  assert.deepEqual(c.read().env, { MINE: 'm' });
+  assert.deepEqual(c.read().envNotCopied, ['DB']);
+  fs.writeFileSync(path.join(c.runDir, 'run.json'), JSON.stringify({ start: 'y', env: { K: 'v' } }));
+  copyEnv(c.runDir);
+  assert.equal('envNotCopied' in c.read(), false);
+});
+
+test('dropEnv removes env, auth and envNotCopied', () => {
+  const c = envCase({ DB: 'http://127.0.0.1:5432', K: 'v' }, {}, { auth: { steps: [{ open: '/' }] } });
+  dropEnv(c.rb);
+  const r = c.read();
+  assert.equal('env' in r || 'auth' in r || 'envNotCopied' in r, false);
 });
 
 test('fixStack passes first time with no ask call', async () => {
