@@ -366,11 +366,18 @@ async function runScore() {
 (1) rm -rf ${q(SC)} && mkdir -p ${q(SC)}
 (2) ${SCORE} measure "$(${SCORE} source ${q(runDir)} original)" ${q(`${runDir}/golden`)} ${q(`${SC}/original.json`)} --run ${q(`${runDir}/run.json`)} --own-run ${q(runDir)} --side original
 (3) ${SCORE} measure "$(${SCORE} source ${q(runDir)} rebuild)" ${q(`${runDir}/golden-rebuild`)} ${q(`${SC}/rebuild.json`)} --run ${q(`${runDir}/project/rebuild-run.json`)} --own-run ${q(runDir)} --side rebuild
-(4) ${SCORE} blind ${q(runDir)} ${JUDGES}
-Step 4 prints one line of JSON {folder, judges:[{A,B},...]}. Return ok true with folder and judges copied exactly from it. If a step failed return ok false with the error as detail. Do not write the label map to any file.`,
-  { ...CHEAP, label: 'score-measure-blind', phase: 'Score', schema: { type: 'object', required: ['ok'], properties: { ok: { type: 'boolean' }, detail: { type: 'string' }, folder: { type: 'string' }, judges: { type: 'array', items: { type: 'object', required: ['A', 'B'], properties: { A: { type: 'string' }, B: { type: 'string' } } } } } } })
-  mustRun(prep, 'measure and blind')
-  const { folder, judges } = prep
+Return ok true if both measure steps exited 0. If a step failed return ok false with the error as detail.`,
+  { ...CHEAP, label: 'score-measure', phase: 'Score', schema: RUN_RESULT })
+  mustRun(prep, 'measure')
+  // The blind copies are a separate step whose answer is checked here: a cheap agent once skipped it and returned no judges.
+  const blindOk = b => b && b.ok && typeof b.folder === 'string' && b.folder !== SC && !b.folder.startsWith(runDir) && Array.isArray(b.judges) && b.judges.length === JUDGES && b.judges.every(x => x && x.A && x.B && x.A !== x.B)
+  let bl = null
+  for (let t = 0; t < 2 && !blindOk(bl); t++) {
+    bl = await agent(`Run exactly this one command once: ${SCORE} blind ${q(runDir)} ${JUDGES} . It prints one line of JSON {folder, judges:[{A,B},...]} with ${JUDGES} judges. Return ok true with folder and judges copied exactly from that line. If it failed return ok false with the error as detail. Do not write the label map to any file. Change nothing else.`,
+      { ...CHEAP, label: t ? `score-blind-${t + 1}` : 'score-blind', phase: 'Score', schema: { type: 'object', required: ['ok'], properties: { ok: { type: 'boolean' }, detail: { type: 'string' }, folder: { type: 'string' }, judges: { type: 'array', items: { type: 'object', required: ['A', 'B'], properties: { A: { type: 'string' }, B: { type: 'string' } } } } } } })
+  }
+  if (!blindOk(bl)) throw new Error(`Score: the blind copies were not made: ${(bl && bl.detail) || `expected ${JUDGES} judges in a folder outside the run, got ${JSON.stringify(bl && { folder: bl.folder, judges: (bl.judges || []).length })}`}`)
+  const { folder, judges } = bl
 
   // 2. Blind judges in parallel, each followed by the citation check. A big app is judged area by area: every judge answers once per area,
   //    looking at that area's features and screens; code weighs the areas by their counted lines. One area is judged as before.
