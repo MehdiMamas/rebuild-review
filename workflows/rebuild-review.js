@@ -270,10 +270,15 @@ A feature marked "keep" gets a test asserting the behaviour. A feature marked "d
     const fixed = await agent(`You are the parity fixer, round ${round} of 3. These tests are wrong on the original (a keep test failed or a defect test passed): ${w.detail}. See ${PAR}/original.json for their results and ${runDir}/features.md for each feature. Fix those test files in ${TESTS}: fix the test, not features.md, unless using the running app (start it from the copy named in ${runDir}/run.json; ${STOP_APP}) proves the features.md entry itself is wrong; then correct the entry in plain behaviour words (no source), keeping its "F-xxx keep." or "F-xxx defect." start. Do not read source under ${WORK} or ${target}. Never delete a test. Use only limits stated in features.md. If ${PAR}/original.auth.json exists and says signedIn is false, the run's sign-in failed: a test that fails only because the app asked for a sign-in is not wrong, so do not rewrite it to pass signed out. ${DRIVER}`, { ...WRITER, label: `parity-fix-${round}`, phase: 'Parity' })
     if (!fixed) throw new Error('Parity: the fix agent died')
   }
-  mustRun(await runOn('parity-original-a', `${runDir}/run.json`, `${PAR}/original.json`), 'the run on the original')
-  mustRun(await runOn('parity-original-b', `${runDir}/run.json`, `${PAR}/original-2.json`), 'the second run on the original')
-  const settled = await agent(`Run exactly: node ${q(pluginRoot + '/scripts/parity-results.mjs')} settle ${q(PAR)} ${q(runDir + '/features.md')} . Return ok true with its output as detail if it exited 0, otherwise ok false with the error. Change nothing else.`, { ...CHEAP, label: 'parity-settle', phase: 'Parity', schema: RUN_RESULT })
-  mustRun(settled, 'settle')
+  // Two runs on the original, then settle. A pair whose sign-in differs judges nothing (settle refuses); it is run once more (#196).
+  for (let pair = 1; pair <= 2; pair++) {
+    const tag = pair === 1 ? '' : `-${pair}`
+    mustRun(await runOn(`parity-original-a${tag}`, `${runDir}/run.json`, `${PAR}/original.json`), 'the run on the original')
+    mustRun(await runOn(`parity-original-b${tag}`, `${runDir}/run.json`, `${PAR}/original-2.json`), 'the second run on the original')
+    const settled = await agent(`Run exactly: node ${q(pluginRoot + '/scripts/parity-results.mjs')} settle ${q(PAR)} ${q(runDir + '/features.md')} . Return ok true with its output as detail if it exited 0, otherwise ok false with the error. Change nothing else.`, { ...CHEAP, label: `parity-settle${tag}`, phase: 'Parity', schema: RUN_RESULT })
+    if (settled && settled.ok) break
+    if (pair === 2 || !/sign-in worked on one run/.test((settled && settled.detail) || '')) mustRun(settled, 'settle')
+  }
 
   // The rebuild, when there is one: the suite runs on it, failures go back to the builder until it passes (code decides when to stop), then the visual diff.
   const RB = `${runDir}/project/rebuild-run.json`
