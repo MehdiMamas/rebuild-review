@@ -395,3 +395,22 @@ test('after a restore, prep drops the worse build\'s rebuild.json and run-error.
   assert.equal(run.start, 'npm start');
   assert.equal(run.address, `http://localhost:${port}`);
 });
+
+test('settle refuses and moves nothing when one run on the original signed in and the other did not (#196)', () => {
+  const t = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-'));
+  fs.mkdirSync(path.join(t, 'tests'));
+  for (const id of ['F-001', 'F-002', 'F-003']) fs.writeFileSync(path.join(t, 'tests', `${id}.test.mjs`), '');
+  fs.writeFileSync(path.join(t, 'features.md'), md);
+  fs.writeFileSync(path.join(t, 'original.json'), JSON.stringify(res({ 'F-001': true, 'F-002': true, 'F-003': true })));
+  fs.writeFileSync(path.join(t, 'original-2.json'), JSON.stringify(res({ 'F-001': true, 'F-002': true, 'F-003': false })));
+  fs.writeFileSync(path.join(t, 'original.auth.json'), JSON.stringify({ given: true, signedIn: true }));
+  fs.writeFileSync(path.join(t, 'original-2.auth.json'), JSON.stringify({ given: true, signedIn: false, reason: 'x' }));
+  assert.throws(() => settle(t, path.join(t, 'features.md')), /sign-in worked on one run on the original and not on the other/);
+  assert.equal(fs.readdirSync(path.join(t, 'tests')).length, 3);
+  assert.equal(fs.existsSync(path.join(t, 'removed')), false);
+  // both signed in: judged as usual
+  fs.writeFileSync(path.join(t, 'original-2.auth.json'), JSON.stringify({ given: true, signedIn: true }));
+  settle(t, path.join(t, 'features.md'));
+  assert.ok(fs.existsSync(path.join(t, 'removed', 'F-003.test.mjs')));
+  fs.rmSync(t, { recursive: true, force: true });
+});

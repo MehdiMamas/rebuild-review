@@ -34,7 +34,13 @@ export const LOOP_USD = 50; // the floor; a big app gets more from size.json (pl
 
 const readJson = (f) => JSON.parse(fs.readFileSync(f, 'utf8'));
 
+// The sign-in of each run on the original (<results minus .json>.auth.json, written by the adapter when run.json has auth).
+const signedIn = (parDir, name) => { const f = path.join(parDir, `${name}.auth.json`); return fs.existsSync(f) ? readJson(f).signedIn === true : null; };
+
 export function settle(parDir, featuresMd) {
+  // A run signed in and a run signed out disagree on every test behind sign-in; none of that is a flaky test (#196).
+  const s1 = signedIn(parDir, 'original'), s2 = signedIn(parDir, 'original-2');
+  if (s1 !== null && s2 !== null && s1 !== s2) throw new Error('the sign-in worked on one run on the original and not on the other; no test was judged, run the two runs again');
   const kindMap = kinds(fs.readFileSync(featuresMd, 'utf8'));
   const a = readJson(path.join(parDir, 'original.json')), b = readJson(path.join(parDir, 'original-2.json'));
   const bBy = Object.fromEntries(b.map((r) => [r.feature, r]));
@@ -241,7 +247,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === new URL(import.meta.url
     const ids = wrongTests(readJson(y), kinds(fs.readFileSync(x, 'utf8')));
     console.log(`${ids.length}${ids.length ? ' ' + ids.join(' ') : ''}`);
   } else if (cmd === 'settle') {
-    const n = settle(x, y);
+    let n;
+    try { n = settle(x, y); } catch (err) { console.error(`settle: ${err.message}`); process.exit(1); }
     console.log(`moved ${n.length}${n.length ? '\n' + n.join('\n') : ''}`);
     tryEmit(path.resolve(x, '..'), { kind: 'decision', what: 'settle', choice: `moved ${n.length}`, reason: n.length ? `to removed/: ${n.join(' ')}` : 'no test moved' });
   } else if (cmd === 'merge') {
