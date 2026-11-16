@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { kinds, wrongTests, settle, merge, failing, cleanDetail, readCost, loop, prep, writeRunError, runErrorText, MAX_ROUNDS, LOOP_USD } from './parity-results.mjs';
+import { kinds, wrongTests, settle, merge, failing, cleanDetail, readCost, loop, prep, writeRunError, runErrorText, MAX_ROUNDS, LOOP_USD, refereeList, refereeCheck, refereeSettle } from './parity-results.mjs';
 
 const md = '# Features\n\nF-001 keep. Page.\n- **F-002 defect.** No loading\nF-003 Keep: shortcut\nsome other line\n';
 const res = (o) => Object.entries(o).map(([feature, passed]) => ({ feature, passed, detail: '' }));
@@ -413,4 +413,65 @@ test('settle refuses and moves nothing when one run on the original signed in an
   settle(t, path.join(t, 'features.md'));
   assert.ok(fs.existsSync(path.join(t, 'removed', 'F-003.test.mjs')));
   fs.rmSync(t, { recursive: true, force: true });
+});
+
+// ---- referee (#202) ----
+const refSetup = (tests) => {
+  const run = fs.mkdtempSync(path.join(os.tmpdir(), 'ref-'));
+  const t = path.join(run, 'parity');
+  fs.mkdirSync(path.join(t, 'tests'), { recursive: true });
+  fs.writeFileSync(path.join(run, 'features.md'), 'F-001 keep. A\nF-002 keep. B\nF-003 keep. C\nF-004 defect. D\nF-005 keep. E\n');
+  for (const [id, text] of Object.entries(tests)) fs.writeFileSync(path.join(t, 'tests', `${id}.test.mjs`), text);
+  const ids = Object.keys(tests);
+  fs.writeFileSync(path.join(t, 'original.json'), JSON.stringify(ids.map((feature) => ({ feature, passed: true }))));
+  fs.writeFileSync(path.join(t, 'rebuild.json'), JSON.stringify(ids.map((feature) => ({ feature, passed: feature === 'F-005' }))));
+  return { run, t, md: path.join(run, 'features.md') };
+};
+const BASE = "await page.getByLabel('Password').fill('x');\nassert.equal(a, 1);\n";
+
+test('referee-list picks keep tests that pass on the original and fail on the rebuild, and backs them up', () => {
+  const { run, t, md } = refSetup({ 'F-001': BASE, 'F-004': BASE, 'F-005': BASE });
+  const ids = refereeList(t, md);
+  assert.deepEqual(ids, ['F-001']);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(t, 'referee-list.json'), 'utf8')), ['F-001']);
+  assert.deepEqual(fs.readdirSync(path.join(t, 'referee-before')), ['F-001.test.mjs']);
+  assert.ok(fs.existsSync(path.join(t, 'rebuild-before-referee.json')));
+  fs.rmSync(run, { recursive: true, force: true });
+});
+
+test('referee-check restores an edit that changes an assert line or adds try, and keeps a locator-only edit', () => {
+  const { run, t, md } = refSetup({ 'F-001': BASE, 'F-002': BASE, 'F-003': BASE });
+  refereeList(t, md);
+  const w = (id, text) => fs.writeFileSync(path.join(t, 'tests', `${id}.test.mjs`), text);
+  w('F-001', BASE.replace('assert.equal(a, 1)', 'assert.equal(a, 2)'));
+  w('F-002', `try {\n${BASE}} catch (e) {}\n`);
+  w('F-003', BASE.replace("getByLabel('Password')", "getByLabel('Password', { exact: true })"));
+  const r = refereeCheck(t);
+  assert.deepEqual(r.changed, ['F-003']);
+  assert.deepEqual(r.rejected.map((j) => j.id), ['F-001', 'F-002']);
+  assert.equal(fs.readFileSync(path.join(t, 'tests', 'F-001.test.mjs'), 'utf8'), BASE);
+  assert.equal(fs.readFileSync(path.join(t, 'tests', 'F-002.test.mjs'), 'utf8'), BASE);
+  assert.deepEqual(fs.readdirSync(path.join(t, 'referee-tests')), ['F-003.test.mjs']);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(t, 'referee-check.json'), 'utf8')).changed, ['F-003']);
+  fs.rmSync(run, { recursive: true, force: true });
+});
+
+test('referee-settle restores a test that fails once on the original and reports the rate before', () => {
+  const { run, t, md } = refSetup({ 'F-001': BASE, 'F-002': BASE, 'F-005': BASE });
+  refereeList(t, md);
+  for (const id of ['F-001', 'F-002']) fs.writeFileSync(path.join(t, 'tests', `${id}.test.mjs`), BASE.replace("'Password'", "'Password', { exact: true }"));
+  refereeCheck(t);
+  const rs = (a, b) => [{ feature: 'F-001', passed: a }, { feature: 'F-002', passed: b }];
+  fs.writeFileSync(path.join(t, 'original-referee.json'), JSON.stringify(rs(true, true)));
+  fs.writeFileSync(path.join(t, 'original-referee-2.json'), JSON.stringify(rs(true, false)));
+  fs.writeFileSync(path.join(t, 'referee.json'), JSON.stringify({ 'F-001': { verdict: 'test', reason: 'r' } }));
+  const s = refereeSettle(t);
+  assert.deepEqual(s.changed, ['F-001']);
+  assert.deepEqual(s.rejected, [{ id: 'F-002', why: 'changes its result on the original' }]);
+  assert.equal(fs.readFileSync(path.join(t, 'tests', 'F-002.test.mjs'), 'utf8'), BASE);
+  assert.ok(!fs.existsSync(path.join(t, 'referee-tests', 'F-002.test.mjs')));
+  assert.equal(s.before, 1 / 3);
+  assert.equal(s.verdicts['F-001'].verdict, 'test');
+  assert.equal(refereeSettle(t).changed.length, 1);
+  fs.rmSync(run, { recursive: true, force: true });
 });

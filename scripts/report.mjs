@@ -255,7 +255,14 @@ export function render(runDir, { embedCap = EMBED_CAP, thresholds, stopped } = {
   // 5 Features
   const order = { fail: 0, 'not run': 1, pass: 2 };
   const feats = (Array.isArray(parity) ? parity : []).slice().sort((x, y) => (order[x.rebuild] ?? 1) - (order[y.rebuild] ?? 1) || String(x.feature).localeCompare(String(y.feature)));
-  sec('features', 'Feature list', feats.length ? `<table><tr><th>Feature</th><th>Kind</th><th>Original</th><th>Rebuild</th><th>Note</th></tr>${feats.map((f) => `<tr><td>${esc(f.feature)}</td><td>${esc(f.kind)}</td><td>${esc(f.original)}</td><td>${esc(f.rebuild)}</td><td>${esc(f.note)}</td></tr>`).join('')}</table>` : '<p class="mut">There is no parity result.</p>');
+  // The referee (#202): keep parity on the rebuild before and after, the changed tests and the verdicts.
+  const ref = tryJson(path.join(runDir, 'parity', 'referee-summary.json'));
+  const keepRows = (Array.isArray(parity) ? parity : []).filter((f) => f.kind === 'keep' && (f.rebuild === 'pass' || f.rebuild === 'fail'));
+  const after = keepRows.length ? keepRows.filter((f) => f.rebuild === 'pass').length / keepRows.length : null;
+  const refHtml = !ref ? '' : `<p>Referee: ${(ref.changed || []).length} tests changed (${esc((ref.changed || []).join(', ') || 'none')}), ${(ref.rejected || []).length} rejected; keep parity on the rebuild before the referee ${ref.before == null ? 'n/a' : pct(ref.before)}, after ${after == null ? 'n/a' : pct(after)}.</p>` +
+    (Object.keys(ref.verdicts || {}).length ? `<details><summary>Referee verdicts</summary><ul>${Object.entries(ref.verdicts).map(([id, v]) => `<li>${esc(id)}: ${esc(v && v.verdict)}${v && v.reason ? ` (${esc(v.reason)})` : ''}</li>`).join('')}</ul></details>` : '') +
+    ((ref.rejected || []).length ? `<ul>${ref.rejected.map((j) => `<li>${esc(j.id)} rejected: ${esc(j.why)}</li>`).join('')}</ul>` : '');
+  sec('features', 'Feature list', refHtml + (feats.length ? `<table><tr><th>Feature</th><th>Kind</th><th>Original</th><th>Rebuild</th><th>Note</th></tr>${feats.map((f) => `<tr><td>${esc(f.feature)}</td><td>${esc(f.kind)}</td><td>${esc(f.original)}</td><td>${esc(f.rebuild)}</td><td>${esc(f.note)}</td></tr>`).join('')}</table>` : '<p class="mut">There is no parity result.</p>'));
 
   // Coverage: what the run covered and what it did not reach (written by areas.mjs coverage)
   const cov = tryJson(path.join(runDir, 'coverage.json'));

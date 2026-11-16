@@ -220,6 +220,8 @@ async function runInventory() {
 const PAR = `${runDir}/parity`
 const TESTS = `${PAR}/tests`
 const WRITER = { model: 'sonnet', effort: 'medium' }
+const LOOKUP_RULES = "Each lookup must match exactly one element on any build of the app (use exact names, or look inside the dialog or region). A test first creates the records it checks through the app's own screens, then checks them; it never relies on records the signed-in account already holds (the rebuild's account starts empty). Reach every state the way a user does; never type an internal address or query flag that stands for an outcome. Assert exact wording only when features.md quotes that wording as the behaviour."
+
 const RUN_ERROR_RESULT = { type: 'object', required: ['ok', 'output'], properties: { ok: { type: 'boolean' }, detail: { type: 'string' }, output: { type: 'string' } } }
 const RUN_RESULT = { type: 'object', required: ['ok'], properties: { ok: { type: 'boolean' }, detail: { type: 'string' } } }
 
@@ -227,9 +229,9 @@ async function runParity() {
   const has = await agent(`Read "platform" in ${runDir}/run.json. The adapter folder is ${ADAPTER}/<platform> (flutter uses the android folder). Return ok true if ${ADAPTER}/<that folder>/parity.mjs exists, otherwise ok false with detail "No parity adapter for platform <platform>". Change nothing.`, { ...CHEAP, label: 'parity-adapter', phase: 'Parity', schema: RUN_RESULT })
   if (!has || !has.ok) return { stopped: 'Parity', reason: (has && has.detail) || 'adapter check agent died' }
 
-  const runOn = async (label, appJson, out) => {
+  const runOn = async (label, appJson, out, tests = TESTS) => {
     const adir = await adapterDir()
-    const r = await longRun(label, `node ${q(adir + '/parity.mjs')} --app ${q(appJson)} --tests ${q(TESTS)} --out ${q(out)}`, label, 'Parity')
+    const r = await longRun(label, `node ${q(adir + '/parity.mjs')} --app ${q(appJson)} --tests ${q(tests)} --out ${q(out)}`, label, 'Parity')
     if (!exitedOk(r)) return { ok: false, detail: whyNot(r) }
     return agent(`Return ok true if ${q(out)} exists, otherwise ok false with detail "no results file". Change nothing.`, { ...CHEAP, label: `${label}-out`, phase: 'Parity', schema: RUN_RESULT })
   }
@@ -246,7 +248,7 @@ async function runParity() {
     const untestedFile = single ? `${PAR}/untested.md` : `${PAR}/untested-${area.id}.md`
     const w = await agent(`You are the parity test writer. Read ${runDir}/features.md and ${runDir}/run.json. ${which}For every feature${one} write one test file ${TESTS}/F-xxx.test.mjs, named by the feature's ID (F-001.test.mjs, ...). A feature whose test file already exists in ${TESTS} is skipped (a rerun continues; do not rewrite it). You may start the copy named in run.json to look at the running app (start it from its copy, use the platform's driver; ${STOP_APP}), but you must NOT read any source file under ${WORK} or ${target}; you work only from features.md and what the running app shows. Never quote source in a test.
 Each test is a node:test file (import test from 'node:test'; import assert from 'node:assert/strict') that finds the app the way the platform's DRIVING.md says (its "Tests" section). Find things the way a person names them (role, label, visible text), never by id, class or DOM shape. Each test starts its own driver session and closes it at the end. Tests may share data that earlier tests leave behind, so never depend on exact counts or an empty list. Use only limits stated in features.md; never invent a numeric budget. Assert meaning, not wording or names, unless features.md quotes the text as required. Do not assert what the browser does whatever the app does (for example the browser logging a failed resource load). Stay inside the scope of the feature's text: do not test more than it claims. Every assertion carries a message that says what was expected and what was seen, in the feature's own words, for example assert.ok(rows.every((r) => r.hasDue), 'expected every seeded row to show title, status and due date; saw ' + JSON.stringify(seen)). A bare assert.ok on a boolean gives the reader nothing.
-A feature marked "keep" gets a test asserting the behaviour. A feature marked "defect" gets a test asserting the Intended behaviour its entry states, so it should fail on the original app. A feature the critic marked unconfirmed, or that cannot be reached from the app, gets no test: list it in ${untestedFile} as "F-xxx: reason". Create that file even if it is empty. ${DRIVER} Do not write anywhere else. ${NOTE}`, { ...WRITER, label: single ? 'parity-writer' : `parity-writer-${area.id}`, phase: 'Parity' })
+A feature marked "keep" gets a test asserting the behaviour. A feature marked "defect" gets a test asserting the Intended behaviour its entry states, so it should fail on the original app. ${LOOKUP_RULES} A feature the critic marked unconfirmed, or that cannot be reached from the app, gets no test: list it in ${untestedFile} as "F-xxx: reason". Create that file even if it is empty. ${DRIVER} Do not write anywhere else. ${NOTE}`, { ...WRITER, label: single ? 'parity-writer' : `parity-writer-${area.id}`, phase: 'Parity' })
     if (!w) throw new Error(`Parity: the test writer died${single ? '' : ' in area ' + area.id}`)
     await agent(`Write the file ${PAR}/areas/${area.id}.done containing the word done. Touch nothing else.`, { ...CHEAP, label: `parity-area-${area.id}.done`, phase: 'Parity' })
   }
@@ -267,7 +269,7 @@ A feature marked "keep" gets a test asserting the behaviour. A feature marked "d
     mustRun(await runOn(`parity-original-${round}`, `${runDir}/run.json`, `${PAR}/original.json`), 'the run on the original')
     const w = await wrongCount(`parity-wrong-${round}`)
     if (w.wrong === 0) break
-    const fixed = await agent(`You are the parity fixer, round ${round} of 3. These tests are wrong on the original (a keep test failed or a defect test passed): ${w.detail}. See ${PAR}/original.json for their results and ${runDir}/features.md for each feature. Fix those test files in ${TESTS}: fix the test, not features.md, unless using the running app (start it from the copy named in ${runDir}/run.json; ${STOP_APP}) proves the features.md entry itself is wrong; then correct the entry in plain behaviour words (no source), keeping its "F-xxx keep." or "F-xxx defect." start. Do not read source under ${WORK} or ${target}. Never delete a test. Use only limits stated in features.md. If ${PAR}/original.auth.json exists and says signedIn is false, the run's sign-in failed: a test that fails only because the app asked for a sign-in is not wrong, so do not rewrite it to pass signed out. ${DRIVER}`, { ...WRITER, label: `parity-fix-${round}`, phase: 'Parity' })
+    const fixed = await agent(`You are the parity fixer, round ${round} of 3. These tests are wrong on the original (a keep test failed or a defect test passed): ${w.detail}. See ${PAR}/original.json for their results and ${runDir}/features.md for each feature. Fix those test files in ${TESTS}: fix the test, not features.md, unless using the running app (start it from the copy named in ${runDir}/run.json; ${STOP_APP}) proves the features.md entry itself is wrong; then correct the entry in plain behaviour words (no source), keeping its "F-xxx keep." or "F-xxx defect." start. Do not read source under ${WORK} or ${target}. Never delete a test. Use only limits stated in features.md. If ${PAR}/original.auth.json exists and says signedIn is false, the run's sign-in failed: a test that fails only because the app asked for a sign-in is not wrong, so do not rewrite it to pass signed out. ${LOOKUP_RULES} ${DRIVER}`, { ...WRITER, label: `parity-fix-${round}`, phase: 'Parity' })
     if (!fixed) throw new Error('Parity: the fix agent died')
   }
   // Two runs on the original, then settle. A pair whose sign-in differs judges nothing (settle refuses); it is run once more (#196).
@@ -301,12 +303,40 @@ A feature marked "keep" gets a test asserting the behaviour. A feature marked "d
       return { ok: false }
     }
     const LOOP_SCHEMA = { type: 'object', required: ['action', 'reason', 'failing', 'restored'], properties: { action: { type: 'string', enum: ['done', 'build', 'stop'] }, reason: { type: 'string' }, failing: { type: 'array', items: { type: 'string' } }, restored: { type: 'number' } } }
+    // One round of the rebuild referee (#202): keep tests that pass on the original and fail on the rebuild are checked against the running rebuild; a test that fails only in how it reaches its state may be edited (code checks the edit), then the suite runs again.
+    const PR = pluginRoot + '/scripts/parity-results.mjs'
+    const referee = async () => {
+      const gone = await agent(`Return ok true if ${q(PAR + '/referee.done')} exists, otherwise ok false. Change nothing.`, { ...CHEAP, label: 'parity-referee-exists', phase: 'Parity', schema: RUN_RESULT })
+      if (!gone) throw new Error('Parity: the referee check agent died')
+      if (gone.ok) return
+      const l = await agent(`Run exactly: node ${q(PR)} referee-list ${q(PAR)} ${q(runDir + '/features.md')} . It prints one line "referee N: ids". Return ok true if it exited 0 (else ok false with its error as detail), n as the number N, and ids as the list of IDs after the colon (empty when N is 0). Change nothing else.`, { ...CHEAP, label: 'parity-referee-list', phase: 'Parity', schema: { type: 'object', required: ['ok', 'n', 'ids'], properties: { ok: { type: 'boolean' }, detail: { type: 'string' }, n: { type: 'number' }, ids: { type: 'array', items: { type: 'string' } } } } })
+      mustRun(l, 'the referee list')
+      if (l.n > 0) {
+        const w = await agent(`You are the parity referee. These keep tests pass on the original and fail on the rebuild: ${l.ids.join(', ')}. Their results and failure messages are in ${PAR}/rebuild.json (a copy is ${PAR}/rebuild-before-referee.json), the tests are in ${TESTS} (copies in ${PAR}/referee-before) and each feature is in ${runDir}/features.md. Start the rebuild from ${RB} (use the platform's driver; ${STOP_APP}) and use it like a user. You must NOT read any source under ${WORK} or ${target}. For each test decide: "rebuild" if the rebuild really lacks the behaviour the feature describes, or "test" if the behaviour works in the rebuild and the test fails because of how it gets there (a lookup that matches two elements, records it expects the account to already hold, the original's wording or layout or address used to reach the state). Write ${PAR}/referee.json as {"F-xxx": {"verdict": "test"|"rebuild", "reason": "..."}} for every listed ID. For "test" edit only that test file in ${TESTS}, and only how it reaches its state: setup steps, navigation, lookups. Never change, remove or add an assert line, never add try, catch, if, skip or todo; the change is checked in code and undone if it does. ${LOOKUP_RULES} Do not write anywhere else. ${DRIVER}`, { ...WRITER, label: 'parity-referee', phase: 'Parity' })
+        if (!w) throw new Error('Parity: the referee agent died')
+        const c = await agent(`Run exactly: node ${q(PR)} referee-check ${q(PAR)} . Return ok true with its output line as detail if it exited 0, otherwise ok false with the error. Change nothing else.`, { ...CHEAP, label: 'parity-referee-check', phase: 'Parity', schema: RUN_RESULT })
+        mustRun(c, 'the referee check')
+        const cc = await agent(`Read ${q(PAR + '/referee-check.json')} and return changed, its list of IDs (empty list if none). Change nothing.`, { ...CHEAP, label: 'parity-referee-changed', phase: 'Parity', schema: { type: 'object', required: ['changed'], properties: { changed: { type: 'array', items: { type: 'string' } } } } })
+        if (!cc) throw new Error('Parity: the referee changed-list agent died')
+        if (cc.changed.length) {
+          mustRun(await runOn('parity-referee-original-1', `${runDir}/run.json`, `${PAR}/original-referee.json`, `${PAR}/referee-tests`), 'the referee run on the original')
+          mustRun(await runOn('parity-referee-original-2', `${runDir}/run.json`, `${PAR}/original-referee-2.json`, `${PAR}/referee-tests`), 'the second referee run on the original')
+        }
+        const st = await agent(`Run exactly: node ${q(PR)} referee-settle ${q(PAR)} . Return ok true with its output line as detail if it exited 0, otherwise ok false with the error. Change nothing else.`, { ...CHEAP, label: 'parity-referee-settle', phase: 'Parity', schema: RUN_RESULT })
+        mustRun(st, 'the referee settle')
+        const again = await suite('parity-rebuild-run-1-referee')
+        if (!again) throw new Error('Parity: the suite agent died')
+        started = again.ok
+      }
+      mustRun(await agent(`Write the file ${q(PAR + '/referee.done')} containing the word done. Touch nothing else.`, { ...CHEAP, label: 'parity-referee-done', phase: 'Parity', schema: RUN_RESULT }), 'writing referee.done')
+    }
     let restored = false
     let started = true
     for (let round = 1; ; round++) {
       const ran = await suite(`parity-rebuild-run-${round}`)
       if (!ran) throw new Error('Parity: the suite agent died')
       started = ran.ok
+      if (round === 1 && ran.ok) await referee()
       const d = await agent(`Run exactly: node ${q(pluginRoot + '/scripts/parity-results.mjs')} loop ${q(PAR)} ${q(runDir + '/features.md')} ${q(runDir)} . It prints one JSON line. Return its fields action, reason, failing and restored, all four always, copied exactly (restored is a number and 0 is a number: include it, 0 included). Change nothing else.`, { ...CHEAP, label: `parity-loop-${round}`, phase: 'Parity', schema: LOOP_SCHEMA })
       if (!d) throw new Error('Parity: the loop agent died')
       if (d.restored > 0) restored = true

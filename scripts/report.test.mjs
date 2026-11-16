@@ -322,3 +322,12 @@ test('no verdict shows no confidence percentage or parts table', () => {
   assert.doesNotMatch(html, /Confidence:/);
   assert.doesNotMatch(html, /class="parts"/);
 });
+
+test('the report shows the referee line and verdicts when referee-summary.json exists (#202)', () => {
+  const d = makeRun();
+  assert.ok(!/Referee:/.test(render(d, { thresholds: T })));
+  w(path.join(d, 'parity/referee-summary.json'), { before: 0.25, changed: ['F-001'], rejected: [{ id: 'F-003', why: 'an assert line changed' }], verdicts: { 'F-001': { verdict: 'test', reason: 'lookup <b>' } } });
+  const html = render(d, { thresholds: T });
+  assert.match(html, /Referee: 1 tests changed \(F-001\), 1 rejected; keep parity on the rebuild before the referee 25%, after 50%/);
+  assert.match(html, /F-001: test \(lookup &lt;b&gt;\)/);
+});

@@ -4,6 +4,9 @@
 //   node parity-results.mjs merge  <parDir> <features.md>         writes parity.json
 //   node parity-results.mjs loop   <parDir> <features.md> <runDir> records the round, writes failures.md, prints {action, reason, failing}
 //   node parity-results.mjs prep   <parDir> <rebuild-run.json>    clears the last rebuild result and error, gives the rebuild a free port
+//   node parity-results.mjs referee-list <parDir> <features.md>   keep tests that pass on the original and fail on the rebuild: backs them up in referee-before/, writes referee-list.json, prints `referee N: ids`
+//   node parity-results.mjs referee-check <parDir>                undoes referee edits that touch an assert line or add try/catch/skip/todo/if; copies the kept edits to referee-tests/, writes referee-check.json
+//   node parity-results.mjs referee-settle <parDir>               (features.md is read from the run folder above)  undoes an edit whose test does not pass on both original runs (original-referee.json, original-referee-2.json); writes referee-summary.json
 //   node parity-results.mjs run-error <parDir> <longDir> <name> [state]   writes run-error.txt from that long run's exit code and log tail (the rebuild would not start)
 import fs from 'node:fs';
 import net from 'node:net';
@@ -202,6 +205,79 @@ export function writeRunError(parDir, text) {
   fs.writeFileSync(path.join(parDir, 'run-error.txt'), String(text).trim() ? String(text) : 'the rebuild did not start (no output)');
 }
 
+// ---- the one-round rebuild referee for keep tests (#202) ----
+const testFile = (parDir, id) => path.join(parDir, 'tests', `${id}.test.mjs`);
+const backupFile = (parDir, id) => path.join(parDir, 'referee-before', `${id}.test.mjs`);
+const resultMap = (f) => (fs.existsSync(f) ? Object.fromEntries(readJson(f).map((r) => [r.feature, r.passed === true])) : {});
+
+// Keep tests that pass on the original and fail on the rebuild.
+export function refereeList(parDir, featuresMd) {
+  const kindMap = kinds(fs.readFileSync(featuresMd, 'utf8'));
+  const orig = resultMap(path.join(parDir, 'original.json')), reb = resultMap(path.join(parDir, 'rebuild.json'));
+  const ids = Object.keys(kindMap).filter((id) => kindMap[id] === 'keep' && orig[id] === true && reb[id] === false && fs.existsSync(testFile(parDir, id))).sort();
+  fs.rmSync(path.join(parDir, 'referee-before'), { recursive: true, force: true });
+  fs.mkdirSync(path.join(parDir, 'referee-before'), { recursive: true });
+  for (const id of ids) fs.copyFileSync(testFile(parDir, id), backupFile(parDir, id));
+  if (fs.existsSync(path.join(parDir, 'rebuild.json'))) fs.copyFileSync(path.join(parDir, 'rebuild.json'), path.join(parDir, 'rebuild-before-referee.json'));
+  fs.writeFileSync(path.join(parDir, 'referee-list.json'), JSON.stringify(ids));
+  return ids;
+}
+
+const assertLines = (text) => text.split('\n').filter((l) => l.includes('assert')).map((l) => l.trim()).sort();
+const COUNTED = [['try', /\btry\b/g], ['catch', /\bcatch\b/g], ['.skip', /\.skip\b/g], ['.todo', /\.todo\b/g], ['if', /\bif ?\(/g]];
+const count = (text, re) => (text.match(re) || []).length;
+
+// Why an edited test is not allowed, or '' when it is.
+export function refereeProblem(before, after) {
+  const a = assertLines(before), b = assertLines(after);
+  if (a.length !== b.length || a.some((l, i) => l !== b[i])) return 'an assert line changed';
+  for (const [name, re] of COUNTED) if (count(after, re) > count(before, re)) return `it adds ${name}`;
+  return '';
+}
+
+export function refereeCheck(parDir) {
+  const ids = readJson(path.join(parDir, 'referee-list.json'));
+  const changed = [], rejected = [];
+  fs.rmSync(path.join(parDir, 'referee-tests'), { recursive: true, force: true });
+  fs.mkdirSync(path.join(parDir, 'referee-tests'), { recursive: true });
+  for (const id of ids) {
+    const now = testFile(parDir, id), bak = backupFile(parDir, id);
+    if (!fs.existsSync(bak)) continue;
+    const before = fs.readFileSync(bak, 'utf8'), after = fs.existsSync(now) ? fs.readFileSync(now, 'utf8') : null;
+    if (after === before) continue;
+    const why = after === null ? 'the test file was removed' : refereeProblem(before, after);
+    if (why) { fs.copyFileSync(bak, now); rejected.push({ id, why }); continue; }
+    fs.copyFileSync(now, path.join(parDir, 'referee-tests', `${id}.test.mjs`));
+    changed.push(id);
+  }
+  fs.writeFileSync(path.join(parDir, 'referee-check.json'), JSON.stringify({ changed, rejected }, null, 2));
+  return { changed, rejected };
+}
+
+// Pass rate of the keep tests in a results file (null when none ran): same formula as the gate, passed over total.
+export function keepRate(resultsFile, kindMap) {
+  if (!fs.existsSync(resultsFile)) return null;
+  const keep = readJson(resultsFile).filter((r) => kindMap[r.feature] === 'keep');
+  return keep.length ? keep.filter((r) => r.passed).length / keep.length : null;
+}
+
+export function refereeSettle(parDir, featuresMd = path.join(parDir, '..', 'features.md')) {
+  const { changed, rejected } = readJson(path.join(parDir, 'referee-check.json'));
+  const r1 = resultMap(path.join(parDir, 'original-referee.json')), r2 = resultMap(path.join(parDir, 'original-referee-2.json'));
+  const kept = [], rej = [...rejected];
+  for (const id of changed) {
+    if (r1[id] === true && r2[id] === true) { kept.push(id); continue; }
+    fs.copyFileSync(backupFile(parDir, id), testFile(parDir, id));
+    fs.rmSync(path.join(parDir, 'referee-tests', `${id}.test.mjs`), { force: true });
+    rej.push({ id, why: 'changes its result on the original' });
+  }
+  const vf = path.join(parDir, 'referee.json');
+  const before = fs.existsSync(featuresMd) ? keepRate(path.join(parDir, 'rebuild-before-referee.json'), kinds(fs.readFileSync(featuresMd, 'utf8'))) : null;
+  const summary = { before, changed: kept, rejected: rej, verdicts: fs.existsSync(vf) ? readJson(vf) : {} };
+  fs.writeFileSync(path.join(parDir, 'referee-summary.json'), JSON.stringify(summary, null, 2));
+  return summary;
+}
+
 export function loop(parDir, featuresMd, runDir) {
   const { spent, build } = readCost(runDir);
   const errFile = path.join(parDir, 'run-error.txt');
@@ -265,5 +341,14 @@ if (process.argv[1] && path.resolve(process.argv[1]) === new URL(import.meta.url
     const f = path.join(x, 'run-error.txt');
     if (!fs.existsSync(f)) { console.error(`run-error.txt was not written in ${x}`); process.exit(1); }
     console.log(`run-error written ${fs.statSync(f).size} bytes`);
-  } else { console.error('usage: parity-results.mjs wrong|settle|merge|loop|prep|run-error ...'); process.exit(2); }
+  } else if (cmd === 'referee-list') {
+    const ids = refereeList(x, y);
+    console.log(`referee ${ids.length}${ids.length ? ': ' + ids.join(' ') : ''}`);
+  } else if (cmd === 'referee-check') {
+    const r = refereeCheck(x);
+    console.log(`referee-check: ${r.changed.length} changed${r.changed.length ? ' (' + r.changed.join(' ') + ')' : ''}, ${r.rejected.length} rejected${r.rejected.length ? ' (' + r.rejected.map((j) => `${j.id}: ${j.why}`).join('; ') + ')' : ''}`);
+  } else if (cmd === 'referee-settle') {
+    const s = refereeSettle(x, y);
+    console.log(`referee-settle: ${s.changed.length} kept, ${s.rejected.length} rejected`);
+  } else { console.error('usage: parity-results.mjs wrong|settle|merge|loop|prep|run-error|referee-list|referee-check|referee-settle ...'); process.exit(2); }
 }

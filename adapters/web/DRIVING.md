@@ -18,3 +18,6 @@ Platform `web`. The app is a server on this machine; `run.json` has its `address
 - When `run.json` has `auth` and the sign-in worked, `process.env.APP_STORAGE_STATE` holds the Playwright storage state as JSON (parse it and pass it as `storageState` to `browser.newContext`); it is unset when signed out. Never print it.
 - Import the driver by absolute path: `import { chromium } from '<plugin>/adapters/web/node_modules/playwright/index.mjs'`.
 - Each test launches its own browser and closes it at the end. The tests share one running server, so earlier tests leave data behind.
+- A test first creates the records it checks through the app's own screens (add one, start one), then checks them; it never relies on records the signed-in account already holds. The rebuild's account starts empty.
+- Playwright `getByLabel` and `getByRole` names match substrings, so a "Show password" toggle also matches "Password" and a header button also matches an empty-state button of the same name. Pass `{ exact: true }`, or scope the lookup with `page.getByRole('dialog')` or a region, so each lookup matches one element on any build.
+- Reach every state the way a user does. Never `page.goto` an address with a query flag that fakes an outcome (sign out by clicking sign out). Assert exact wording only when features.md quotes it as the behaviour.
