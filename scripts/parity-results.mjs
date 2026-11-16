@@ -217,7 +217,8 @@ export function refereeList(parDir, featuresMd) {
   const ids = Object.keys(kindMap).filter((id) => kindMap[id] === 'keep' && orig[id] === true && reb[id] === false && fs.existsSync(testFile(parDir, id))).sort();
   fs.rmSync(path.join(parDir, 'referee-before'), { recursive: true, force: true });
   fs.mkdirSync(path.join(parDir, 'referee-before'), { recursive: true });
-  for (const id of ids) fs.copyFileSync(testFile(parDir, id), backupFile(parDir, id));
+  // Every test is backed up, so an edit to a test not on the list can be undone too.
+  for (const f of fs.readdirSync(path.join(parDir, 'tests')).filter((f) => f.endsWith('.test.mjs'))) fs.copyFileSync(path.join(parDir, 'tests', f), path.join(parDir, 'referee-before', f));
   if (fs.existsSync(path.join(parDir, 'rebuild.json'))) fs.copyFileSync(path.join(parDir, 'rebuild.json'), path.join(parDir, 'rebuild-before-referee.json'));
   fs.writeFileSync(path.join(parDir, 'referee-list.json'), JSON.stringify(ids));
   return ids;
@@ -240,6 +241,13 @@ export function refereeCheck(parDir) {
   const changed = [], rejected = [];
   fs.rmSync(path.join(parDir, 'referee-tests'), { recursive: true, force: true });
   fs.mkdirSync(path.join(parDir, 'referee-tests'), { recursive: true });
+  for (const f of fs.readdirSync(path.join(parDir, 'referee-before'))) {
+    const id = f.replace(/\.test\.mjs$/, '');
+    if (ids.includes(id)) continue;
+    const now = testFile(parDir, id), bak = backupFile(parDir, id);
+    if (fs.existsSync(now) && fs.readFileSync(now, 'utf8') === fs.readFileSync(bak, 'utf8')) continue;
+    fs.copyFileSync(bak, now); rejected.push({ id, why: 'not on the referee list' });
+  }
   for (const id of ids) {
     const now = testFile(parDir, id), bak = backupFile(parDir, id);
     if (!fs.existsSync(bak)) continue;

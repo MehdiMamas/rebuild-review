@@ -434,7 +434,7 @@ test('referee-list picks keep tests that pass on the original and fail on the re
   const ids = refereeList(t, md);
   assert.deepEqual(ids, ['F-001']);
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(t, 'referee-list.json'), 'utf8')), ['F-001']);
-  assert.deepEqual(fs.readdirSync(path.join(t, 'referee-before')), ['F-001.test.mjs']);
+  assert.deepEqual(fs.readdirSync(path.join(t, 'referee-before')).sort(), ['F-001.test.mjs', 'F-004.test.mjs', 'F-005.test.mjs']);
   assert.ok(fs.existsSync(path.join(t, 'rebuild-before-referee.json')));
   fs.rmSync(run, { recursive: true, force: true });
 });
@@ -474,4 +474,21 @@ test('referee-settle restores a test that fails once on the original and reports
   assert.equal(s.verdicts['F-001'].verdict, 'test');
   assert.equal(refereeSettle(t).changed.length, 1);
   fs.rmSync(run, { recursive: true, force: true });
+});
+
+test('referee-check undoes an edit to a test that is not on the list', async () => {
+  const { refereeList, refereeCheck } = await import('./parity-results.mjs');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'referee-unlisted-'));
+  const par = path.join(dir, 'parity');
+  fs.mkdirSync(path.join(par, 'tests'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'features.md'), 'F-001 keep. a\nF-002 defect. b\n');
+  fs.writeFileSync(path.join(par, 'tests', 'F-001.test.mjs'), "assert.ok(a, 'x');\n");
+  fs.writeFileSync(path.join(par, 'tests', 'F-002.test.mjs'), "assert.ok(b, 'y');\n");
+  fs.writeFileSync(path.join(par, 'original.json'), JSON.stringify([{ feature: 'F-001', passed: true }, { feature: 'F-002', passed: false }]));
+  fs.writeFileSync(path.join(par, 'rebuild.json'), JSON.stringify([{ feature: 'F-001', passed: false }, { feature: 'F-002', passed: false }]));
+  assert.deepEqual(refereeList(par, path.join(dir, 'features.md')), ['F-001']);
+  fs.writeFileSync(path.join(par, 'tests', 'F-002.test.mjs'), "assert.ok(true, 'y');\n");
+  const r = refereeCheck(par);
+  assert.deepEqual(r.rejected, [{ id: 'F-002', why: 'not on the referee list' }]);
+  assert.equal(fs.readFileSync(path.join(par, 'tests', 'F-002.test.mjs'), 'utf8'), "assert.ok(b, 'y');\n");
 });
