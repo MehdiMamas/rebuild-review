@@ -1,6 +1,6 @@
 // Optional sign-in for the web capture (run.json "auth"). The session lives in memory only: nothing here writes a file.
 // Messages and reasons never hold a typed value: they name the step number and kind, and redactSecrets runs over the rest.
-import { makeContext, runStep, scrub } from './context.mjs';
+import { makeContext, runStep, scrub, locate } from './context.mjs';
 import { authSecrets, redactSecrets } from './redact.mjs';
 export { authSecrets, redactSecrets };
 
@@ -37,9 +37,33 @@ export function validateAuth(auth) {
   }
 }
 
+// Signs in, trying up to `attempts` times in fresh contexts: on a loaded machine a click can land before the page is
+// ready, or the redirect can come late, and one miss would leave a whole parity run signed out. A failure that repeats
+// is reported with the count. { ok: true, storageState } or { ok: false, reason }.
+export async function signIn(browser, origin, auth, allowOrigins = [], { attempts = 3, clickMs = 10000, landMs = 15000 } = {}) {
+  let r;
+  for (let i = 1; i <= attempts; i++) {
+    r = await signInOnce(browser, origin, auth, allowOrigins, { clickMs, landMs });
+    if (r.ok) return r;
+  }
+  return attempts > 1 ? { ok: false, reason: `${r.reason} (tried ${attempts} times)` } : r;
+}
+
+// A click on a control that never holds still (an endless animation) times out on Playwright's stability check; it is
+// then clicked without that check. A trial click (checks only) decides which, so the control is never clicked twice.
+// A timeout after the click went through is a slow page change, left to the landing wait.
+async function clickStep(page, name, clickMs) {
+  const el = await locate(page, name);
+  const timedOut = (err) => /Timeout/i.test(String(err && err.message));
+  const ready = await el.click({ trial: true, timeout: clickMs }).then(() => true, (err) => { if (!timedOut(err)) throw err; return false; });
+  await el.click(ready ? { timeout: clickMs } : { force: true, timeout: 5000 }).catch((err) => {
+    if (!timedOut(err) || !/click action done/.test(err.message)) throw err;
+  });
+}
+
 // Runs the steps once in a fresh context that is not recorded (its requests, console and blocked lists stay out of golden/;
-// the sign-in request is the one that carries the password). { ok: true, storageState } or { ok: false, reason }.
-export async function signIn(browser, origin, auth, allowOrigins = []) {
+// the sign-in request is the one that carries the password).
+async function signInOnce(browser, origin, auth, allowOrigins, { clickMs, landMs }) {
   const secrets = authSecrets(auth);
   const clean = (m) => redactSecrets(scrub(String(m).split('\n')[0]), secrets);
   let context, n = 0, kind = '';
@@ -49,15 +73,26 @@ export async function signIn(browser, origin, auth, allowOrigins = []) {
     const pwVisible = async () => (await page.locator('input[type=password]:visible').count().catch(() => 0)) > 0;
     let formPath = null; // the route where a password field was last seen: the sign-in form (after a sign-up, the sign-in step that follows)
     for (const step of auth.steps) {
-      n++; kind = KINDS.find((k) => k in step); await runStep(page, origin, step);
+      n++; kind = KINDS.find((k) => k in step);
+      if (kind === 'click') await clickStep(page, step.click, clickMs);
+      else await runStep(page, origin, step);
+      // let a client-rendered form finish loading before anything is typed or clicked into it; on a loaded machine the
+      // first animation frame of a new page can take seconds, and every click check waits for frames
+      if (kind === 'open') {
+        await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
+        await page.evaluate(() => new Promise((r) => { requestAnimationFrame(() => r()); setTimeout(r, 30000); })).catch(() => {});
+      }
       if (await pwVisible()) formPath = new URL(page.url()).pathname;
     }
     n = 0;
+    const e = auth.expect;
+    const pathOf = (u) => { const x = new URL(u); return e.path.includes('?') ? x.pathname + x.search : x.pathname; };
+    // a redirect after sign-in can take a while on a loaded machine: wait for the expected page, up to landMs
+    if (e && e.path !== undefined) await page.waitForURL((u) => pathOf(u) === e.path, { timeout: landMs }).catch(() => {});
     await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
     const finalPath = new URL(page.url()).pathname;
-    const e = auth.expect;
     if (e) {
-      if (e.path !== undefined && (e.path.includes('?') ? finalPath + new URL(page.url()).search : finalPath) !== e.path) return { ok: false, reason: `sign-in ended on ${finalPath}, expected ${clean(e.path)}` };
+      if (e.path !== undefined && pathOf(page.url()) !== e.path) return { ok: false, reason: `sign-in ended on ${finalPath}, expected ${clean(e.path)}` };
       if (e.text !== undefined && !(await page.getByText(e.text).first().waitFor({ state: 'visible', timeout: 5000 }).then(() => true, () => false))) return { ok: false, reason: 'sign-in finished but the expected text is not visible' };
     } else {
       // No expect: the page must have left the sign-in form (another route, or the password field gone); a cookie alone proves nothing.
