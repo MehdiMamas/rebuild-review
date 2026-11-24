@@ -92,6 +92,8 @@ for (let qi = 0; qi < queue.length; qi++) {
     try { await replay(s, [{ click: name }], 500); } catch (e) { notCaptured.push(`${screen.heading || screen.kind}: control "${name}": ${scrub(e.message).split('\n')[0]}`); continue; }
     const base = [...screen.steps, { click: name }];
     for (const w of s.windows.filter((x) => !before.has(x))) {
+      // A new window can still be loading after the 500 ms settle on a slow machine; its title and heading would be empty.
+      await w.waitForLoadState('load', { timeout: 5000 }).catch(() => {});
       try { register(await describe(w), [...base, { open: kindOf(await w.title()) }], screen.id || `${screen.kind}: ${screen.heading}`); } catch {}
       await w.close().catch(() => {});
     }
