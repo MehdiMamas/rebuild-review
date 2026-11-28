@@ -1,5 +1,7 @@
 # rebuild-review
 
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/MehdiMamas/rebuild-review/badge)](https://scorecard.dev/viewer/?uri=github.com/MehdiMamas/rebuild-review)
+
 Rebuild your project from what it does and how it looks, then see if the rebuild beats the original.
 
 ![Top of the example report: verdict, confidence and scores](docs/example-report.png)

@@ -1,0 +1,26 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directories:
+      - "/adapters/backend"
+      - "/adapters/cli"
+      - "/adapters/electron"
+      - "/adapters/ios"
+      - "/adapters/library"
+      - "/adapters/web"
+      - "/benchmark"
+      - "/benchmark/app"
+    schedule:
+      interval: weekly
+  - package-ecosystem: pub
+    directory: "/benchmark-flutter"
+    schedule:
+      interval: weekly
+  - package-ecosystem: gradle
+    directory: "/benchmark-android"
+    schedule:
+      interval: weekly
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
